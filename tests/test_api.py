@@ -84,3 +84,46 @@ def test_chat_reuses_provided_session_id_and_carries_history(monkeypatch):
 def test_chat_rejects_empty_message():
     response = client.post("/chat", json={"message": ""})
     assert response.status_code == 422
+
+
+def test_api_request_id_deduplicates_and_get_run_is_session_scoped():
+    message = {"message": "查询订单 1002 的物流", "session_id": "durable-api", "request_id": "stable"}
+    first = client.post("/chat", json=message).json()
+    repeated = client.post("/chat", json=message).json()
+    assert first["run_id"] == repeated["run_id"]
+    assert repeated["cached"]
+    saved = client.get("/conversations/durable-api").json()
+    assert len(saved["messages"]) == 2
+    assert client.get(f"/runs/{first['run_id']}", params={"session_id": "other"}).status_code == 404
+    restored = client.post(f"/runs/{first['run_id']}/resume", json={"session_id": "durable-api"})
+    assert restored.status_code == 200 and restored.json()["cached"]
+    conflicting = client.post("/chat", json={**message, "message": "different"})
+    assert conflicting.status_code == 409
+    assert conflicting.json()["detail"]["code"] == "REQUEST_ID_CONFLICT"
+
+
+def test_api_stale_action_cannot_confirm_new_pending_action():
+    first = client.post("/chat", json={"message": "帮我支付订单 1003", "session_id": "stale-api"}).json()
+    client.post("/chat", json={"message": "取消", "session_id": "stale-api"})
+    client.post("/chat", json={"message": "订单 1001 我想退款", "session_id": "stale-api"})
+    response = client.post("/chat", json={"message": "确认", "session_id": "stale-api", "action_id": first["pending_action"]["action_id"]})
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "APPROVAL_STALE"
+    assert tools.get_payment_status(1003)["status"] == "pending"
+    assert tools.check_refund_eligibility(1001)["eligible"]
+
+
+def test_api_interruption_returns_handle_and_resumes_without_losing_the_request(monkeypatch):
+    original = api.run_orchestrator
+    def interrupted(*args, **kwargs):
+        raise RuntimeError("injected process interruption")
+    monkeypatch.setattr(api, "run_orchestrator", interrupted)
+    failed = client.post("/chat", json={"message": "查询订单 1002 的状态", "request_id": "restart"})
+    assert failed.status_code == 502
+    handle = failed.json()["detail"]
+    assert handle["session_id"] and handle["run_id"]
+    monkeypatch.setattr(api, "run_orchestrator", original)
+    resumed = client.post(f"/runs/{handle['run_id']}/resume", json={"session_id": handle["session_id"]})
+    assert resumed.status_code == 200
+    assert resumed.json()["status"] == "SUCCEEDED"
+    assert resumed.json()["run_id"] == handle["run_id"]

@@ -16,8 +16,8 @@ The Streamlit frontend uses persistent sidebar navigation with five connected pa
 - **工作台**: start or continue a conversation, query active orders, and explore shopping scenarios.
 - **商品发现**: search 60 fictional demo products across headphones, keyboards, and USB-C hubs; filter by budget and stock; compare two or three products.
 - **订单与售后**: browse the existing seed orders, inspect stored shipment events, and pass an order into the assistant. Payment/refund writes require a separate confirmation.
-- **任务记录**: view the latest 100 actual run snapshots saved in SQLite, including results and historical statuses. These are run archives, not restart checkpoints.
-- **Agent Lab**: inspect actual events, tool parameters/results, token usage, latency, and terminal reasons for a selected run.
+- **任务记录**: view the latest 100 actual run snapshots saved in SQLite, including results and historical statuses. Interrupted tasks retain checkpoints and can be resumed.
+- **Agent Lab**: inspect actual events, tool parameters/results, task plans, dependencies, verified outcomes, budgets, token usage, latency, and terminal reasons for a selected run.
 
 Product discovery and comparison also work through `/chat`, for example
 `推荐通勤降噪耳机，预算 500 元以内` and `对比商品 P1101 和 P1102`.
@@ -29,8 +29,7 @@ payments and refunds only mutate the demo SQLite database. Product/order pages r
 database records rather than embedding sample results in the frontend.
 New tables are added automatically without resetting existing orders, payments,
 refunds, or modified product stock. Starting a new conversation leaves archived runs intact.
-Conversation memory and pending approvals still live in the current browser session;
-the run archive does not provide durable task resumption.
+Conversation messages and pending approvals are saved in SQLite. The browser URL carries the conversation ID so refreshing or restarting the service restores the same context. Interrupted tasks can resume from the workbench. See [runtime and recovery](docs/agent-runtime.md) for consistency guarantees and limits.
 
 ## Live demo
 
@@ -72,7 +71,9 @@ instead of the chat UI — same reply, same tool trace, same backend.
 - Separates model failure, unsupported intent, missing information, business rejection, and explicit human escalation
 - Requires approval before payment/refund mutations, carries the pending action in the session, and supports explicit confirm/cancel responses
 - Shows a run-linked event trace: intake, route decision, model call, tool call/result, errors, and terminal reason
-- Tracks token usage per session and caches repeated FAQ answers to save quota
+- Builds bounded compound task plans, dispatches steps to specialists, and checks each goal against real observations
+- Persists conversation state, approvals, checkpoints and an idempotent tool ledger; atomic local writes survive interruption
+- Tracks model/tool/time/token budgets; unknown provider token usage remains unknown
 - Exposes the same orchestrator over a **FastAPI** REST endpoint, not just the chat UI
 - Ships with a **routing evaluation harness** that measures LLM classification accuracy on a curated dataset, separate from unit tests
 
@@ -84,33 +85,26 @@ LangGraph multi-agent orchestration · Gemini tool-calling (with Groq fallback)
 ## Architecture
 
 ```
-              Streamlit UI (app.py)   FastAPI (api.py)
-                        |                   |
-                        +--------+----------+
-                                 v
-                   +--------------------+
-                   |   ORCHESTRATOR     |  <- classifies intent, routes,
-                   |   (LangGraph)      |     holds conversation memory
-                   +---------+----------+
-        +----------+---------+----------+-----------+
-        v          v         v          v            v
-   +--------+ +--------+ +--------+ +--------+  (no match / fails)
-   | ORDER  | | REFUND | |PAYMENT | |  FAQ   |        |
-   | agent  | | agent  | | agent  | | agent  |        v
-   +---+----+ +---+----+ +---+----+ +---+----+   +----------+
-       | tools    | tools    | tools    |        | ESCALATE |
-       v          v          v          v        | to human |
-   +---------------------------------------+     +----------+
-   |   SQLite backend                      |
-   |   orders / payments / refunds tables  |
-   +---------------------------------------+
+Streamlit UI / FastAPI
+        |
+Durable conversation + request deduplication
+        |
+Task intake: direct plan / structured compound intake / LangGraph specialist
+        |
+Bounded steps + dependencies + approval preparation
+        |
+Unified ToolExecutor: schema, budgets, policy, ledger, deadlines
+        |
+SQLite business records + checkpoint + atomic local writes
+        |
+Goal verification + terminal result + unique conversation reply
 ```
 
 ## How it works
 
 1. A deterministic Task Intake layer extracts intents, order IDs, missing
    slots, unsupported requests, and explicit escalation requests. Clear tasks
-   use a direct read-only execution path; ambiguous tasks fall back to LangGraph.
+   use a bounded read-only plan; ambiguous compound tasks use structured model intake, and simple ambiguous tasks fall back to LangGraph.
 2. On the model path, the matching specialist agent decides which tool(s) to call and with what
    arguments (Gemini/Groq tool-calling), then turns the tool result into a
    natural-language reply.
@@ -122,8 +116,10 @@ LangGraph multi-agent orchestration · Gemini tool-calling (with Groq fallback)
 5. A model or tool failure is recorded with a stable error code and terminal
    reason. It is not mislabeled as a successful human escalation, and the
    whole graph is not replayed after a tool has already completed.
-6. Conversation memory tracks the last order discussed, so follow-up messages
-   like "refund it" resolve correctly across agent switches.
+6. SQLite conversation memory tracks the last order discussed and missing slots, so follow-up messages
+   like "refund it" or a supplied order number resolve across agent switches and service restarts.
+7. The durable entry point serializes each conversation. Successful tool results and model decisions
+   are reused on explicit recovery. Local payment/refund changes and their ledger entries commit together.
 
 ## Run locally
 
@@ -157,7 +153,7 @@ curl -X POST http://localhost:8000/chat \
 ```
 
 Every request is logged as structured JSON (method, path, status, latency).
-The Streamlit UI and the API both call the same `src/orchestrator.py`, so the
+The Streamlit UI and the API both use `src/durable.py` and `src/orchestrator.py`, so the
 agent logic is written once and consumed by either a human (UI) or a machine
 (API).
 
@@ -167,7 +163,7 @@ agent logic is written once and consumed by either a human (UI) or a machine
 pytest
 ```
 
-101 tests covering: deterministic Chinese/English task intake, compound
+Tests cover: deterministic Chinese/English task intake, compound
 intent parsing, clarification and unsupported requests, run-linked events,
 tool validation/budgets/deduplication, failure semantics, approval boundaries,
 the order-1004 Chinese regression, every SQLite business tool, specialist
@@ -187,8 +183,7 @@ python eval/run_eval.py --dry-run   # validates the dataset, no API calls
 python eval/run_eval.py             # calls the real LLM, reports accuracy
 ```
 
-On the bundled 21-scenario dataset (`eval/eval_dataset.json`) this currently
-scores 100% routing accuracy.
+The original 21-scenario dataset (`eval/eval_dataset.json`) is a live router benchmark. Its earlier recorded score is not a task-success measurement for the current runtime; run it with your configured provider to obtain current routing accuracy.
 
 ## Docker
 
@@ -228,3 +223,25 @@ repeat calls. Realistic cost: **$0**.
 - `GROQ_API_KEY` / `GROQ_MODEL` — optional fallback provider, defaults to
   `llama-3.3-70b-versatile`. Used automatically once all Gemini keys are
   exhausted.
+
+
+## Fixed task evaluation
+
+```bash
+python eval/run_task_eval.py --dry-run
+python eval/run_task_eval.py --output output/task-eval.json
+```
+
+The suite has 60 independent tasks / 71 turns across Chinese/English order queries,
+compound goals, follow-up context, clarification, human requests, business rejection,
+shopping, approval workflows, and injected model faults. Every task gets a fresh demo
+SQLite database. The judge checks physical backend observations and actual business
+state changes, so a fabricated success trace cannot pass. Network access is disabled;
+scripted model responses exercise runtime behavior, not live model quality. Reports
+include task success, actual model/tool counts and latency. Fake token usage is marked
+synthetic and monetary cost remains unknown. No unmeasured old-version improvement is claimed.
+
+For durable API request retries, supply a stable `request_id`. Read saved state with
+`GET /conversations/{session_id}` and restore a task with
+`POST /runs/{run_id}/resume`, body `{"session_id":"..."}`. Approval clients should echo
+the current `action_id` so stale UI confirmations are rejected.

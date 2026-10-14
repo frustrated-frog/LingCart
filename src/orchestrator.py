@@ -104,17 +104,8 @@ def route_node(state: SupportState) -> dict:
     if context:
         events = list(context.events)
     else:
-        events.append(
-        _event(
-            run_id,
-            len(events) + 1,
-            "model_call",
-            purpose="route",
-            status="SUCCEEDED",
-            duration_ms=duration_ms,
-            usage=extract_usage(result),
-        )
-    )
+        events.append(_event(run_id, len(events) + 1, "model_call", purpose="route", status="SUCCEEDED",
+                             duration_ms=duration_ms, usage=extract_usage(result)))
     events.append(
         _event(run_id, len(events) + 1, "route_decision", source="model", route=route, confidence=None)
     )
@@ -231,14 +222,44 @@ def _explicit_escalation(intake: TaskIntake, run_id: str, user_message: str) -> 
     return result
 
 
+def resolve_followup(request, history):
+    """Fill a missing order only from an unambiguous conversational reference."""
+    intake = analyze_request(request)
+    if re.fullmatch(r"(?:订单|order)?\s*#?\s*\d{4,}", request.strip(), re.IGNORECASE):
+        context = current_runtime()
+        clarification = ((context.snapshot.get("conversation") or {}).get("clarification") if context else None) or {}
+        if "order_id" in clarification.get("missing_slots", []):
+            order_id = re.search(r"\d{4,}", request).group()
+            return f"{clarification['request']}（订单 {order_id}）"
+        for message in reversed(history or []):
+            if getattr(message, "type", "") != "human":
+                continue
+            prior = analyze_request(as_text(message.content))
+            if prior.execution_mode == CLARIFICATION_REQUIRED and "order_id" in prior.missing_slots:
+                order_id = re.search(r"\d{4,}", request).group()
+                return f"{prior.request}（订单 {order_id}）"
+            break
+    reference = any(word in request.lower() for word in ("刚才", "那个", "这个", "它", "呢", "再", "继续", " it", "that order", "this order", "same order"))
+    if reference and "order_id" in intake.missing_slots:
+        for message in reversed(history or []):
+            prior = analyze_request(as_text(message.content))
+            if len(prior.entities.get("order_ids", [])) > 1:
+                return request
+            order_id = prior.entities.get("order_id")
+            if order_id:
+                return f"(Context: the customer was last discussing order {order_id}.)\n{request}"
+    return request
+
+
 def _run_orchestrator(user_message: str, history: list | None = None, pending_action: dict | None = None) -> dict:
     """Run the V1 intake and execution path without replaying the whole graph."""
 
     run_id = current_runtime().run_id if current_runtime() else uuid.uuid4().hex
     started_at = time.perf_counter()
+    user_message = resolve_followup(user_message, history)
     intake = analyze_request(user_message)
 
-    approval_decision = parse_approval_response(user_message) if pending_action else None
+    approval_decision = parse_approval_response(user_message, pending_action) if pending_action else None
     active_execution_mode = (
         "APPROVAL"
         if pending_action
@@ -274,11 +295,11 @@ def _run_orchestrator(user_message: str, history: list | None = None, pending_ac
         result = _simple_result(
             intake,
             run_id,
-            reply="请提供要处理的订单号，例如“查询订单 1004 的状态和物流”。",
+            reply="请提供要处理的订单号，例如“查询订单 1004 的状态和物流”。" if "order_id" in intake.missing_slots else intake.reason,
             agent="intake",
             route="CLARIFY",
             status="WAITING_CLARIFICATION",
-            terminal_reason="MISSING_ORDER_ID",
+            terminal_reason="MISSING_ORDER_ID" if "order_id" in intake.missing_slots else "AMBIGUOUS_ORDER_GOALS",
         )
     elif intake.execution_mode == UNSUPPORTED:
         result = _simple_result(
@@ -295,15 +316,19 @@ def _run_orchestrator(user_message: str, history: list | None = None, pending_ac
         result = _explicit_escalation(intake, run_id, user_message)
     elif intake.execution_mode == LLM_REQUIRED:
         try:
-            result = _GRAPH.invoke(
-                {
-                    "user_message": user_message,
-                    "history": history or [],
-                    "trace": [],
-                    "events": [],
-                    "run_id": run_id,
-                }
-            )
+            from src.planner import create_model_plan, needs_model_plan
+            if needs_model_plan(user_message):
+                planned_intake, plan = create_model_plan(user_message, history)
+                if planned_intake.execution_mode == CLARIFICATION_REQUIRED:
+                    result = _simple_result(planned_intake, run_id, reply="请补充复合任务所需的订单号。", agent="intake", route="CLARIFY",
+                                            status="WAITING_CLARIFICATION", terminal_reason="MISSING_ORDER_ID")
+                else:
+                    from src.task_plan import execute_plan
+                    result = execute_plan(planned_intake, run_id, plan=plan, source="model")
+                intake = planned_intake
+            else:
+                result = _GRAPH.invoke({"user_message": user_message, "history": history or [],
+                                        "trace": [], "events": [], "run_id": run_id})
             result.setdefault("run_id", run_id)
             result.setdefault("status", "SUCCEEDED")
             result.setdefault("terminal_reason", "COMPLETED")
@@ -386,5 +411,10 @@ def run_orchestrator(user_message: str, history: list | None = None, pending_act
                       error={"code": error.code, "message": str(error), "retryable": error.retryable}, pending_action=pending_action,
                       intake={}, usage={"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}, cached=False)
     result["events"] = context.events
+    model_events = [e for e in context.events if e["type"] == "model_call"]
+    if model_events or any(e["type"] == "model_started" for e in context.events):
+        result["usage"] = sum_usage(*(e.get("usage") for e in model_events)) if model_events else {"input_tokens": None, "output_tokens": None, "total_tokens": None}
+        if any(e["type"] == "error" and e.get("source") == "model" for e in context.events):
+            result["usage"] = {"input_tokens": None, "output_tokens": None, "total_tokens": None}
     result["budget"] = {"limits": context.limits.__dict__, "consumed": dict(context.counters)}
     return result

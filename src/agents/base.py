@@ -100,11 +100,16 @@ def _run_loop(agent_name, system_prompt, agent_tools, user_message, history, max
                 stop = True
                 break
             seen.add(fingerprint)
+            prior_event_count = len(recorder.events)
             try:
                 result, event = executor.execute(name, args)
                 trace.append(dict(run_id=run_id, agent=agent_name, tool=name, args=args,
                                   result=result, status=event["status"], duration_ms=event["duration_ms"]))
             except ApprovalRequired as approval:
+                for event in recorder.events[prior_event_count:]:
+                    if event["type"] == "tool_result":
+                        trace.append(dict(run_id=run_id, agent=agent_name, tool=event["tool"], args=event.get("args", {}),
+                                          result=event["result"], status=event["status"], duration_ms=event["duration_ms"]))
                 pending = approval.pending
                 status, reason = "WAITING_APPROVAL", "APPROVAL_REQUIRED"
                 reply = f"订单 {pending['order_id']} 的操作需要你明确确认，尚未修改支付或退款状态。"

@@ -38,7 +38,7 @@ def run_conversation(message, session_id, *, request_id=None, action_id=None, li
     history = [(HumanMessage if item["role"] == "user" else AIMessage)(content=item["content"])
                for item in snapshot.get("history", [])]
     pending = state.get("pending_action")
-    approval = pending if pending and store._is_confirmation(claim["request"]) else None
+    approval = pending if pending and store._is_confirmation(claim["request"], pending) else None
     context = RunRuntime(claim["run_id"], BudgetLimits(**claim["limits"]), store=store, token=claim["token"],
                          snapshot=snapshot, events=claim["events"], approval=approval)
     try:
@@ -58,6 +58,7 @@ def run_conversation(message, session_id, *, request_id=None, action_id=None, li
             memory = ConversationMemory(last_order_id=state.get("last_order_id"))
             memory.update_last_order_id(result["trace"])
             state.update(last_order_id=memory.last_order_id, pending_action=result["pending_action"])
+            state["clarification"] = result.get("intake") if result.get("terminal_reason") == "MISSING_ORDER_ID" else None
             return store.finish(claim["run_id"], claim["token"], result, state)
     except BaseException:
         # Simulated/process interruptions retain the saved prefix for explicit resume.

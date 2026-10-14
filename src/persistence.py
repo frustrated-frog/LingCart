@@ -92,7 +92,7 @@ class RunStore:
             checkpoint = session.get(Checkpoint, run.run_id)
             snapshot = checkpoint.payload
             pending = (snapshot.get("conversation") or {}).get("pending_action")
-            if pending and self._is_confirmation(run.request):
+            if pending and self._is_confirmation(run.request, pending):
                 action = session.get(PendingAction, pending.get("action_id"))
                 if action is None or action.session_id != session_id:
                     raise AgentError("INVALID_APPROVAL", "待确认操作不存在或不属于当前会话", retryable=False)
@@ -110,9 +110,9 @@ class RunStore:
                                                                       .order_by(AgentStep.sequence))]}
 
     @staticmethod
-    def _is_confirmation(request):
+    def _is_confirmation(request, pending=None):
         from src.intake import APPROVAL_CONFIRMED, parse_approval_response
-        return parse_approval_response(request) == APPROVAL_CONFIRMED
+        return parse_approval_response(request, pending) == APPROVAL_CONFIRMED
 
     def save_checkpoint(self, run_id, token, snapshot, event=None):
         with transaction() as session:

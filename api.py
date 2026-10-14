@@ -5,7 +5,10 @@ clean JSON API, so the system can be consumed by any frontend, mobile app, or
 another service. Endpoints:
 
     GET  /health   liveness check
-    POST /chat     send a message, get back the agent's reply + trace + usage
+    POST /chat     durable message execution with request deduplication
+    GET /conversations/{session_id}  saved state and active run
+    GET /runs/{run_id}  saved checkpoint, result and events
+    POST /runs/{run_id}/resume  explicitly resume interrupted work
 """
 
 import logging
@@ -109,7 +112,9 @@ def chat(req: ChatRequest):
     except AgentError as exc:
         raise HTTPException(status_code=409, detail={"code": exc.code, "message": str(exc), "retryable": exc.retryable}) from exc
     except Exception as exc:
-        raise HTTPException(status_code=502, detail="任务中断，可通过会话接口查找并恢复运行") from exc
+        raise HTTPException(status_code=502, detail={"code": "RUN_INTERRUPTED", "session_id": session_id,
+                            "run_id": RunStore().conversation(session_id)["active_run_id"],
+                            "message": "任务中断，可通过恢复接口继续执行"}) from exc
     return _response(session_id, result)
 
 

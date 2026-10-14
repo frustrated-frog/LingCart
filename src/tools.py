@@ -226,6 +226,8 @@ def get_payment_status(order_id: int) -> dict:
 
 def process_payment(order_id: int, method: str) -> dict:
     """Process a pending payment for an order using the given method. MODIFIES STATE."""
+    if method not in {"card", "paypal"}:
+        return {"success": False, "order_id": order_id, "reason": "Unsupported payment method; choose card or paypal."}
     with _session() as s:
         payment = s.query(Payment).filter_by(order_id=order_id).first()
         if not payment:

@@ -13,13 +13,14 @@ STATUSES = {"placed": "已下单", "shipped": "运输中", "delivered": "已送�
             "pending": "待支付", "paid": "已支付", "refunded": "已退款", "none": "暂无退款",
             "requested": "退款申请中", "approved": "退款已批准", "completed": "退款完成",
             "SUCCEEDED": "已完成", "FAILED": "执行失败", "ESCALATED": "已转人工", "WAITING_APPROVAL": "等待确认",
-            "WAITING_CLARIFICATION": "需要补充信息", "CANCELLED": "已取消"}
+            "WAITING_CLARIFICATION": "需要补充信息", "CANCELLED": "已取消", "PARTIAL": "部分完成",
+            "INTERRUPTED": "等待恢复", "RUNNING": "执行中", "REUSED": "复用已保存结果", "SKIPPED": "已跳过", "REJECTED": "无需执行"}
 TOOLS = {"get_order_status": "查询订单状态", "get_order_details": "读取订单详情", "track_shipment": "查询物流进度",
          "check_refund_eligibility": "核验退款资格", "initiate_refund": "发起退款申请", "get_payment_status": "查询支付状态",
          "process_payment": "处理支付", "answer_faq": "查询服务规则", "escalate_to_human": "转交人工客服",
          "search_products": "搜索商品目录", "compare_products": "对比商品参数"}
 AGENTS = {"order": "订单助手", "refund": "售后助手", "payment": "支付助手", "faq": "规则助手",
-          "shopping": "选购助手", "intake": "任务识别", "runtime": "运行系统", "escalate": "人工客服"}
+          "shopping": "选购助手", "intake": "任务识别", "runtime": "运行系统", "escalate": "人工客服", "orchestrator": "协作助手"}
 
 
 def esc(value) -> str:
@@ -95,6 +96,16 @@ def render_run(result: dict, detailed: bool = False) -> None:
         cols[1].metric("工具调用", len(calls))
         token_count = (result.get("usage") or {}).get("total_tokens")
         cols[2].metric("Token", str(token_count) if token_count is not None else "暂无数据")
+        plan = result.get("plan")
+        if plan:
+            st.markdown("#### 任务计划与完成情况")
+            st.dataframe([{"步骤": s["step_id"], "负责助手": AGENTS.get(s["specialist"], s["specialist"]),
+                           "操作": TOOLS.get(s["tool"], {"prepare_payment": "准备支付确认", "prepare_refund": "准备退款确认"}.get(s["tool"], s["tool"])),
+                           "前置步骤": "、".join(s["depends_on"]) or "—", "结果": STATUSES.get(s["status"], s["status"])}
+                          for s in plan["steps"]], hide_index=True, width="stretch")
+        if result.get("budget"):
+            with st.expander("运行预算"):
+                st.json(result["budget"])
     items = []
     for event in result.get("events", []):
         kind = event.get("type")
@@ -112,6 +123,8 @@ def render_run(result: dict, detailed: bool = False) -> None:
             items.append((STATUSES.get(event.get("status"), event.get("status", "已结束")), event.get("reason", "")))
         elif kind == "approval_decision":
             items.append(("收到操作确认", event.get("decision", "")))
+        elif kind == "verification":
+            items.append(("核验任务结果", "全部目标已完成" if event.get("all_goals_satisfied") else "仍有待完成或待确认的步骤"))
     if items:
         timeline(items)
     if detailed:

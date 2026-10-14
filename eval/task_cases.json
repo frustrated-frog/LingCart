@@ -1,0 +1,2698 @@
+{
+  "schema_version": 1,
+  "name": "Agent Core V1 fixed offline tasks",
+  "description": "54 independent customer-service tasks and 6 fault-injection tasks; every task is seeded independently. Multi-turn approval workflows count as one task.",
+  "cases": [
+    {
+      "id": "T01",
+      "category": "order",
+      "language": "zh",
+      "description": "查询已发货订单状态",
+      "turns": [
+        {
+          "message": "查询订单 1002 的状态",
+          "expect": {
+            "statuses": [
+              "SUCCEEDED"
+            ],
+            "tools": [
+              {
+                "name": "get_order_status",
+                "args": {
+                  "order_id": 1002
+                },
+                "result": {
+                  "order_id": 1002,
+                  "status": "shipped"
+                }
+              }
+            ],
+            "forbidden_tools": [
+              "process_payment",
+              "initiate_refund",
+              "escalate_to_human"
+            ],
+            "pending_present": false,
+            "max_model_invocations": 0
+          }
+        }
+      ]
+    },
+    {
+      "id": "T02",
+      "category": "order",
+      "language": "en",
+      "description": "英文订单详情包含真实商品和金额",
+      "turns": [
+        {
+          "message": "Show the details for order 1003.",
+          "expect": {
+            "statuses": [
+              "SUCCEEDED"
+            ],
+            "tools": [
+              {
+                "name": "get_order_details",
+                "args": {
+                  "order_id": 1003
+                },
+                "result": {
+                  "item": "USB-C Hub",
+                  "amount": 34.5,
+                  "customer_name": "Carla Diaz"
+                }
+              }
+            ],
+            "forbidden_tools": [
+              "process_payment",
+              "initiate_refund",
+              "escalate_to_human"
+            ],
+            "pending_present": false,
+            "max_model_invocations": 0
+          }
+        }
+      ]
+    },
+    {
+      "id": "T03",
+      "category": "order",
+      "language": "zh",
+      "description": "已送达物流包含实际签收事件",
+      "turns": [
+        {
+          "message": "查询订单 1004 的物流",
+          "expect": {
+            "statuses": [
+              "SUCCEEDED"
+            ],
+            "tools": [
+              {
+                "name": "track_shipment",
+                "args": {
+                  "order_id": 1004
+                },
+                "result": {
+                  "order_id": 1004,
+                  "status": "delivered"
+                }
+              },
+              {
+                "name": "track_shipment",
+                "args": {
+                  "order_id": 1004
+                },
+                "result": {
+                  "events": [
+                    {
+                      "timestamp": "2026-05-15T10:30:00",
+                      "description": "订单已创建"
+                    },
+                    {
+                      "timestamp": "2026-05-16T10:30:00",
+                      "description": "仓库已发货"
+                    },
+                    {
+                      "timestamp": "2026-05-17T10:30:00",
+                      "description": "包裹运输中"
+                    },
+                    {
+                      "timestamp": "2026-05-19T10:30:00",
+                      "description": "派送中"
+                    },
+                    {
+                      "timestamp": "2026-05-20T10:30:00",
+                      "description": "包裹已签收"
+                    }
+                  ]
+                }
+              }
+            ],
+            "forbidden_tools": [
+              "process_payment",
+              "initiate_refund",
+              "escalate_to_human"
+            ],
+            "pending_present": false,
+            "max_model_invocations": 0
+          }
+        }
+      ]
+    },
+    {
+      "id": "T04",
+      "category": "order",
+      "language": "en",
+      "description": "取消订单不能声称包裹在途",
+      "turns": [
+        {
+          "message": "Track the shipment for order 1005.",
+          "expect": {
+            "statuses": [
+              "SUCCEEDED"
+            ],
+            "tools": [
+              {
+                "name": "track_shipment",
+                "args": {
+                  "order_id": 1005
+                },
+                "result": {
+                  "order_id": 1005,
+                  "status": "cancelled"
+                }
+              }
+            ],
+            "forbidden_tools": [
+              "process_payment",
+              "initiate_refund",
+              "escalate_to_human"
+            ],
+            "pending_present": false,
+            "max_model_invocations": 0,
+            "reply_contains_any": [
+              "取消",
+              "cancelled"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "T05",
+      "category": "data_absence",
+      "language": "zh",
+      "description": "不存在的订单应明确失败而非编造状态",
+      "turns": [
+        {
+          "message": "查询订单 9999 的状态",
+          "expect": {
+            "statuses": [
+              "FAILED"
+            ],
+            "tools": [
+              {
+                "name": "get_order_status",
+                "args": {
+                  "order_id": 9999
+                }
+              }
+            ],
+            "forbidden_tools": [
+              "process_payment",
+              "initiate_refund",
+              "escalate_to_human"
+            ],
+            "pending_present": false,
+            "max_model_invocations": 0,
+            "terminal_reason": "BUSINESS_DATA_NOT_FOUND",
+            "error_code": "BUSINESS_DATA_NOT_FOUND"
+          }
+        }
+      ]
+    },
+    {
+      "id": "T06",
+      "category": "data_absence",
+      "language": "en",
+      "description": "订单存在但支付记录缺失",
+      "turns": [
+        {
+          "message": "Check the payment status for order 1003.",
+          "expect": {
+            "statuses": [
+              "FAILED"
+            ],
+            "tools": [
+              {
+                "name": "get_payment_status",
+                "args": {
+                  "order_id": 1003
+                }
+              }
+            ],
+            "forbidden_tools": [
+              "process_payment",
+              "initiate_refund",
+              "escalate_to_human"
+            ],
+            "pending_present": false,
+            "max_model_invocations": 0,
+            "terminal_reason": "BUSINESS_DATA_NOT_FOUND"
+          }
+        }
+      ],
+      "fixture": {
+        "remove_payments": [
+          1003
+        ]
+      }
+    },
+    {
+      "id": "T07",
+      "category": "compound",
+      "language": "zh",
+      "description": "同一订单状态与物流都要完成",
+      "turns": [
+        {
+          "message": "查订单 1002 的状态和物流进度",
+          "expect": {
+            "statuses": [
+              "SUCCEEDED"
+            ],
+            "tools": [
+              {
+                "name": "get_order_status",
+                "args": {
+                  "order_id": 1002
+                },
+                "result": {
+                  "order_id": 1002,
+                  "status": "shipped"
+                }
+              },
+              {
+                "name": "track_shipment",
+                "args": {
+                  "order_id": 1002
+                },
+                "result": {
+                  "order_id": 1002,
+                  "status": "shipped"
+                }
+              }
+            ],
+            "forbidden_tools": [
+              "process_payment",
+              "initiate_refund",
+              "escalate_to_human"
+            ],
+            "pending_present": false,
+            "max_model_invocations": 0
+          }
+        }
+      ]
+    },
+    {
+      "id": "T08",
+      "category": "compound",
+      "language": "en",
+      "description": "订单详情与支付状态都要完成",
+      "turns": [
+        {
+          "message": "Show order 1001 details and payment status.",
+          "expect": {
+            "statuses": [
+              "SUCCEEDED"
+            ],
+            "tools": [
+              {
+                "name": "get_order_details",
+                "args": {
+                  "order_id": 1001
+                },
+                "result": {
+                  "item": "Wireless Headphones",
+                  "amount": 79.99
+                }
+              },
+              {
+                "name": "get_payment_status",
+                "args": {
+                  "order_id": 1001
+                },
+                "result": {
+                  "order_id": 1001,
+                  "status": "paid"
+                }
+              }
+            ],
+            "forbidden_tools": [
+              "process_payment",
+              "initiate_refund",
+              "escalate_to_human"
+            ],
+            "pending_present": false,
+            "max_model_invocations": 0
+          }
+        }
+      ]
+    },
+    {
+      "id": "T09",
+      "category": "compound",
+      "language": "zh",
+      "description": "先查物流再查退款资格",
+      "turns": [
+        {
+          "message": "查询订单 1001 的物流，再判断能不能退款",
+          "expect": {
+            "statuses": [
+              "SUCCEEDED"
+            ],
+            "tools": [
+              {
+                "name": "track_shipment",
+                "args": {
+                  "order_id": 1001
+                },
+                "result": {
+                  "order_id": 1001,
+                  "status": "delivered"
+                }
+              },
+              {
+                "name": "check_refund_eligibility",
+                "args": {
+                  "order_id": 1001
+                },
+                "result": {
+                  "order_id": 1001,
+                  "eligible": true
+                }
+              }
+            ],
+            "forbidden_tools": [
+              "process_payment",
+              "initiate_refund",
+              "escalate_to_human"
+            ],
+            "pending_present": false,
+            "max_model_invocations": 0
+          }
+        }
+      ]
+    },
+    {
+      "id": "T10",
+      "category": "compound",
+      "language": "zh",
+      "description": "两个订单必须分别查询不能只保留最后一个",
+      "turns": [
+        {
+          "message": "分别查询订单 1001 和订单 1002 的状态",
+          "expect": {
+            "statuses": [
+              "SUCCEEDED"
+            ],
+            "tools": [
+              {
+                "name": "get_order_status",
+                "args": {
+                  "order_id": 1001
+                },
+                "result": {
+                  "order_id": 1001,
+                  "status": "delivered"
+                }
+              },
+              {
+                "name": "get_order_status",
+                "args": {
+                  "order_id": 1002
+                },
+                "result": {
+                  "order_id": 1002,
+                  "status": "shipped"
+                }
+              }
+            ],
+            "forbidden_tools": [
+              "process_payment",
+              "initiate_refund",
+              "escalate_to_human"
+            ],
+            "pending_present": false,
+            "max_model_invocations": 0
+          }
+        }
+      ]
+    },
+    {
+      "id": "T11",
+      "category": "compound",
+      "language": "zh",
+      "description": "订单查询与通用配送政策都要回答",
+      "turns": [
+        {
+          "message": "查订单 1002 的状态，并告诉我标准配送多久",
+          "expect": {
+            "statuses": [
+              "SUCCEEDED"
+            ],
+            "tools": [
+              {
+                "name": "get_order_status",
+                "args": {
+                  "order_id": 1002
+                },
+                "result": {
+                  "order_id": 1002,
+                  "status": "shipped"
+                }
+              },
+              {
+                "name": "answer_faq"
+              }
+            ],
+            "forbidden_tools": [
+              "process_payment",
+              "initiate_refund",
+              "escalate_to_human"
+            ],
+            "pending_present": false,
+            "max_model_invocations": 0,
+            "reply_contains_any": [
+              "3–5",
+              "3-5"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "T12",
+      "category": "compound",
+      "language": "zh",
+      "description": "订单状态与预算商品搜索都要执行",
+      "turns": [
+        {
+          "message": "查询订单 1002 的状态，同时推荐 500 元以内的耳机",
+          "expect": {
+            "statuses": [
+              "SUCCEEDED"
+            ],
+            "tools": [
+              {
+                "name": "get_order_status",
+                "args": {
+                  "order_id": 1002
+                },
+                "result": {
+                  "order_id": 1002,
+                  "status": "shipped"
+                }
+              },
+              {
+                "name": "search_products",
+                "args": {
+                  "category": "耳机",
+                  "query": "",
+                  "max_price": 500
+                },
+                "products": {
+                  "category": "耳机",
+                  "min_count": 1,
+                  "max_price": 500
+                }
+              }
+            ],
+            "forbidden_tools": [
+              "process_payment",
+              "initiate_refund",
+              "escalate_to_human"
+            ],
+            "pending_present": false,
+            "max_model_invocations": 0
+          }
+        }
+      ]
+    },
+    {
+      "id": "T13",
+      "category": "compound",
+      "language": "zh",
+      "description": "商品搜索与指定商品对比都要执行",
+      "turns": [
+        {
+          "message": "先搜索预算 500 元的降噪耳机，再比较 P1102 和 P1103",
+          "expect": {
+            "statuses": [
+              "SUCCEEDED"
+            ],
+            "tools": [
+              {
+                "name": "search_products",
+                "args": {
+                  "category": "耳机",
+                  "query": "降噪",
+                  "max_price": 500
+                },
+                "products": {
+                  "category": "耳机",
+                  "min_count": 1,
+                  "max_price": 500
+                }
+              },
+              {
+                "name": "compare_products",
+                "args": {
+                  "product_ids": [
+                    "P1102",
+                    "P1103"
+                  ]
+                },
+                "products": {
+                  "ids": [
+                    "P1102",
+                    "P1103"
+                  ],
+                  "min_count": 2
+                }
+              }
+            ],
+            "forbidden_tools": [
+              "process_payment",
+              "initiate_refund",
+              "escalate_to_human"
+            ],
+            "pending_present": false,
+            "max_model_invocations": 0
+          }
+        }
+      ]
+    },
+    {
+      "id": "T14",
+      "category": "context",
+      "language": "zh",
+      "description": "history 中明确订单可用于代词追问",
+      "turns": [
+        {
+          "message": "刚才那个订单物流到哪里了",
+          "expect": {
+            "statuses": [
+              "SUCCEEDED"
+            ],
+            "tools": [
+              {
+                "name": "track_shipment",
+                "args": {
+                  "order_id": 1002
+                },
+                "result": {
+                  "order_id": 1002,
+                  "status": "shipped"
+                }
+              }
+            ],
+            "forbidden_tools": [
+              "process_payment",
+              "initiate_refund",
+              "escalate_to_human"
+            ],
+            "pending_present": false,
+            "max_model_invocations": 0
+          },
+          "history": [
+            {
+              "role": "user",
+              "content": "请查询订单 1002 的状态"
+            },
+            {
+              "role": "assistant",
+              "content": "订单 1002 当前运输中。"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "T15",
+      "category": "context",
+      "language": "en",
+      "description": "兼容显式 Context 订单说明",
+      "turns": [
+        {
+          "message": "(Context: the customer was last discussing order 1003.)\nWhat is the payment status?",
+          "expect": {
+            "statuses": [
+              "SUCCEEDED"
+            ],
+            "tools": [
+              {
+                "name": "get_payment_status",
+                "args": {
+                  "order_id": 1003
+                },
+                "result": {
+                  "order_id": 1003,
+                  "status": "pending"
+                }
+              }
+            ],
+            "forbidden_tools": [
+              "process_payment",
+              "initiate_refund",
+              "escalate_to_human"
+            ],
+            "pending_present": false,
+            "max_model_invocations": 0
+          }
+        }
+      ]
+    },
+    {
+      "id": "T16",
+      "category": "context",
+      "language": "zh",
+      "description": "新消息明确订单覆盖上一个订单",
+      "turns": [
+        {
+          "message": "查询订单 1007 的状态",
+          "expect": {
+            "statuses": [
+              "SUCCEEDED"
+            ],
+            "tools": [
+              {
+                "name": "get_order_status",
+                "args": {
+                  "order_id": 1007
+                },
+                "result": {
+                  "order_id": 1007,
+                  "status": "shipped"
+                }
+              }
+            ],
+            "forbidden_tools": [
+              "process_payment",
+              "initiate_refund",
+              "escalate_to_human"
+            ],
+            "pending_present": false,
+            "max_model_invocations": 0
+          },
+          "history": [
+            {
+              "role": "user",
+              "content": "查询订单 1001 的状态"
+            },
+            {
+              "role": "assistant",
+              "content": "订单 1001 已送达。"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "T17",
+      "category": "clarification",
+      "language": "zh",
+      "description": "缺订单号后只补订单号能继续原任务",
+      "turns": [
+        {
+          "message": "查询订单的物流进度",
+          "expect": {
+            "statuses": [
+              "WAITING_CLARIFICATION"
+            ],
+            "tools": [],
+            "forbidden_tools": [
+              "process_payment",
+              "initiate_refund",
+              "escalate_to_human"
+            ],
+            "pending_present": false,
+            "max_model_invocations": 0,
+            "terminal_reason": "MISSING_ORDER_ID"
+          }
+        },
+        {
+          "message": "1002",
+          "expect": {
+            "statuses": [
+              "SUCCEEDED"
+            ],
+            "tools": [
+              {
+                "name": "track_shipment",
+                "args": {
+                  "order_id": 1002
+                },
+                "result": {
+                  "order_id": 1002,
+                  "status": "shipped"
+                }
+              }
+            ],
+            "forbidden_tools": [
+              "process_payment",
+              "initiate_refund",
+              "escalate_to_human"
+            ],
+            "pending_present": false,
+            "max_model_invocations": 0
+          }
+        }
+      ]
+    },
+    {
+      "id": "T18",
+      "category": "clarification",
+      "language": "zh",
+      "description": "无上下文的代词追问必须澄清订单号",
+      "turns": [
+        {
+          "message": "它现在物流到哪了",
+          "expect": {
+            "statuses": [
+              "WAITING_CLARIFICATION"
+            ],
+            "tools": [],
+            "forbidden_tools": [
+              "process_payment",
+              "initiate_refund",
+              "escalate_to_human"
+            ],
+            "pending_present": false,
+            "max_model_invocations": 0,
+            "terminal_reason": "MISSING_ORDER_ID"
+          }
+        }
+      ]
+    },
+    {
+      "id": "T19",
+      "category": "clarification",
+      "language": "en",
+      "description": "英文退款请求缺少订单号必须澄清",
+      "turns": [
+        {
+          "message": "I want a refund.",
+          "expect": {
+            "statuses": [
+              "WAITING_CLARIFICATION"
+            ],
+            "tools": [],
+            "forbidden_tools": [
+              "process_payment",
+              "initiate_refund",
+              "escalate_to_human"
+            ],
+            "pending_present": false,
+            "max_model_invocations": 0,
+            "terminal_reason": "MISSING_ORDER_ID"
+          }
+        }
+      ]
+    },
+    {
+      "id": "T20",
+      "category": "clarification",
+      "language": "zh",
+      "description": "付款任务缺少订单号必须澄清",
+      "turns": [
+        {
+          "message": "帮我支付",
+          "expect": {
+            "statuses": [
+              "WAITING_CLARIFICATION"
+            ],
+            "tools": [],
+            "forbidden_tools": [
+              "process_payment",
+              "initiate_refund",
+              "escalate_to_human"
+            ],
+            "pending_present": false,
+            "max_model_invocations": 0,
+            "terminal_reason": "MISSING_ORDER_ID"
+          }
+        }
+      ]
+    },
+    {
+      "id": "T21",
+      "category": "clarification",
+      "language": "zh",
+      "description": "待付款缺支付方式时确认不能扣款",
+      "turns": [
+        {
+          "message": "帮我支付订单 1003",
+          "expect": {
+            "statuses": [
+              "WAITING_APPROVAL"
+            ],
+            "tools": [
+              {
+                "name": "get_payment_status",
+                "args": {
+                  "order_id": 1003
+                },
+                "result": {
+                  "order_id": 1003,
+                  "status": "pending"
+                }
+              }
+            ],
+            "forbidden_tools": [
+              "process_payment",
+              "initiate_refund",
+              "escalate_to_human"
+            ],
+            "pending_present": true,
+            "max_model_invocations": 0,
+            "pending_action": {
+              "type": "PROCESS_PAYMENT",
+              "order_id": 1003,
+              "requires_approval": true
+            },
+            "terminal_reason": "APPROVAL_REQUIRED",
+            "db": {
+              "payments.1003.status": "pending"
+            }
+          }
+        },
+        {
+          "message": "确认",
+          "expect": {
+            "statuses": [
+              "WAITING_CLARIFICATION"
+            ],
+            "tools": [],
+            "forbidden_tools": [
+              "process_payment",
+              "initiate_refund",
+              "escalate_to_human"
+            ],
+            "pending_present": true,
+            "max_model_invocations": 0,
+            "terminal_reason": "MISSING_PAYMENT_METHOD",
+            "db": {
+              "payments.1003.status": "pending"
+            }
+          }
+        },
+        {
+          "message": "确认使用 card 支付",
+          "expect": {
+            "statuses": [
+              "SUCCEEDED"
+            ],
+            "tools": [
+              {
+                "name": "process_payment",
+                "args": {
+                  "order_id": 1003,
+                  "method": "card"
+                },
+                "result": {
+                  "success": true,
+                  "status": "paid"
+                }
+              }
+            ],
+            "forbidden_tools": [
+              "initiate_refund",
+              "escalate_to_human"
+            ],
+            "pending_present": false,
+            "max_model_invocations": 0,
+            "db": {
+              "payments.1003.status": "paid",
+              "payments.1003.method": "card"
+            },
+            "allowed_mutations": [
+              "payments.1003.status",
+              "payments.1003.method"
+            ],
+            "max_physical_calls_per_tool": {
+              "process_payment": 1
+            }
+          }
+        }
+      ],
+      "fixture": {
+        "payment_updates": {
+          "1003": {
+            "method": ""
+          }
+        }
+      }
+    },
+    {
+      "id": "T22",
+      "category": "human",
+      "language": "zh",
+      "description": "明确人工请求创建有证据的工单",
+      "turns": [
+        {
+          "message": "请直接转人工客服",
+          "expect": {
+            "statuses": [
+              "ESCALATED"
+            ],
+            "tools": [
+              {
+                "name": "escalate_to_human",
+                "result": {
+                  "escalated": true
+                }
+              }
+            ],
+            "forbidden_tools": [
+              "process_payment",
+              "initiate_refund"
+            ],
+            "pending_present": false,
+            "max_model_invocations": 0,
+            "terminal_reason": "USER_REQUESTED_ESCALATION"
+          }
+        }
+      ]
+    },
+    {
+      "id": "T23",
+      "category": "human",
+      "language": "en",
+      "description": "英文真人客服请求不消耗模型调用",
+      "turns": [
+        {
+          "message": "I want to talk to a human agent.",
+          "expect": {
+            "statuses": [
+              "ESCALATED"
+            ],
+            "tools": [
+              {
+                "name": "escalate_to_human",
+                "result": {
+                  "escalated": true
+                }
+              }
+            ],
+            "forbidden_tools": [
+              "process_payment",
+              "initiate_refund"
+            ],
+            "pending_present": false,
+            "max_model_invocations": 0,
+            "terminal_reason": "USER_REQUESTED_ESCALATION"
+          }
+        }
+      ]
+    },
+    {
+      "id": "T24",
+      "category": "human",
+      "language": "zh",
+      "description": "人工优先的付款消息不得误扣款",
+      "turns": [
+        {
+          "message": "订单 1003 我不想自动支付，请转人工客服",
+          "expect": {
+            "statuses": [
+              "ESCALATED"
+            ],
+            "tools": [
+              {
+                "name": "escalate_to_human",
+                "result": {
+                  "escalated": true
+                }
+              }
+            ],
+            "forbidden_tools": [
+              "process_payment",
+              "initiate_refund"
+            ],
+            "pending_present": false,
+            "max_model_invocations": 0,
+            "terminal_reason": "USER_REQUESTED_ESCALATION",
+            "db": {
+              "payments.1003.status": "pending"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "T25",
+      "category": "unsupported",
+      "language": "zh",
+      "description": "天气请求规则拒绝且不伪装人工工单",
+      "turns": [
+        {
+          "message": "帮我查一下今天的天气",
+          "expect": {
+            "statuses": [
+              "FAILED"
+            ],
+            "tools": [],
+            "forbidden_tools": [
+              "process_payment",
+              "initiate_refund",
+              "escalate_to_human"
+            ],
+            "pending_present": false,
+            "max_model_invocations": 0,
+            "terminal_reason": "UNSUPPORTED_INTENT",
+            "error_code": "UNSUPPORTED_INTENT"
+          }
+        }
+      ]
+    },
+    {
+      "id": "T26",
+      "category": "unsupported",
+      "language": "en",
+      "description": "英文非业务股票行情请求规则拒绝",
+      "turns": [
+        {
+          "message": "What is the stock price today?",
+          "expect": {
+            "statuses": [
+              "FAILED"
+            ],
+            "tools": [],
+            "forbidden_tools": [
+              "process_payment",
+              "initiate_refund",
+              "escalate_to_human"
+            ],
+            "pending_present": false,
+            "max_model_invocations": 0,
+            "terminal_reason": "UNSUPPORTED_INTENT",
+            "error_code": "UNSUPPORTED_INTENT"
+          }
+        }
+      ]
+    },
+    {
+      "id": "T27",
+      "category": "refund",
+      "language": "en",
+      "description": "仅查退款资格不能自动提交",
+      "turns": [
+        {
+          "message": "Is order 1009 eligible for a refund?",
+          "expect": {
+            "statuses": [
+              "SUCCEEDED"
+            ],
+            "tools": [
+              {
+                "name": "check_refund_eligibility",
+                "args": {
+                  "order_id": 1009
+                },
+                "result": {
+                  "order_id": 1009,
+                  "eligible": true
+                }
+              }
+            ],
+            "forbidden_tools": [
+              "process_payment",
+              "initiate_refund",
+              "escalate_to_human"
+            ],
+            "pending_present": false,
+            "max_model_invocations": 0,
+            "db": {
+              "refunds.1009.status": "none"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "T28",
+      "category": "rule_rejection",
+      "language": "zh",
+      "description": "未送达订单的退款请求应拒绝",
+      "turns": [
+        {
+          "message": "订单 1002 我要退款",
+          "expect": {
+            "statuses": [
+              "SUCCEEDED"
+            ],
+            "tools": [
+              {
+                "name": "check_refund_eligibility",
+                "args": {
+                  "order_id": 1002
+                },
+                "result": {
+                  "order_id": 1002,
+                  "eligible": false
+                }
+              }
+            ],
+            "forbidden_tools": [
+              "process_payment",
+              "initiate_refund",
+              "escalate_to_human"
+            ],
+            "pending_present": false,
+            "max_model_invocations": 0,
+            "terminal_reason": "BUSINESS_RULE_REJECTED",
+            "db": {
+              "refunds.1002.status": "none"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "T29",
+      "category": "rule_rejection",
+      "language": "en",
+      "description": "已有退款申请不能重复提交",
+      "turns": [
+        {
+          "message": "I want a refund for order 1004.",
+          "expect": {
+            "statuses": [
+              "SUCCEEDED"
+            ],
+            "tools": [
+              {
+                "name": "check_refund_eligibility",
+                "args": {
+                  "order_id": 1004
+                },
+                "result": {
+                  "order_id": 1004,
+                  "eligible": false
+                }
+              }
+            ],
+            "forbidden_tools": [
+              "process_payment",
+              "initiate_refund",
+              "escalate_to_human"
+            ],
+            "pending_present": false,
+            "max_model_invocations": 0,
+            "terminal_reason": "BUSINESS_RULE_REJECTED",
+            "db": {
+              "refunds.1004.status": "requested"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "T30",
+      "category": "rule_rejection",
+      "language": "zh",
+      "description": "已退款订单不可再次付款",
+      "turns": [
+        {
+          "message": "帮我支付订单 1005",
+          "expect": {
+            "statuses": [
+              "SUCCEEDED"
+            ],
+            "tools": [
+              {
+                "name": "get_payment_status",
+                "args": {
+                  "order_id": 1005
+                },
+                "result": {
+                  "order_id": 1005,
+                  "status": "refunded"
+                }
+              }
+            ],
+            "forbidden_tools": [
+              "process_payment",
+              "initiate_refund",
+              "escalate_to_human"
+            ],
+            "pending_present": false,
+            "max_model_invocations": 0,
+            "terminal_reason": "NO_ACTION_NEEDED",
+            "db": {
+              "payments.1005.status": "refunded"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "T31",
+      "category": "rule_rejection",
+      "language": "en",
+      "description": "已支付订单不能再次扣款",
+      "turns": [
+        {
+          "message": "Pay for order 1001.",
+          "expect": {
+            "statuses": [
+              "SUCCEEDED"
+            ],
+            "tools": [
+              {
+                "name": "get_payment_status",
+                "args": {
+                  "order_id": 1001
+                },
+                "result": {
+                  "order_id": 1001,
+                  "status": "paid"
+                }
+              }
+            ],
+            "forbidden_tools": [
+              "process_payment",
+              "initiate_refund",
+              "escalate_to_human"
+            ],
+            "pending_present": false,
+            "max_model_invocations": 0,
+            "terminal_reason": "NO_ACTION_NEEDED",
+            "db": {
+              "payments.1001.status": "paid"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "T32",
+      "category": "payment",
+      "language": "zh",
+      "description": "查询待支付状态没有扣款副作用",
+      "turns": [
+        {
+          "message": "订单 1008 支付了吗",
+          "expect": {
+            "statuses": [
+              "SUCCEEDED"
+            ],
+            "tools": [
+              {
+                "name": "get_payment_status",
+                "args": {
+                  "order_id": 1008
+                },
+                "result": {
+                  "order_id": 1008,
+                  "status": "pending"
+                }
+              }
+            ],
+            "forbidden_tools": [
+              "process_payment",
+              "initiate_refund",
+              "escalate_to_human"
+            ],
+            "pending_present": false,
+            "max_model_invocations": 0,
+            "db": {
+              "payments.1008.status": "pending"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "T33",
+      "category": "payment_approval",
+      "language": "zh",
+      "description": "付款请求先等确认再准确改变数据库",
+      "turns": [
+        {
+          "message": "帮我支付订单 1003",
+          "expect": {
+            "statuses": [
+              "WAITING_APPROVAL"
+            ],
+            "tools": [
+              {
+                "name": "get_payment_status",
+                "args": {
+                  "order_id": 1003
+                },
+                "result": {
+                  "order_id": 1003,
+                  "status": "pending"
+                }
+              }
+            ],
+            "forbidden_tools": [
+              "process_payment",
+              "initiate_refund",
+              "escalate_to_human"
+            ],
+            "pending_present": true,
+            "max_model_invocations": 0,
+            "pending_action": {
+              "type": "PROCESS_PAYMENT",
+              "order_id": 1003,
+              "requires_approval": true
+            },
+            "terminal_reason": "APPROVAL_REQUIRED",
+            "db": {
+              "payments.1003.status": "pending"
+            }
+          }
+        },
+        {
+          "message": "确认使用 card 支付",
+          "expect": {
+            "statuses": [
+              "SUCCEEDED"
+            ],
+            "tools": [
+              {
+                "name": "process_payment",
+                "args": {
+                  "order_id": 1003,
+                  "method": "card"
+                },
+                "result": {
+                  "success": true,
+                  "status": "paid"
+                }
+              }
+            ],
+            "forbidden_tools": [
+              "initiate_refund",
+              "escalate_to_human"
+            ],
+            "pending_present": false,
+            "max_model_invocations": 0,
+            "db": {
+              "payments.1003.status": "paid",
+              "payments.1003.method": "card"
+            },
+            "allowed_mutations": [
+              "payments.1003.status",
+              "payments.1003.method"
+            ],
+            "max_physical_calls_per_tool": {
+              "process_payment": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "T34",
+      "category": "payment_approval",
+      "language": "en",
+      "description": "英文付款取消不改变待支付状态",
+      "turns": [
+        {
+          "message": "Pay order 1008.",
+          "expect": {
+            "statuses": [
+              "WAITING_APPROVAL"
+            ],
+            "tools": [
+              {
+                "name": "get_payment_status",
+                "args": {
+                  "order_id": 1008
+                },
+                "result": {
+                  "order_id": 1008,
+                  "status": "pending"
+                }
+              }
+            ],
+            "forbidden_tools": [
+              "process_payment",
+              "initiate_refund",
+              "escalate_to_human"
+            ],
+            "pending_present": true,
+            "max_model_invocations": 0,
+            "pending_action": {
+              "type": "PROCESS_PAYMENT",
+              "order_id": 1008,
+              "requires_approval": true
+            },
+            "terminal_reason": "APPROVAL_REQUIRED",
+            "db": {
+              "payments.1008.status": "pending"
+            }
+          }
+        },
+        {
+          "message": "Cancel, never mind.",
+          "expect": {
+            "statuses": [
+              "CANCELLED"
+            ],
+            "tools": [],
+            "forbidden_tools": [
+              "process_payment",
+              "initiate_refund",
+              "escalate_to_human"
+            ],
+            "pending_present": false,
+            "max_model_invocations": 0,
+            "terminal_reason": "USER_CANCELLED_ACTION",
+            "db": {
+              "payments.1008.status": "pending"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "T35",
+      "category": "payment_approval",
+      "language": "zh",
+      "description": "等待付款期间只读查询不能丢失待确认操作",
+      "turns": [
+        {
+          "message": "帮我支付订单 1003",
+          "expect": {
+            "statuses": [
+              "WAITING_APPROVAL"
+            ],
+            "tools": [
+              {
+                "name": "get_payment_status",
+                "args": {
+                  "order_id": 1003
+                },
+                "result": {
+                  "order_id": 1003,
+                  "status": "pending"
+                }
+              }
+            ],
+            "forbidden_tools": [
+              "process_payment",
+              "initiate_refund",
+              "escalate_to_human"
+            ],
+            "pending_present": true,
+            "max_model_invocations": 0,
+            "pending_action": {
+              "type": "PROCESS_PAYMENT",
+              "order_id": 1003,
+              "requires_approval": true
+            },
+            "terminal_reason": "APPROVAL_REQUIRED",
+            "db": {
+              "payments.1003.status": "pending"
+            }
+          }
+        },
+        {
+          "message": "查询订单 1002 的状态",
+          "expect": {
+            "statuses": [
+              "SUCCEEDED"
+            ],
+            "tools": [
+              {
+                "name": "get_order_status",
+                "args": {
+                  "order_id": 1002
+                },
+                "result": {
+                  "order_id": 1002,
+                  "status": "shipped"
+                }
+              }
+            ],
+            "forbidden_tools": [
+              "process_payment",
+              "initiate_refund",
+              "escalate_to_human"
+            ],
+            "pending_present": true,
+            "max_model_invocations": 0,
+            "pending_action": {
+              "type": "PROCESS_PAYMENT",
+              "order_id": 1003
+            }
+          }
+        },
+        {
+          "message": "确认使用 paypal 支付",
+          "expect": {
+            "statuses": [
+              "SUCCEEDED"
+            ],
+            "tools": [
+              {
+                "name": "process_payment",
+                "args": {
+                  "order_id": 1003,
+                  "method": "paypal"
+                },
+                "result": {
+                  "success": true,
+                  "status": "paid"
+                }
+              }
+            ],
+            "forbidden_tools": [
+              "initiate_refund",
+              "escalate_to_human"
+            ],
+            "pending_present": false,
+            "max_model_invocations": 0,
+            "db": {
+              "payments.1003.status": "paid",
+              "payments.1003.method": "paypal"
+            },
+            "allowed_mutations": [
+              "payments.1003.status",
+              "payments.1003.method"
+            ],
+            "max_physical_calls_per_tool": {
+              "process_payment": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "T36",
+      "category": "refund_approval",
+      "language": "en",
+      "description": "英文退款必须在下一轮明确确认后写数据库",
+      "turns": [
+        {
+          "message": "Start a refund for order 1006.",
+          "expect": {
+            "statuses": [
+              "WAITING_APPROVAL"
+            ],
+            "tools": [
+              {
+                "name": "get_order_status",
+                "args": {
+                  "order_id": 1006
+                },
+                "result": {
+                  "order_id": 1006,
+                  "status": "delivered"
+                }
+              },
+              {
+                "name": "check_refund_eligibility",
+                "args": {
+                  "order_id": 1006
+                },
+                "result": {
+                  "order_id": 1006,
+                  "eligible": true
+                }
+              }
+            ],
+            "forbidden_tools": [
+              "process_payment",
+              "initiate_refund",
+              "escalate_to_human"
+            ],
+            "pending_present": true,
+            "max_model_invocations": 0,
+            "pending_action": {
+              "type": "INITIATE_REFUND",
+              "order_id": 1006,
+              "requires_approval": true
+            },
+            "terminal_reason": "APPROVAL_REQUIRED",
+            "db": {
+              "refunds.1006.status": "none"
+            }
+          }
+        },
+        {
+          "message": "Yes, proceed.",
+          "expect": {
+            "statuses": [
+              "SUCCEEDED"
+            ],
+            "tools": [
+              {
+                "name": "initiate_refund",
+                "args": {
+                  "order_id": 1006
+                },
+                "result": {
+                  "success": true,
+                  "status": "requested"
+                }
+              }
+            ],
+            "forbidden_tools": [
+              "process_payment",
+              "escalate_to_human"
+            ],
+            "pending_present": false,
+            "max_model_invocations": 0,
+            "db": {
+              "refunds.1006.status": "requested"
+            },
+            "allowed_mutations": [
+              "refunds.1006.status",
+              "refunds.1006.reason"
+            ],
+            "max_physical_calls_per_tool": {
+              "initiate_refund": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "T37",
+      "category": "refund_approval",
+      "language": "zh",
+      "description": "退款取消后仍保持 none",
+      "turns": [
+        {
+          "message": "订单 1001 商品损坏了，我想退款",
+          "expect": {
+            "statuses": [
+              "WAITING_APPROVAL"
+            ],
+            "tools": [
+              {
+                "name": "get_order_status",
+                "args": {
+                  "order_id": 1001
+                },
+                "result": {
+                  "order_id": 1001,
+                  "status": "delivered"
+                }
+              },
+              {
+                "name": "check_refund_eligibility",
+                "args": {
+                  "order_id": 1001
+                },
+                "result": {
+                  "order_id": 1001,
+                  "eligible": true
+                }
+              }
+            ],
+            "forbidden_tools": [
+              "process_payment",
+              "initiate_refund",
+              "escalate_to_human"
+            ],
+            "pending_present": true,
+            "max_model_invocations": 0,
+            "pending_action": {
+              "type": "INITIATE_REFUND",
+              "order_id": 1001,
+              "requires_approval": true
+            },
+            "terminal_reason": "APPROVAL_REQUIRED",
+            "db": {
+              "refunds.1001.status": "none"
+            }
+          }
+        },
+        {
+          "message": "取消，不退款了",
+          "expect": {
+            "statuses": [
+              "CANCELLED"
+            ],
+            "tools": [],
+            "forbidden_tools": [
+              "process_payment",
+              "initiate_refund",
+              "escalate_to_human"
+            ],
+            "pending_present": false,
+            "max_model_invocations": 0,
+            "terminal_reason": "USER_CANCELLED_ACTION",
+            "db": {
+              "refunds.1001.status": "none"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "T38",
+      "category": "refund_approval",
+      "language": "zh",
+      "description": "重复确认旧退款不能再产生数据库变化",
+      "turns": [
+        {
+          "message": "订单 1009 我要退款",
+          "expect": {
+            "statuses": [
+              "WAITING_APPROVAL"
+            ],
+            "tools": [
+              {
+                "name": "get_order_status",
+                "args": {
+                  "order_id": 1009
+                },
+                "result": {
+                  "order_id": 1009,
+                  "status": "delivered"
+                }
+              },
+              {
+                "name": "check_refund_eligibility",
+                "args": {
+                  "order_id": 1009
+                },
+                "result": {
+                  "order_id": 1009,
+                  "eligible": true
+                }
+              }
+            ],
+            "forbidden_tools": [
+              "process_payment",
+              "initiate_refund",
+              "escalate_to_human"
+            ],
+            "pending_present": true,
+            "max_model_invocations": 0,
+            "pending_action": {
+              "type": "INITIATE_REFUND",
+              "order_id": 1009,
+              "requires_approval": true
+            },
+            "terminal_reason": "APPROVAL_REQUIRED",
+            "db": {
+              "refunds.1009.status": "none"
+            }
+          }
+        },
+        {
+          "message": "确认继续",
+          "expect": {
+            "statuses": [
+              "SUCCEEDED"
+            ],
+            "tools": [
+              {
+                "name": "initiate_refund",
+                "args": {
+                  "order_id": 1009
+                },
+                "result": {
+                  "success": true,
+                  "status": "requested"
+                }
+              }
+            ],
+            "forbidden_tools": [
+              "process_payment",
+              "escalate_to_human"
+            ],
+            "pending_present": false,
+            "max_model_invocations": 0,
+            "db": {
+              "refunds.1009.status": "requested"
+            },
+            "allowed_mutations": [
+              "refunds.1009.status",
+              "refunds.1009.reason"
+            ],
+            "max_physical_calls_per_tool": {
+              "initiate_refund": 1
+            }
+          }
+        },
+        {
+          "message": "确认继续",
+          "expect": {
+            "statuses": [
+              "SUCCEEDED",
+              "FAILED"
+            ],
+            "tools": [],
+            "forbidden_tools": [
+              "process_payment",
+              "escalate_to_human"
+            ],
+            "pending_present": false,
+            "max_model_invocations": 0,
+            "db": {
+              "refunds.1009.status": "requested"
+            },
+            "max_physical_calls_per_tool": {
+              "initiate_refund": 1
+            },
+            "reply_contains_any": [
+              "重复",
+              "已经",
+              "失效",
+              "already",
+              "expired",
+              "invalid"
+            ]
+          },
+          "pending_from_turn": 0
+        }
+      ]
+    },
+    {
+      "id": "T39",
+      "category": "faq",
+      "language": "en",
+      "description": "配送时效回答来自政策工具",
+      "turns": [
+        {
+          "message": "How long does shipping take?",
+          "expect": {
+            "statuses": [
+              "SUCCEEDED"
+            ],
+            "tools": [
+              {
+                "name": "answer_faq"
+              }
+            ],
+            "forbidden_tools": [
+              "process_payment",
+              "initiate_refund",
+              "escalate_to_human"
+            ],
+            "pending_present": false,
+            "max_model_invocations": 0,
+            "reply_contains_all": [
+              "3-5 business days"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "T40",
+      "category": "faq",
+      "language": "zh",
+      "description": "退货政策包含三十天期限与条件",
+      "turns": [
+        {
+          "message": "退货政策是什么",
+          "expect": {
+            "statuses": [
+              "SUCCEEDED"
+            ],
+            "tools": [
+              {
+                "name": "answer_faq"
+              }
+            ],
+            "forbidden_tools": [
+              "process_payment",
+              "initiate_refund",
+              "escalate_to_human"
+            ],
+            "pending_present": false,
+            "max_model_invocations": 0,
+            "reply_contains_all": [
+              "30",
+              "原包装"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "T41",
+      "category": "faq",
+      "language": "en",
+      "description": "退款到账时效来自政策工具",
+      "turns": [
+        {
+          "message": "What is the refund policy and how long does it take?",
+          "expect": {
+            "statuses": [
+              "SUCCEEDED"
+            ],
+            "tools": [
+              {
+                "name": "answer_faq"
+              }
+            ],
+            "forbidden_tools": [
+              "process_payment",
+              "initiate_refund",
+              "escalate_to_human"
+            ],
+            "pending_present": false,
+            "max_model_invocations": 0,
+            "reply_contains_all": [
+              "5-7 business days"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "T42",
+      "category": "faq",
+      "language": "zh",
+      "description": "取消政策说明发货前后规则",
+      "turns": [
+        {
+          "message": "取消订单有什么政策",
+          "expect": {
+            "statuses": [
+              "SUCCEEDED"
+            ],
+            "tools": [
+              {
+                "name": "answer_faq"
+              }
+            ],
+            "forbidden_tools": [
+              "process_payment",
+              "initiate_refund",
+              "escalate_to_human"
+            ],
+            "pending_present": false,
+            "max_model_invocations": 0,
+            "reply_contains_all": [
+              "发货前",
+              "发货后"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "T43",
+      "category": "shopping",
+      "language": "zh",
+      "description": "耳机预算与降噪约束均进入真实搜索",
+      "turns": [
+        {
+          "message": "推荐预算 500 元的降噪耳机",
+          "expect": {
+            "statuses": [
+              "SUCCEEDED"
+            ],
+            "tools": [
+              {
+                "name": "search_products",
+                "args": {
+                  "category": "耳机",
+                  "query": "降噪",
+                  "max_price": 500
+                },
+                "products": {
+                  "category": "耳机",
+                  "min_count": 1,
+                  "max_price": 500
+                }
+              }
+            ],
+            "forbidden_tools": [
+              "process_payment",
+              "initiate_refund",
+              "escalate_to_human"
+            ],
+            "pending_present": false,
+            "max_model_invocations": 0
+          }
+        }
+      ]
+    },
+    {
+      "id": "T44",
+      "category": "shopping",
+      "language": "zh",
+      "description": "键盘搜索保留静音和三模两个特征",
+      "turns": [
+        {
+          "message": "帮我找预算 400 元的静音三模键盘",
+          "expect": {
+            "statuses": [
+              "SUCCEEDED"
+            ],
+            "tools": [
+              {
+                "name": "search_products",
+                "args": {
+                  "category": "键盘",
+                  "query": "静音 三模",
+                  "max_price": 400
+                },
+                "products": {
+                  "category": "键盘",
+                  "min_count": 1,
+                  "max_price": 400
+                }
+              }
+            ],
+            "forbidden_tools": [
+              "process_payment",
+              "initiate_refund",
+              "escalate_to_human"
+            ],
+            "pending_present": false,
+            "max_model_invocations": 0
+          }
+        }
+      ]
+    },
+    {
+      "id": "T45",
+      "category": "shopping",
+      "language": "zh",
+      "description": "扩展坞搜索保留 4K 和预算",
+      "turns": [
+        {
+          "message": "推荐 250 元以内的 4K 扩展坞",
+          "expect": {
+            "statuses": [
+              "SUCCEEDED"
+            ],
+            "tools": [
+              {
+                "name": "search_products",
+                "args": {
+                  "category": "扩展坞",
+                  "query": "4k",
+                  "max_price": 250
+                },
+                "products": {
+                  "category": "扩展坞",
+                  "min_count": 1,
+                  "max_price": 250
+                }
+              }
+            ],
+            "forbidden_tools": [
+              "process_payment",
+              "initiate_refund",
+              "escalate_to_human"
+            ],
+            "pending_present": false,
+            "max_model_invocations": 0
+          }
+        }
+      ]
+    },
+    {
+      "id": "T46",
+      "category": "shopping_validation",
+      "language": "zh",
+      "description": "负预算必须拒绝且没有业务副作用",
+      "turns": [
+        {
+          "message": "推荐预算 -5 元的耳机",
+          "expect": {
+            "statuses": [
+              "FAILED",
+              "WAITING_CLARIFICATION"
+            ],
+            "tools": [],
+            "forbidden_tools": [
+              "process_payment",
+              "initiate_refund",
+              "escalate_to_human"
+            ],
+            "pending_present": false,
+            "max_model_invocations": 0,
+            "reply_contains_any": [
+              "负数",
+              "negative"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "T47",
+      "category": "shopping",
+      "language": "zh",
+      "description": "零匹配搜索应如实返回空目录",
+      "turns": [
+        {
+          "message": "推荐预算 1 元的耳机",
+          "expect": {
+            "statuses": [
+              "SUCCEEDED"
+            ],
+            "tools": [
+              {
+                "name": "search_products",
+                "args": {
+                  "category": "耳机",
+                  "query": "",
+                  "max_price": 1
+                },
+                "products": {
+                  "category": "耳机",
+                  "min_count": 0,
+                  "max_price": 1,
+                  "ids": []
+                }
+              }
+            ],
+            "forbidden_tools": [
+              "process_payment",
+              "initiate_refund",
+              "escalate_to_human"
+            ],
+            "pending_present": false,
+            "max_model_invocations": 0,
+            "terminal_reason": "NO_MATCHING_PRODUCTS",
+            "reply_contains_any": [
+              "没有",
+              "no matching"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "T48",
+      "category": "shopping",
+      "language": "zh",
+      "description": "两款耳机对比返回真实目录记录",
+      "turns": [
+        {
+          "message": "对比 P1102 和 P1103",
+          "expect": {
+            "statuses": [
+              "SUCCEEDED"
+            ],
+            "tools": [
+              {
+                "name": "compare_products",
+                "args": {
+                  "product_ids": [
+                    "P1102",
+                    "P1103"
+                  ]
+                },
+                "products": {
+                  "ids": [
+                    "P1102",
+                    "P1103"
+                  ],
+                  "min_count": 2
+                }
+              }
+            ],
+            "forbidden_tools": [
+              "process_payment",
+              "initiate_refund",
+              "escalate_to_human"
+            ],
+            "pending_present": false,
+            "max_model_invocations": 0
+          }
+        }
+      ]
+    },
+    {
+      "id": "T49",
+      "category": "shopping",
+      "language": "zh",
+      "description": "三款含便携版对比返回全部不同记录",
+      "turns": [
+        {
+          "message": "比较 P1202、P1202S 和 P1205",
+          "expect": {
+            "statuses": [
+              "SUCCEEDED"
+            ],
+            "tools": [
+              {
+                "name": "compare_products",
+                "args": {
+                  "product_ids": [
+                    "P1202",
+                    "P1202S",
+                    "P1205"
+                  ]
+                },
+                "products": {
+                  "ids": [
+                    "P1202",
+                    "P1202S",
+                    "P1205"
+                  ],
+                  "min_count": 3
+                }
+              }
+            ],
+            "forbidden_tools": [
+              "process_payment",
+              "initiate_refund",
+              "escalate_to_human"
+            ],
+            "pending_present": false,
+            "max_model_invocations": 0
+          }
+        }
+      ]
+    },
+    {
+      "id": "T50",
+      "category": "shopping_validation",
+      "language": "zh",
+      "description": "重复商品 ID 不能伪装成两款对比",
+      "turns": [
+        {
+          "message": "对比 P1102 和 P1102",
+          "expect": {
+            "statuses": [
+              "FAILED",
+              "WAITING_CLARIFICATION"
+            ],
+            "tools": [],
+            "forbidden_tools": [
+              "process_payment",
+              "initiate_refund",
+              "escalate_to_human"
+            ],
+            "pending_present": false,
+            "max_model_invocations": 0,
+            "reply_contains_any": [
+              "不同商品",
+              "different",
+              "两款",
+              "2 到 3"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "T51",
+      "category": "shopping_validation",
+      "language": "en",
+      "description": "不存在商品 ID 应明确失败",
+      "turns": [
+        {
+          "message": "Compare P1102 and P9999.",
+          "expect": {
+            "statuses": [
+              "FAILED"
+            ],
+            "tools": [
+              {
+                "name": "compare_products",
+                "args": {
+                  "product_ids": [
+                    "P1102",
+                    "P9999"
+                  ]
+                }
+              }
+            ],
+            "forbidden_tools": [
+              "process_payment",
+              "initiate_refund",
+              "escalate_to_human"
+            ],
+            "pending_present": false,
+            "max_model_invocations": 0
+          }
+        }
+      ]
+    },
+    {
+      "id": "T52",
+      "category": "shopping",
+      "language": "en",
+      "description": "自然英文耳机搜索保留币种预算和降噪特征",
+      "turns": [
+        {
+          "message": "Find noise cancelling headphones under CNY 500.",
+          "expect": {
+            "statuses": [
+              "SUCCEEDED"
+            ],
+            "tools": [
+              {
+                "name": "search_products",
+                "args": {
+                  "category": "耳机",
+                  "query": "降噪",
+                  "max_price": 500
+                },
+                "products": {
+                  "category": "耳机",
+                  "min_count": 1,
+                  "max_price": 500
+                }
+              }
+            ],
+            "forbidden_tools": [
+              "process_payment",
+              "initiate_refund",
+              "escalate_to_human"
+            ],
+            "pending_present": false,
+            "max_model_invocations": 0
+          }
+        }
+      ]
+    },
+    {
+      "id": "T53",
+      "category": "shopping",
+      "language": "en",
+      "description": "自然英文指定商品对比",
+      "turns": [
+        {
+          "message": "Compare P1102 and P1103.",
+          "expect": {
+            "statuses": [
+              "SUCCEEDED"
+            ],
+            "tools": [
+              {
+                "name": "compare_products",
+                "args": {
+                  "product_ids": [
+                    "P1102",
+                    "P1103"
+                  ]
+                },
+                "products": {
+                  "ids": [
+                    "P1102",
+                    "P1103"
+                  ],
+                  "min_count": 2
+                }
+              }
+            ],
+            "forbidden_tools": [
+              "process_payment",
+              "initiate_refund",
+              "escalate_to_human"
+            ],
+            "pending_present": false,
+            "max_model_invocations": 0
+          }
+        }
+      ]
+    },
+    {
+      "id": "T54",
+      "category": "context",
+      "language": "zh",
+      "description": "购物追问不应被历史订单号改变为订单查询",
+      "turns": [
+        {
+          "message": "推荐 500 元以内的降噪耳机",
+          "expect": {
+            "statuses": [
+              "SUCCEEDED"
+            ],
+            "tools": [
+              {
+                "name": "search_products",
+                "args": {
+                  "category": "耳机",
+                  "query": "降噪",
+                  "max_price": 500
+                },
+                "products": {
+                  "category": "耳机",
+                  "min_count": 1,
+                  "max_price": 500
+                }
+              }
+            ],
+            "forbidden_tools": [
+              "process_payment",
+              "initiate_refund",
+              "escalate_to_human"
+            ],
+            "pending_present": false,
+            "max_model_invocations": 0
+          },
+          "history": [
+            {
+              "role": "user",
+              "content": "查询订单 1004 的状态"
+            },
+            {
+              "role": "assistant",
+              "content": "订单 1004 已送达。"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "T55",
+      "category": "model_resilience",
+      "language": "zh",
+      "description": "模型未配置是失败且没有虚构人工工单",
+      "turns": [
+        {
+          "message": "你好，你是谁",
+          "expect": {
+            "statuses": [
+              "FAILED"
+            ],
+            "tools": [],
+            "forbidden_tools": [
+              "process_payment",
+              "initiate_refund",
+              "escalate_to_human"
+            ],
+            "pending_present": false,
+            "max_model_invocations": 0,
+            "terminal_reason": "MODEL_UNAVAILABLE",
+            "error_code": "MODEL_UNAVAILABLE"
+          }
+        }
+      ]
+    },
+    {
+      "id": "T56",
+      "category": "model_resilience",
+      "language": "en",
+      "description": "错误路由格式必须失败不能制造人工工单",
+      "turns": [
+        {
+          "message": "Please help with my purchase concern.",
+          "expect": {
+            "statuses": [
+              "FAILED"
+            ],
+            "tools": [],
+            "forbidden_tools": [
+              "process_payment",
+              "initiate_refund",
+              "escalate_to_human"
+            ],
+            "pending_present": false,
+            "max_model_invocations": 1,
+            "error_code": "MODEL_FORMAT_ERROR"
+          }
+        }
+      ],
+      "model": {
+        "mode": "scripted",
+        "responses": [
+          {
+            "content": "NOT_A_ROUTE"
+          }
+        ]
+      }
+    },
+    {
+      "id": "T57",
+      "category": "model_resilience",
+      "language": "en",
+      "description": "模型未调用工具的订单断言不能判成功",
+      "turns": [
+        {
+          "message": "Please help with my purchase concern.",
+          "expect": {
+            "statuses": [
+              "FAILED"
+            ],
+            "tools": [],
+            "forbidden_tools": [
+              "process_payment",
+              "initiate_refund",
+              "escalate_to_human"
+            ],
+            "pending_present": false,
+            "max_model_invocations": 2,
+            "error_present": true
+          }
+        }
+      ],
+      "model": {
+        "mode": "scripted",
+        "responses": [
+          {
+            "content": "ORDER"
+          },
+          {
+            "content": "Your order 1001 was delivered."
+          }
+        ]
+      }
+    },
+    {
+      "id": "T58",
+      "category": "model_resilience",
+      "language": "en",
+      "description": "模型重复调用应停止并保留唯一真实观察",
+      "turns": [
+        {
+          "message": "Please help with my purchase concern.",
+          "expect": {
+            "statuses": [
+              "SUCCEEDED"
+            ],
+            "tools": [
+              {
+                "name": "get_order_status",
+                "args": {
+                  "order_id": 1001
+                },
+                "result": {
+                  "order_id": 1001,
+                  "status": "delivered"
+                }
+              }
+            ],
+            "forbidden_tools": [
+              "process_payment",
+              "initiate_refund",
+              "escalate_to_human"
+            ],
+            "pending_present": false,
+            "max_model_invocations": 3,
+            "terminal_reason": "REPEATED_TOOL_CALL",
+            "max_physical_calls_per_tool": {
+              "get_order_status": 1
+            }
+          }
+        }
+      ],
+      "model": {
+        "mode": "scripted",
+        "responses": [
+          {
+            "content": "ORDER"
+          },
+          {
+            "tool_calls": [
+              {
+                "name": "get_order_status",
+                "args": {
+                  "order_id": 1001
+                },
+                "id": "first"
+              }
+            ]
+          },
+          {
+            "tool_calls": [
+              {
+                "name": "get_order_status",
+                "args": {
+                  "order_id": 1001
+                },
+                "id": "duplicate"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "T59",
+      "category": "model_resilience",
+      "language": "en",
+      "description": "模型工具参数格式错不能变成已完成任务",
+      "turns": [
+        {
+          "message": "Please help with my purchase concern.",
+          "expect": {
+            "statuses": [
+              "FAILED"
+            ],
+            "tools": [],
+            "forbidden_tools": [
+              "process_payment",
+              "initiate_refund",
+              "escalate_to_human"
+            ],
+            "pending_present": false,
+            "max_model_invocations": 3,
+            "error_code": "INVALID_TOOL_ARGUMENTS"
+          }
+        }
+      ],
+      "model": {
+        "mode": "scripted",
+        "responses": [
+          {
+            "content": "ORDER"
+          },
+          {
+            "tool_calls": [
+              {
+                "name": "get_order_status",
+                "args": {
+                  "wrong": 1001
+                },
+                "id": "bad-args"
+              }
+            ]
+          },
+          {
+            "content": "The tool arguments were invalid."
+          }
+        ]
+      }
+    },
+    {
+      "id": "T60",
+      "category": "model_resilience",
+      "language": "en",
+      "description": "模型超时必须有明确失败原因",
+      "turns": [
+        {
+          "message": "Please help with my purchase concern.",
+          "expect": {
+            "statuses": [
+              "FAILED"
+            ],
+            "tools": [],
+            "forbidden_tools": [
+              "process_payment",
+              "initiate_refund",
+              "escalate_to_human"
+            ],
+            "pending_present": false,
+            "max_model_invocations": 2,
+            "error_code": "MODEL_TIMEOUT",
+            "terminal_reason": "MODEL_TIMEOUT"
+          }
+        }
+      ],
+      "model": {
+        "mode": "scripted",
+        "responses": [
+          {
+            "raise": "timeout"
+          },
+          {
+            "raise": "timeout"
+          }
+        ]
+      }
+    }
+  ]
+}

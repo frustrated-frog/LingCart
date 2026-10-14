@@ -64,15 +64,24 @@ def _extract_order_id(text: str) -> int | None:
     return int(matches[-1]) if matches else None
 
 
-def parse_approval_response(user_message: str) -> str:
+def parse_approval_response(user_message: str, pending_action: dict | None = None) -> str:
     """Recognize an explicit answer to a previously proposed side effect."""
 
     normalized = " ".join(user_message.strip().lower().split())
-    cancelled = ("取消", "算了", "不要", "不支付", "不退款", "cancel", "never mind", "no")
-    confirmed = ("确认", "同意", "继续执行", "可以执行", "yes", "confirm", "proceed")
-    if _has_any(normalized, cancelled):
+    compact = re.sub(r"[\s，,。.!！?？]", "", normalized)
+    english = re.sub(r"[,。.！!？?]", " ", normalized)
+    english = " ".join(english.split())
+    cancelled = {"取消", "取消操作", "取消支付", "取消退款", "算了", "不要", "不支付", "不退款", "取消先不要执行", "取消先不要支付", "取消不退款了"}
+    if compact in cancelled or re.fullmatch(r"cancel(?: (?:it|this|the payment|the refund|never mind))?|never mind|no(?: thanks)?", english):
         return APPROVAL_CANCELLED
-    if _has_any(normalized, confirmed):
+    confirmed = {"确认", "同意", "确认继续", "确认继续执行", "继续执行", "可以执行", "确认支付", "确认退款", "同意支付", "同意退款"}
+    if compact in confirmed or re.fullmatch(r"确认(?:使用)?(?:card|paypal|银行卡|信用卡)支付", compact) or re.fullmatch(r"(?:yes(?: (?:please|proceed))?|confirm|proceed|confirm (?:payment|refund))", english):
+        if pending_action:
+            kind = pending_action.get("type")
+            if ("退款" in normalized or "refund" in normalized) and kind != "INITIATE_REFUND":
+                return APPROVAL_UNKNOWN
+            if ("支付" in normalized or "payment" in normalized) and kind != "PROCESS_PAYMENT":
+                return APPROVAL_UNKNOWN
         return APPROVAL_CONFIRMED
     return APPROVAL_UNKNOWN
 
@@ -82,8 +91,17 @@ def analyze_request(user_message: str) -> TaskIntake:
 
     request = user_message.strip()
     normalized = " ".join(request.lower().split())
-    order_id = _extract_order_id(normalized)
+    order_ids = list(dict.fromkeys(int(value) for value in _ORDER_ID.findall(normalized)))
+    # Keep explicitly listed sibling order numbers, without treating shopping
+    # budgets as identifiers. More complex associations are clarified below.
+    sibling = re.search(r"(?:订单|order).*?\b(\d{4,})\b\s*(?:和|及|、|and|,)\s*(?:订单\s*|order\s*)?(\d{4,})\b", normalized)
+    if sibling:
+        order_ids = list(dict.fromkeys([*order_ids, *(int(v) for v in sibling.groups())]))
+    order_id = order_ids[-1] if order_ids else None
     entities = {"order_id": order_id} if order_id is not None else {}
+    if len(order_ids) > 1:
+        entities["order_ids"] = order_ids
+    intents: list[str] = []
 
     if _has_any(
         normalized,
@@ -103,11 +121,15 @@ def analyze_request(user_message: str) -> TaskIntake:
     shopping_text = re.sub(r"^\(context:.*?\)\s*", "", normalized)
     product_ids = re.findall(r"(?<![a-z0-9])p\d{4}s?(?![a-z0-9])", shopping_text, re.IGNORECASE)
     category = next((name for name in ("耳机", "键盘", "扩展坞") if name in shopping_text), None)
-    shopping_action = _has_any(shopping_text, ("找", "选", "推荐", "对比", "比较", "搜索", "预算", "search", "compare"))
-    if shopping_action and (category or product_ids or "商品" in shopping_text) and not _has_any(shopping_text, ("订单", "order")):
+    if not category:
+        category = next((name for word, name in (("headphones", "耳机"), ("earbuds", "耳机"), ("keyboard", "键盘"), ("usb-c hub", "扩展坞")) if word in shopping_text), None)
+    shopping_action = _has_any(shopping_text, ("找", "选", "推荐", "对比", "比较", "搜索", "预算", "search", "compare", "find", "recommend"))
+    if shopping_action and (category or product_ids or "商品" in shopping_text):
         budget_match = re.search(r"(?:预算\s*(?:为|是|不超过)?\s*[¥￥]?\s*)(-?\d+(?:\.\d+)?)", shopping_text)
         if not budget_match:
             budget_match = re.search(r"(\d+(?:\.\d+)?)\s*元?\s*(?:以内|以下|不超过)", shopping_text)
+        if not budget_match:
+            budget_match = re.search(r"(?:under|budget|max(?:imum)?)\s*(?:cny|rmb|[¥￥])?\s*(-?\d+(?:\.\d+)?)", shopping_text)
         shopping_entities = {"category": category, "query": ""}
         if budget_match:
             shopping_entities["max_price"] = float(budget_match.group(1))
@@ -116,31 +138,28 @@ def analyze_request(user_message: str) -> TaskIntake:
         # Keep recognized feature constraints rather than passing sentence
         # filler to keyword search or silently dropping explicit needs.
         features = [word for word in ("降噪", "静音", "三模", "头戴式", "开放式", "4k", "便携", "通勤", "办公") if word in shopping_text]
-        shopping_entities["query"] = " ".join(features)
-        return TaskIntake(request=request,
-                          intents=(PRODUCT_COMPARE if product_ids else PRODUCT_SEARCH,),
-                          entities=shopping_entities, execution_mode=DIRECT, confidence=.96,
-                          reason="本地商品目录搜索或对比")
+        if "noise cancelling" in shopping_text or "noise-cancelling" in shopping_text:
+            features.append("降噪")
+        shopping_entities["query"] = " ".join(dict.fromkeys(features))
+        entities.update(shopping_entities)
+        if category and (not product_ids or _has_any(shopping_text, ("搜索", "推荐", "search", "find", "recommend"))):
+            intents.append(PRODUCT_SEARCH)
+        if product_ids:
+            intents.append(PRODUCT_COMPARE)
 
     policy_words = ("规则", "政策", "时效", "多久", "policy", "how long", "shipping time", "return window")
     faq_topics = ("退货", "退款", "发货", "配送", "取消", "联系", "return", "refund", "shipping", "cancel", "contact")
-    if _has_any(normalized, policy_words) and _has_any(normalized, faq_topics) and order_id is None:
-        return TaskIntake(
-            request=request,
-            intents=(FAQ,),
-            execution_mode=DIRECT,
-            confidence=0.98,
-            reason="识别为通用服务规则咨询",
-        )
+    policy_question = _has_any(normalized, policy_words) and _has_any(normalized, faq_topics)
+    if policy_question:
+        intents.append(FAQ)
 
-    intents: list[str] = []
     refund_words = ("退款", "退货", "退掉", "refund", "return this", "return order")
     payment_words = ("支付", "付款", "payment", "pay order", "pay for order")
     shipment_words = ("物流", "快递", "配送进度", "到哪", "运输", "追踪", "跟踪", "tracking", "shipment", "where is")
     status_words = ("状态", "status")
     detail_words = ("详情", "明细", "什么商品", "details")
 
-    if _has_any(normalized, refund_words):
+    if _has_any(normalized, refund_words) and not (policy_question and order_id is None):
         eligibility_words = ("能不能", "能否", "可以退款", "是否可以", "资格", "eligible", "eligibility", "can i")
         request_words = ("想退款", "申请退款", "我要退款", "帮我退款", "退掉", "start a refund", "want a refund", "refund order")
         if _has_any(normalized, eligibility_words):
@@ -160,13 +179,13 @@ def analyze_request(user_message: str) -> TaskIntake:
         else:
             intents.append(PAYMENT_STATUS)
 
-    if _has_any(normalized, shipment_words):
+    if _has_any(normalized, shipment_words) and not (policy_question and order_id is None):
         intents.append(SHIPMENT_TRACKING)
     if _has_any(normalized, detail_words):
         intents.append(ORDER_DETAILS)
     asks_order_progress = "进度" in normalized and not _has_any(normalized, shipment_words)
     if (_has_any(normalized, status_words) or asks_order_progress) and not _has_any(
-        normalized, ("支付状态", "付款状态", "refund status")
+        normalized, ("支付状态", "付款状态", "payment status", "refund status")
     ):
         intents.append(ORDER_STATUS)
 
@@ -186,6 +205,10 @@ def analyze_request(user_message: str) -> TaskIntake:
         PAYMENT_STATUS,
         PAYMENT_PROCESS,
     }
+    if len(order_ids) > 1 and sum(intent in order_intents for intent in intents) > 1 and not _has_any(normalized, ("分别", "都", "各", "each", "both")):
+        return TaskIntake(request=request, intents=tuple(intents), entities=entities,
+                          missing_slots=("order_intent_mapping",), execution_mode=CLARIFICATION_REQUIRED,
+                          confidence=.99, reason="多个订单的目标关系不明确，请分别说明每个订单要处理什么")
     if any(intent in order_intents for intent in intents) and order_id is None:
         return TaskIntake(
             request=request,
@@ -198,6 +221,9 @@ def analyze_request(user_message: str) -> TaskIntake:
         )
 
     if intents:
+        if not any(intent in order_intents for intent in intents):
+            entities.pop("order_id", None)
+            entities.pop("order_ids", None)
         return TaskIntake(
             request=request,
             intents=tuple(intents),

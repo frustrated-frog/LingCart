@@ -291,7 +291,13 @@ class ToolExecutor:
                        **{key: value for key, value in args.items() if key in {"reason", "method"}}}
             if name == "process_payment":
                 from src import tools
-                pending["amount"] = tools.get_payment_status(args["order_id"]).get("amount")
+                # Approval preparation is a real, budgeted read through the
+                # same executor; it must not become an invisible policy call.
+                self.registry.setdefault("get_payment_status", tool_spec("get_payment_status", tools.get_payment_status))
+                payment, _ = self.execute("get_payment_status", {"order_id": args["order_id"]})
+                if payment.get("error"):
+                    self._fail(AgentError("BUSINESS_DATA_NOT_FOUND", payment["error"], retryable=False), name, args)
+                pending["amount"] = payment.get("amount")
             self.recorder.record("approval_required", tool=name, args=args)
             raise ApprovalRequired(pending)
         fingerprint = self.fingerprint(name, args)

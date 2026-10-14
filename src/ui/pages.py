@@ -291,7 +291,7 @@ def orders_page():
 def tasks_page():
     page_header("任务记录", "每一次处理都有记录，查看结果或重新核验当前业务状态。")
     runs = list_runs()
-    status = st.selectbox("处理状态", ["全部", "SUCCEEDED", "WAITING_APPROVAL", "WAITING_CLARIFICATION", "FAILED", "ESCALATED", "CANCELLED"], format_func=lambda v: STATUSES.get(v, v), key="task_status")
+    status = st.selectbox("处理状态", ["全部", "SUCCEEDED", "PARTIAL", "INTERRUPTED", "RUNNING", "WAITING_APPROVAL", "WAITING_CLARIFICATION", "FAILED", "ESCALATED", "CANCELLED"], format_func=lambda v: STATUSES.get(v, v), key="task_status")
     filtered = [run for run in runs if status == "全部" or run["result"].get("status") == status]
     st.caption("演示工作空间最近 100 次真实执行记录；历史中的等待状态表示当次运行状态。")
     if not filtered:

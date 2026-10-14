@@ -168,3 +168,63 @@ def test_model_decision_and_tool_result_survive_restart(database, monkeypatch):
     assert next_model.calls == 1
     assert result["trace"][0]["status"] == "REUSED"
     assert any(e["type"] == "model_reused" for e in RunStore().run(result["run_id"])["events"])
+
+
+def test_confirmation_word_in_read_only_question_cannot_charge(database):
+    first = run_conversation("帮我支付订单 1003", "explicit")
+    query = run_conversation("帮我确认一下订单 1003 的物流", "explicit")
+    assert query["status"] == "SUCCEEDED"
+    assert query["pending_action"]["action_id"] == first["pending_action"]["action_id"]
+    assert tools.get_payment_status(1003)["status"] == "pending"
+    policy = run_conversation("取消订单有什么政策", "explicit")
+    assert policy["pending_action"]["action_id"] == first["pending_action"]["action_id"]
+    assert tools.get_payment_status(1003)["status"] == "pending"
+
+
+def test_confirmation_for_different_business_action_cannot_authorize_payment(database):
+    first = run_conversation("帮我支付订单 1003", "mismatch")
+    result = run_conversation("确认退款", "mismatch")
+    assert result["status"] == "WAITING_CLARIFICATION"
+    assert result["pending_action"] == first["pending_action"]
+    assert tools.get_payment_status(1003)["status"] == "pending"
+
+
+def test_external_write_with_uncertain_outcome_is_not_replayed(database):
+    from src.runtime import BudgetLimits, RunRuntime, ToolExecutor, ToolSpec, TraceRecorder, runtime_scope, tool_spec
+    store = RunStore()
+    first = run_conversation("帮我支付订单 1003", "external")
+    claim = store.claim("external", "write", "确认", BudgetLimits().__dict__)
+    calls = []
+    def external_payment(order_id: int, method: str):
+        calls.append(order_id)
+        raise TimeoutError("external outcome unknown")
+    context = RunRuntime(claim["run_id"], store=store, token=claim["token"], snapshot=claim["snapshot"], approval=first["pending_action"])
+    spec = ToolSpec(external_payment, tool_spec("process_payment", tools.process_payment).schema, True, False)
+    with runtime_scope(context):
+        executor = ToolExecutor({"process_payment": spec}, TraceRecorder(context.run_id))
+        with pytest.raises(AgentError) as first_error:
+            executor.execute("process_payment", {"order_id": 1003, "method": "card"})
+        assert first_error.value.code == "TOOL_TIMEOUT"
+        with pytest.raises(AgentError) as repeated:
+            executor.execute("process_payment", {"order_id": 1003, "method": "card"})
+        assert repeated.value.code == "UNCERTAIN_TOOL_OUTCOME"
+    assert calls == [1003]
+    store.interrupt(claim["run_id"], claim["token"])
+
+
+def test_structured_intake_clarification_survives_service_restart(database, monkeypatch):
+    import json
+    from langchain_core.messages import AIMessage
+    import src.planner as planner
+    class Model:
+        def invoke(self, messages):
+            order_id = 1002 if '订单 1002' in messages else None
+            return AIMessage(content=json.dumps({"goals": [{"intent": "ORDER_STATUS", "order_id": order_id}, {"intent": "FAQ"}]}))
+    monkeypatch.setattr(planner, "get_llm", Model)
+    first = run_conversation("包裹怎么样，另外讲讲售后保障", "model-slots")
+    assert first["status"] == "WAITING_CLARIFICATION"
+    assert RunStore().conversation("model-slots")["state"]["clarification"]["missing_slots"] == ["order_id"]
+    tools.configure_db(get_engine(f"sqlite:///{database}"))
+    second = run_conversation("1002", "model-slots")
+    assert second["status"] == "SUCCEEDED"
+    assert {entry["tool"] for entry in second["trace"]} == {"get_order_status", "answer_faq"}
