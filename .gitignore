@@ -1,0 +1,13 @@
+.env
+venv/
+__pycache__/
+*.py[cod]
+*.db
+.pytest_cache/
+.streamlit/secrets.toml
+demo/*.mp4
+.claude/
+RESUME_BULLETS.md
+.DS_Store
+.playwright-cli/
+output/
