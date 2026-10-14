@@ -1,284 +1,137 @@
+"""One shared tool executor for all specialist agents."""
 import json
-import time
 import uuid
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
-from src.errors import AgentError, ErrorCode, classify_exception
+from src.errors import AgentError, classify_exception
 from src.llm import extract_usage, get_llm
-from src.runtime import TraceRecorder, ToolExecutor
+from src.runtime import ApprovalRequired, BudgetLimits, RunRuntime, ToolExecutor, TraceRecorder, current_runtime, runtime_scope
 
 _EMPTY_USAGE = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
 
 
-def as_text(content) -> str:
-    """Gemini sometimes returns content as a list of typed blocks instead of a plain string."""
+def as_text(content):
     if isinstance(content, str):
         return content
     if isinstance(content, list):
-        parts = []
-        for block in content:
-            if isinstance(block, dict) and block.get("type") == "text":
-                parts.append(block.get("text", ""))
-            elif isinstance(block, str):
-                parts.append(block)
-        return "".join(parts)
+        return "".join(block.get("text", "") if isinstance(block, dict) and block.get("type") == "text" else block if isinstance(block, str) else "" for block in content)
     return str(content)
 
 
-def sum_usage(*usages: dict) -> dict:
+def sum_usage(*usages):
     total = dict(_EMPTY_USAGE)
     for usage in usages:
         for key in total:
-            total[key] += (usage or {}).get(key) or 0
+            value = (usage or {}).get(key)
+            total[key] = None if value is None or total[key] is None else total[key] + value
     return total
 
 
-def _serialize_tool_result(result) -> str:
-    if isinstance(result, str):
-        return result
-    return json.dumps(result, ensure_ascii=False, default=str)
+def _serialize_tool_result(result):
+    return result if isinstance(result, str) else json.dumps(result, ensure_ascii=False, default=str)
 
 
-def run_tool_agent(
-    agent_name: str,
-    system_prompt: str,
-    agent_tools: list,
-    user_message: str,
-    history: list | None = None,
-    max_rounds: int = 4,
-    max_tool_calls: int = 8,
-    run_id: str | None = None,
-) -> dict:
-    """Bounded tool loop with typed failures and per-call observability."""
-
+def run_tool_agent(agent_name, system_prompt, agent_tools, user_message, history=None,
+                   max_rounds=4, max_tool_calls=8, run_id=None):
     run_id = run_id or uuid.uuid4().hex
+    active = current_runtime()
+    if active is None:
+        context = RunRuntime(run_id, BudgetLimits(max_model_calls=max_rounds + 1, max_tool_calls=max_tool_calls))
+        with runtime_scope(context):
+            return _run_loop(agent_name, system_prompt, agent_tools, user_message, history, max_rounds, max_tool_calls, run_id)
+    return _run_loop(agent_name, system_prompt, agent_tools, user_message, history, max_rounds, max_tool_calls, run_id)
+
+
+def _run_loop(agent_name, system_prompt, agent_tools, user_message, history, max_rounds, max_tool_calls, run_id):
+    context = current_runtime()
     recorder = TraceRecorder(run_id)
-    tools_by_name = {tool.name: tool for tool in agent_tools}
-    llm = get_llm().bind_tools(agent_tools)
-
-    messages: list = [SystemMessage(content=system_prompt)]
-    messages += history or []
-    messages.append(HumanMessage(content=user_message))
-
-    trace: list[dict] = []
+    executor = ToolExecutor({tool.name: tool for tool in agent_tools}, recorder, max_calls=max_tool_calls)
+    raw_model = get_llm()
+    bound_model = raw_model.bind_tools(agent_tools)
+    messages = [SystemMessage(content=system_prompt), *(history or []), HumanMessage(content=user_message)]
+    trace, errors, seen = [], [], set()
     usage = dict(_EMPTY_USAGE)
-    first_model_started = time.perf_counter()
-    ai_msg: AIMessage = llm.invoke(messages)
-    recorder.record(
-        "model_call",
-        purpose="agent_decision",
-        agent=agent_name,
-        status="SUCCEEDED",
-        duration_ms=round((time.perf_counter() - first_model_started) * 1000, 2),
-        usage=extract_usage(ai_msg),
-    )
-    usage = sum_usage(usage, extract_usage(ai_msg))
-    messages.append(ai_msg)
-
     rounds = 0
-    tool_calls = 0
-    seen_calls: set[str] = set()
-    errors: list[dict] = []
-    successful_tools = 0
-    terminal_reason = "COMPLETED"
-
-    while ai_msg.tool_calls and rounds < max_rounds:
-        repeated = False
-        for call in ai_msg.tool_calls:
-            tool_name = call.get("name", "")
-            args = call.get("args")
-            call_id = call.get("id") or f"call-{tool_calls + 1}"
-
-            if not isinstance(args, dict):
-                error = AgentError(ErrorCode.INVALID_TOOL_ARGUMENTS, "工具参数必须是对象", retryable=False)
-                error_payload = {"code": error.code, "message": str(error), "retryable": False}
-                errors.append(error_payload)
-                recorder.record("error", agent=agent_name, tool=tool_name, args=args, **error_payload)
-                messages.append(ToolMessage(content=_serialize_tool_result({"error": error_payload}), tool_call_id=call_id))
-                continue
-
-            fingerprint = ToolExecutor.fingerprint(tool_name, args)
-            if fingerprint in seen_calls:
-                error_payload = {
-                    "code": "REPEATED_TOOL_CALL",
-                    "message": f"检测到重复工具调用：{tool_name}",
-                    "retryable": False,
-                }
-                errors.append(error_payload)
-                recorder.record("error", agent=agent_name, tool=tool_name, args=args, **error_payload)
-                terminal_reason = "REPEATED_TOOL_CALL"
-                repeated = True
-                break
-            seen_calls.add(fingerprint)
-
-            if tool_calls >= max_tool_calls:
-                error_payload = {"code": ErrorCode.TOOL_BUDGET_EXHAUSTED, "message": "工具调用预算已耗尽", "retryable": False}
-                errors.append(error_payload)
-                recorder.record("error", agent=agent_name, tool=tool_name, args=args, **error_payload)
-                terminal_reason = ErrorCode.TOOL_BUDGET_EXHAUSTED
-                repeated = True
-                break
-
-            if tool_name in {"process_payment", "initiate_refund"} and tool_name in tools_by_name:
-                # Model-selected mutations use the same confirmation boundary
-                # as the deterministic path. The model cannot grant approval.
-                schema = tools_by_name[tool_name].args_schema
-                try:
-                    validated = schema.model_validate(args).model_dump()
-                except Exception as exc:
-                    failure = classify_exception(exc, source="tool")
-                    error_payload = {"code": failure.code, "message": str(failure), "retryable": False}
-                    errors.append(error_payload)
-                    recorder.record("error", agent=agent_name, tool=tool_name, **error_payload)
-                    messages.append(ToolMessage(content=_serialize_tool_result({"error": str(failure)}), tool_call_id=call_id))
-                    continue
-                action_type = "PROCESS_PAYMENT" if tool_name == "process_payment" else "INITIATE_REFUND"
-                pending = {"type": action_type, "order_id": validated["order_id"], "requires_approval": True}
-                pending.update({key: value for key, value in validated.items() if key in {"method", "reason"}})
-                recorder.record("approval_required", agent=agent_name, tool=tool_name, args=validated)
-                recorder.record("terminal", status="WAITING_APPROVAL", reason="APPROVAL_REQUIRED")
-                return {"run_id": run_id, "reply": f"订单 {validated['order_id']} 的操作需要你明确确认，尚未修改支付或退款状态。",
-                        "trace": trace, "events": recorder.events, "messages": messages, "agent": agent_name,
-                        "usage": usage, "status": "WAITING_APPROVAL", "terminal_reason": "APPROVAL_REQUIRED",
-                        "pending_action": pending, "error": None}
-
-            tool_calls += 1
-            recorder.record("tool_call", agent=agent_name, tool=tool_name, args=args, call_index=tool_calls)
-            started_at = time.perf_counter()
-
-            if tool_name not in tools_by_name:
-                error = AgentError(ErrorCode.UNKNOWN_TOOL, f"模型请求了未授权工具：{tool_name}", retryable=False)
-                error_payload = {"code": error.code, "message": str(error), "retryable": False}
-                errors.append(error_payload)
-                duration_ms = round((time.perf_counter() - started_at) * 1000, 2)
-                recorder.record(
-                    "error", agent=agent_name, tool=tool_name, args=args, duration_ms=duration_ms, **error_payload
-                )
-                trace.append(
-                    {
-                        "run_id": run_id,
-                        "agent": agent_name,
-                        "tool": tool_name,
-                        "args": args,
-                        "result": {"error": str(error), "code": error.code},
-                        "status": "FAILED",
-                        "duration_ms": duration_ms,
-                    }
-                )
-                messages.append(ToolMessage(content=_serialize_tool_result(trace[-1]["result"]), tool_call_id=call_id))
-                continue
-
-            try:
-                result = tools_by_name[tool_name].invoke(args)
-                duration_ms = round((time.perf_counter() - started_at) * 1000, 2)
-                tool_status = "BUSINESS_ERROR" if isinstance(result, dict) and result.get("error") else "SUCCEEDED"
-                if tool_status == "SUCCEEDED":
-                    successful_tools += 1
-                recorder.record(
-                    "tool_result",
-                    agent=agent_name,
-                    tool=tool_name,
-                    args=args,
-                    result=result,
-                    status=tool_status,
-                    duration_ms=duration_ms,
-                )
-            except Exception as exc:  # noqa: BLE001 - preserve typed tool failure in the run
-                failure = classify_exception(exc, source="tool")
-                duration_ms = round((time.perf_counter() - started_at) * 1000, 2)
-                error_payload = {
-                    "code": failure.code,
-                    "message": str(failure),
-                    "retryable": failure.retryable,
-                }
-                errors.append(error_payload)
-                result = {"error": str(failure), "code": failure.code}
-                tool_status = "FAILED"
-                recorder.record(
-                    "error",
-                    agent=agent_name,
-                    tool=tool_name,
-                    args=args,
-                    duration_ms=duration_ms,
-                    **error_payload,
-                )
-
-            trace.append(
-                {
-                    "run_id": run_id,
-                    "agent": agent_name,
-                    "tool": tool_name,
-                    "args": args,
-                    "result": result,
-                    "status": tool_status,
-                    "duration_ms": duration_ms,
-                }
-            )
-            messages.append(ToolMessage(content=_serialize_tool_result(result), tool_call_id=call_id))
-
-        if repeated:
-            break
-
-        model_started = time.perf_counter()
+    reason, status, reply, pending = "COMPLETED", "SUCCEEDED", "", None
+    schemas = [tool.args_schema.model_json_schema() for tool in agent_tools]
+    while rounds <= max_rounds:
+        final_round = rounds == max_rounds or context.counters["model_calls"] >= context.limits.max_model_calls - 1 or executor.call_count >= max_tool_calls or context.counters["tool_calls"] >= context.limits.max_tool_calls
+        cached_next = context.models.get(str(context.model_cursor + 1))
+        if cached_next:
+            final_round = json.loads(cached_next["input"])[0] == "final_response"
         try:
-            ai_msg = llm.invoke(messages)
-        except Exception as exc:  # do not replay successful side effects or read calls
-            failure = classify_exception(exc, source="model")
-            error_payload = {"code": failure.code, "message": str(failure), "retryable": failure.retryable}
-            errors.append(error_payload)
-            recorder.record(
-                "error",
-                agent=agent_name,
-                source="model",
-                duration_ms=round((time.perf_counter() - model_started) * 1000, 2),
-                **error_payload,
-            )
-            terminal_reason = "MODEL_FAILED_AFTER_TOOL_RESULT" if trace else failure.code
+            response = context.model_call(raw_model if final_round else bound_model, messages,
+                                          purpose="final_response" if final_round else "agent_decision", agent=agent_name,
+                                          allow_tools=not final_round, schemas=[] if final_round else schemas)
+        except AgentError as error:
+            reason = error.code if "BUDGET" in error.code or not trace else "MODEL_FAILED_AFTER_TOOL_RESULT"
+            errors.append({"code": error.code, "message": str(error), "retryable": error.retryable})
+            status = "PARTIAL" if trace else "FAILED"
             break
-        recorder.record(
-            "model_call",
-            purpose="compose_response",
-            agent=agent_name,
-            status="SUCCEEDED",
-            duration_ms=round((time.perf_counter() - model_started) * 1000, 2),
-            usage=extract_usage(ai_msg),
-        )
-        usage = sum_usage(usage, extract_usage(ai_msg))
-        messages.append(ai_msg)
+        usage = sum_usage(usage, extract_usage(response))
+        # Cache-compatible AIMessage history even for deterministic test doubles.
+        calls = getattr(response, "tool_calls", [])
+        try:
+            message = AIMessage(content=response.content, tool_calls=calls)
+        except (ValueError, TypeError):
+            errors.append({"code": "MODEL_FORMAT_ERROR", "message": "模型返回无效的工具调用格式", "retryable": False})
+            reason, status, reply = "MODEL_FORMAT_ERROR", "PARTIAL" if trace else "FAILED", ""
+            break
+        messages.append(message)
+        reply = as_text(response.content).strip()
+        if not calls:
+            break
+        if final_round:
+            reason, status = context.stop_reason("tool") or "FINAL_TOOL_CALL_FORBIDDEN", "PARTIAL" if trace else "FAILED"
+            errors.append({"code": reason, "message": "最后一轮模型禁止再次请求工具", "retryable": False})
+            reply = ""
+            recorder.record("error", code=reason, message="最后一轮模型禁止再次请求工具", retryable=False)
+            break
+        stop = False
+        for call in calls:
+            name, args = call.get("name", ""), call.get("args")
+            call_id = call.get("id") or f"call-{len(trace) + 1}"
+            fingerprint = ToolExecutor.fingerprint(name, args)
+            if fingerprint in seen:
+                reason = "REPEATED_TOOL_CALL"
+                recorder.record("error", agent=agent_name, tool=name, code=reason, message="重复工具调用已停止", retryable=False)
+                reply = ""
+                stop = True
+                break
+            seen.add(fingerprint)
+            try:
+                result, event = executor.execute(name, args)
+                trace.append(dict(run_id=run_id, agent=agent_name, tool=name, args=args,
+                                  result=result, status=event["status"], duration_ms=event["duration_ms"]))
+            except ApprovalRequired as approval:
+                pending = approval.pending
+                status, reason = "WAITING_APPROVAL", "APPROVAL_REQUIRED"
+                reply = f"订单 {pending['order_id']} 的操作需要你明确确认，尚未修改支付或退款状态。"
+                stop = True
+                break
+            except AgentError as error:
+                payload = {"code": error.code, "message": str(error), "retryable": error.retryable}
+                errors.append(payload)
+                result = {"error": str(error), "code": error.code}
+                trace.append(dict(run_id=run_id, agent=agent_name, tool=name, args=args if isinstance(args, dict) else {}, result=result, status="FAILED", duration_ms=None))
+                if "BUDGET" in error.code or error.code == "UNCERTAIN_TOOL_OUTCOME":
+                    reason, status, stop = error.code, "PARTIAL" if any(t["status"] == "SUCCEEDED" for t in trace) else "FAILED", True
+                    reply = ""
+                    break
+            messages.append(ToolMessage(content=_serialize_tool_result(result), tool_call_id=call_id))
+        if stop:
+            break
         rounds += 1
-
-    if ai_msg.tool_calls and rounds >= max_rounds:
-        terminal_reason = "MODEL_ROUND_BUDGET_EXHAUSTED"
-
-    reply = as_text(ai_msg.content).strip()
-    if not reply and trace:
-        last_result = trace[-1]["result"]
-        reply = last_result if isinstance(last_result, str) else _serialize_tool_result(last_result)
-
-    status = "SUCCEEDED"
-    if errors and successful_tools == 0:
-        status = "FAILED"
-    elif errors and terminal_reason == "REPEATED_TOOL_CALL" and trace:
-        # A duplicate after a real result is a controlled stop; return the
-        # verified observation instead of failing or spending more quota.
-        status = "SUCCEEDED"
+    successes = [entry for entry in trace if entry["status"] in {"SUCCEEDED", "REUSED", "BUSINESS_REJECTED"}]
+    if status == "SUCCEEDED" and errors:
+        status, reason = "PARTIAL" if successes else "FAILED", errors[-1]["code"]
+    elif status == "SUCCEEDED" and not successes:
+        status, reason, reply = "FAILED", "NO_VERIFIED_TOOL_RESULT", "没有获得可验证的业务结果。"
+        errors.append({"code": reason, "message": reply, "retryable": False})
     if not reply:
-        reply = "任务没有产生可验证的结果。"
-        status = "FAILED"
-        if terminal_reason == "COMPLETED":
-            terminal_reason = "EMPTY_MODEL_RESPONSE"
-
-    recorder.record("terminal", status=status, reason=terminal_reason, error=errors[-1] if errors else None)
-    return {
-        "run_id": run_id,
-        "reply": reply,
-        "trace": trace,
-        "events": recorder.events,
-        "messages": messages,
-        "agent": agent_name,
-        "usage": usage,
-        "status": status,
-        "terminal_reason": terminal_reason,
-        "error": errors[-1] if errors else None,
-    }
+        reply = _serialize_tool_result(successes[-1]["result"]) if successes else "任务没有产生可验证的结果。"
+    recorder.record("terminal", status=status, reason=reason, error=errors[-1] if errors else None)
+    return dict(run_id=run_id, reply=reply, trace=trace, events=recorder.events, messages=messages,
+                agent=agent_name, usage=usage, status=status, terminal_reason=reason,
+                error=errors[-1] if errors else None, pending_action=pending)

@@ -5,17 +5,23 @@ import streamlit as st
 
 from src import tools
 from src.memory import ConversationMemory
-from src.orchestrator import run_orchestrator
+from src.durable import load_conversation, run_conversation, resume_run
+from src.errors import AgentError
 from src.ui.components import AGENTS, STATUSES, business_results, comparison_table, esc, local_time, order_summary, page_header, product_summary, render_run, status_badge, timeline
-from src.workspace import list_orders, list_runs, save_run
+from src.workspace import list_orders, list_runs
 
 
 def init_state():
     defaults = dict(memory=ConversationMemory(), messages=[], conversation_id=uuid.uuid4().hex,
                     queued_prompt=None, compare_ids=[], product_page=0, catalog_filter=None,
                     selected_run=None, archive_error=None)
+    first_load = "conversation_id" not in st.session_state
     for key, value in defaults.items():
         st.session_state.setdefault(key, value)
+    if first_load:
+        st.session_state.conversation_id = st.query_params.get("conversation", st.session_state.conversation_id)
+        restore_conversation()
+    st.query_params["conversation"] = st.session_state.conversation_id
 
 
 def new_conversation():
@@ -23,6 +29,8 @@ def new_conversation():
     st.session_state.messages = []
     st.session_state.conversation_id = uuid.uuid4().hex
     st.session_state.queued_prompt = None
+    st.query_params["conversation"] = st.session_state.conversation_id
+    st.session_state.active_run_id = None
 
 
 def ask_assistant(prompt):
@@ -35,25 +43,23 @@ def view_run(run_id):
     st.switch_page(st.session_state.workspace_pages["lab"])
 
 
+def restore_conversation():
+    saved = load_conversation(st.session_state.conversation_id)
+    st.session_state.memory = saved["memory"]
+    st.session_state.messages = saved["messages"]
+    st.session_state.active_run_id = saved["active_run_id"]
+
+
 def execute_message(prompt):
-    memory = st.session_state.memory
+    pending = st.session_state.memory.pending_action
     with st.spinner("正在处理你的需求…"):
         try:
-            result = run_orchestrator(memory.context_note() + prompt, history=memory.turns[-40:], pending_action=memory.pending_action)
+            run_conversation(prompt, st.session_state.conversation_id,
+                             action_id=(pending or {}).get("action_id"))
+            st.session_state.archive_error = None
         except Exception as exc:
-            result = dict(run_id=uuid.uuid4().hex, reply="任务执行失败，请查看执行记录中的错误原因。",
-                          status="FAILED", terminal_reason="EXECUTION_ERROR", agent="runtime",
-                          trace=[], events=[], error={"message": str(exc)}, usage={})
-    st.session_state.messages += [{"role": "user", "content": prompt}, {"role": "assistant", "content": result["reply"], "result": result}]
-    memory.add_turn(prompt, result["reply"])
-    memory.update_last_order_id(result.get("trace", []))
-    memory.update_pending_action(result)
-    try:
-        save_run(st.session_state.conversation_id, prompt, result)
-        st.session_state.archive_error = None
-    except Exception as exc:
-        # Saving a presentation archive must never replay business mutations.
-        st.session_state.archive_error = str(exc)
+            st.session_state.archive_error = f"任务中断：{exc}。请恢复当前任务后继续。"
+    restore_conversation()
 
 
 def approval_controls():
@@ -86,6 +92,19 @@ def home_page():
         execute_message(queued)
         st.rerun()
     page_header("工作台", "从选购到售后，让每一个消费需求都有下一步。")
+    if st.session_state.get("active_run_id"):
+        st.warning("上一项任务尚未结束，可以从已保存的执行步骤继续。")
+        if st.button("恢复任务", key="resume_run", type="primary"):
+            try:
+                resume_run(st.session_state.conversation_id, st.session_state.active_run_id)
+                st.session_state.archive_error = None
+            except AgentError as exc:
+                st.session_state.archive_error = str(exc)
+            restore_conversation()
+            st.rerun()
+        if st.session_state.archive_error:
+            st.error(st.session_state.archive_error)
+        return
     left, right = st.columns([1.65, 1], gap="large")
     with left:
         if not st.session_state.messages:

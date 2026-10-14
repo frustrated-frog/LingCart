@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from sqlalchemy import select
 
 from src import tools
-from src.backend.db import Order, Payment, Refund, WorkspaceRun
+from src.backend.db import AgentRun, Order, Payment, Refund, WorkspaceRun
 
 _ORDER_NAMES = {"Wireless Headphones": "无线耳机", "Mechanical Keyboard": "机械键盘", "USB-C Hub": "USB-C 扩展坞",
                 "Standing Desk": "升降桌", "Desk Lamp": "台灯", "Bluetooth Speaker": "蓝牙音箱",
@@ -41,6 +41,13 @@ def save_run(conversation_id: str, request: str, result: dict) -> None:
 
 def list_runs(limit: int = 100) -> list[dict]:
     with tools._session() as session:
-        runs = session.scalars(select(WorkspaceRun).order_by(WorkspaceRun.created_at.desc()).limit(limit)).all()
-        return [dict(run_id=run.run_id, conversation_id=run.conversation_id, request=run.request,
-                     created_at=run.created_at.replace(tzinfo=UTC).isoformat(), result=run.payload) for run in runs]
+        durable = session.scalars(select(AgentRun).order_by(AgentRun.created_at.desc()).limit(limit)).all()
+        legacy = session.scalars(select(WorkspaceRun).order_by(WorkspaceRun.created_at.desc()).limit(limit)).all()
+        results = {run.run_id: dict(run_id=run.run_id, conversation_id=run.conversation_id, request=run.request,
+                                   created_at=run.created_at.replace(tzinfo=UTC).isoformat(), result=run.payload) for run in legacy}
+        for run in durable:
+            results[run.run_id] = dict(run_id=run.run_id, conversation_id=run.session_id, request=run.request,
+                                      created_at=run.created_at.replace(tzinfo=UTC).isoformat(),
+                                      result=run.result or dict(run_id=run.run_id, status=run.status, agent="runtime", trace=[], events=[],
+                                                               terminal_reason="RECOVERY_REQUIRED", reply="任务尚未完成"))
+        return sorted(results.values(), key=lambda run: run["created_at"], reverse=True)[:limit]

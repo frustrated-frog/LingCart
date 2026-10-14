@@ -1,6 +1,18 @@
 from fastapi.testclient import TestClient
+import pytest
 
 import api
+from src import tools
+from src.backend.db import get_engine, get_session_factory
+from src.backend.seed import seed
+
+
+@pytest.fixture(autouse=True)
+def isolated_database():
+    engine = get_engine("sqlite:///:memory:")
+    tools.configure_db(engine)
+    with get_session_factory(engine)() as session:
+        seed(session)
 
 client = TestClient(api.app)
 

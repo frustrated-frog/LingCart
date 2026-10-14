@@ -1,0 +1,170 @@
+"""Crash/restart boundaries use a file-backed DB and fresh store instances."""
+import threading
+
+import pytest
+from sqlalchemy import select
+
+from src import tools
+from src.backend.db import AgentRun, ConversationMessage, PendingAction, Payment, ToolLedger, get_engine, get_session_factory
+from src.backend.seed import seed
+from src.durable import load_conversation, resume_run, run_conversation
+from src.errors import AgentError
+from src.persistence import RunStore
+
+
+@pytest.fixture
+def database(tmp_path):
+    path = tmp_path / "durable.db"
+    engine = get_engine(f"sqlite:///{path}")
+    tools.configure_db(engine)
+    with get_session_factory(engine)() as session:
+        seed(session)
+    yield path
+    engine.dispose()
+
+
+def test_request_retry_returns_same_run_and_one_answer(database):
+    first = run_conversation("查询订单 1002 的物流", "session", request_id="same")
+    repeated = run_conversation("查询订单 1002 的物流", "session", request_id="same")
+    assert repeated["run_id"] == first["run_id"] and repeated["cached"]
+    assert len(RunStore().conversation("session")["messages"]) == 2
+    with pytest.raises(AgentError, match="不同的需求"):
+        run_conversation("另一个请求", "session", request_id="same")
+
+
+class CrashAfterWrite(BaseException):
+    pass
+
+
+class CrashingStore(RunStore):
+    def save_checkpoint(self, run_id, token, snapshot, event=None):
+        if event and event.get("type") == "tool_result" and event.get("tool") == "process_payment":
+            raise CrashAfterWrite()
+        super().save_checkpoint(run_id, token, snapshot, event)
+
+
+def test_restart_after_write_commit_reuses_ledger_and_saves_one_answer(database):
+    first = run_conversation("帮我支付订单 1003", "pay")
+    with pytest.raises(CrashAfterWrite):
+        run_conversation("确认使用 card 支付", "pay", action_id=first["pending_action"]["action_id"], store=CrashingStore())
+    active = RunStore().conversation("pay")["active_run_id"]
+    assert tools.get_payment_status(1003)["status"] == "paid"
+    # Recreate engine/session factory to emulate losing every process-local object.
+    tools.configure_db(get_engine(f"sqlite:///{database}"))
+    result = resume_run("pay", active)
+    assert result["status"] == "SUCCEEDED"
+    assert result["trace"][0]["status"] == "REUSED"
+    with tools._session() as session:
+        assert len(session.scalars(select(ToolLedger).where(ToolLedger.tool_name == "process_payment")).all()) == 1
+        assert len(session.scalars(select(ConversationMessage).where(ConversationMessage.run_id == active, ConversationMessage.role == "assistant")).all()) == 1
+    assert resume_run("pay", active)["cached"]
+    assert RunStore().conversation("pay")["active_run_id"] is None
+
+
+def test_approval_restores_on_restart_and_is_session_scoped(database):
+    first = run_conversation("订单 1001 我想退款", "refund")
+    tools.configure_db(get_engine(f"sqlite:///{database}"))
+    restored = load_conversation("refund")
+    assert restored["memory"].pending_action == first["pending_action"]
+    with pytest.raises(AgentError) as error:
+        run_conversation("确认继续", "other", action_id=first["pending_action"]["action_id"])
+    assert error.value.code == "APPROVAL_STALE"
+    assert tools.check_refund_eligibility(1001)["eligible"]
+    completed = run_conversation("确认继续", "refund", action_id=first["pending_action"]["action_id"])
+    assert completed["status"] == "SUCCEEDED"
+
+
+def test_missing_payment_method_keeps_approval_available(database):
+    from src.backend.db import Payment
+    with tools._session() as session:
+        session.scalar(select(Payment).where(Payment.order_id == 1003)).method = ""
+        session.commit()
+    first = run_conversation("帮我支付订单 1003", "method")
+    missing = run_conversation("确认", "method")
+    assert missing["status"] == "WAITING_CLARIFICATION"
+    confirmed = run_conversation("确认使用 card 支付", "method")
+    assert confirmed["status"] == "SUCCEEDED"
+
+
+def test_only_one_worker_can_claim_a_conversation(database):
+    store = RunStore()
+    entered = threading.Event()
+    release = threading.Event()
+    output = []
+    def blocking_runner(message, **kwargs):
+        entered.set()
+        assert release.wait(2)
+        from src.orchestrator import run_orchestrator
+        return run_orchestrator(message, **kwargs)
+    worker = threading.Thread(target=lambda: output.append(run_conversation("查询订单 1002 的状态", "busy", request_id="one", runner=blocking_runner)))
+    worker.start()
+    assert entered.wait(2)
+    try:
+        with pytest.raises(AgentError) as error:
+            run_conversation("查询订单 1001 的状态", "busy", request_id="two")
+        assert error.value.code == "CONVERSATION_BUSY"
+    finally:
+        release.set()
+        worker.join(3)
+    assert output[0]["status"] == "SUCCEEDED"
+
+
+def test_crash_inside_business_transaction_rolls_back_both_write_and_ledger(database, monkeypatch):
+    import src.direct_executor as direct
+    original = tools.process_payment
+    def crashing_payment(order_id: int, method: str) -> dict:
+        original(order_id, method)
+        raise CrashAfterWrite()
+    # The fault happens inside the real local DB transaction.
+    from src.runtime import ToolSpec, tool_spec
+    schema = tool_spec("process_payment", original).schema
+    first = run_conversation("帮我支付订单 1003", "rollback")
+    monkeypatch.setitem(direct._APPROVED_TOOLS, "process_payment", ToolSpec(crashing_payment, schema, True, True))
+    with pytest.raises(CrashAfterWrite):
+        run_conversation("确认", "rollback")
+    assert tools.get_payment_status(1003)["status"] == "pending"
+    with tools._session() as session:
+        assert not session.scalars(select(ToolLedger).where(ToolLedger.tool_name == "process_payment")).all()
+    monkeypatch.setitem(direct._APPROVED_TOOLS, "process_payment", original)
+    result = resume_run("rollback", RunStore().conversation("rollback")["active_run_id"])
+    assert result["status"] == "SUCCEEDED"
+    assert tools.get_payment_status(1003)["status"] == "paid"
+
+
+def test_model_decision_and_tool_result_survive_restart(database, monkeypatch):
+    from langchain_core.messages import AIMessage
+    from src.agents import base
+    from src.agents.order_agent import get_order_status
+    class StopBeforeFinal(RunStore):
+        def save_checkpoint(self, run_id, token, snapshot, event=None):
+            if event and event["type"] == "model_started" and snapshot["models"]:
+                raise CrashAfterWrite()
+            super().save_checkpoint(run_id, token, snapshot, event)
+    class Scripted:
+        def __init__(self):
+            self.calls = 0
+        def bind_tools(self, tools):
+            return self
+        def invoke(self, messages):
+            self.calls += 1
+            return AIMessage(content="", tool_calls=[{"name": "get_order_status", "args": {"order_id": 1002}, "id": "one"}])
+    first_model = Scripted()
+    monkeypatch.setattr(base, "get_llm", lambda: first_model)
+    def runner(message, **kwargs):
+        return base.run_tool_agent("order", "Get real order status", [get_order_status], message,
+                                   kwargs.get("history"), run_id=__import__('src.runtime', fromlist=['current_runtime']).current_runtime().run_id)
+    with pytest.raises(CrashAfterWrite):
+        run_conversation("物流怎么了", "model", store=StopBeforeFinal(), runner=runner)
+    assert first_model.calls == 1
+    class FinalModel(Scripted):
+        def invoke(self, messages):
+            self.calls += 1
+            assert any(getattr(m, "type", None) == "tool" for m in messages)
+            return AIMessage(content="订单 1002 运输中")
+    next_model = FinalModel()
+    monkeypatch.setattr(base, "get_llm", lambda: next_model)
+    result = resume_run("model", RunStore().conversation("model")["active_run_id"], runner=runner)
+    assert result["status"] == "SUCCEEDED"
+    assert next_model.calls == 1
+    assert result["trace"][0]["status"] == "REUSED"
+    assert any(e["type"] == "model_reused" for e in RunStore().run(result["run_id"])["events"])

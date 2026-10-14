@@ -5,6 +5,8 @@ Docstrings are written for the LLM to read when deciding which tool to call.
 import logging
 import json
 import uuid
+from contextlib import contextmanager
+from contextvars import ContextVar
 
 from sqlalchemy import select
 
@@ -17,6 +19,7 @@ logger = logging.getLogger("support_agent.tools")
 _engine = get_engine()
 init_db(_engine)
 _SessionLocal = get_session_factory(_engine)
+_transaction_session = ContextVar("business_transaction_session", default=None)
 
 
 def _ensure_seeded() -> None:
@@ -44,8 +47,30 @@ def configure_db(engine) -> None:
     _SessionLocal = get_session_factory(_engine)
 
 
+@contextmanager
 def _session():
-    return _SessionLocal()
+    active = _transaction_session.get()
+    if active is not None:
+        yield active
+    else:
+        with _SessionLocal() as session:
+            yield session
+
+
+@contextmanager
+def use_transaction(session):
+    token = _transaction_session.set(session)
+    try:
+        yield
+    finally:
+        _transaction_session.reset(token)
+
+
+def _commit(session):
+    if _transaction_session.get() is None:
+        session.commit()
+    else:
+        session.flush()
 
 
 def get_order_status(order_id: int) -> dict:
@@ -176,13 +201,12 @@ def initiate_refund(order_id: int, reason: str) -> dict:
     with _session() as s:
         refund = s.query(Refund).filter_by(order_id=order_id).first()
         if refund is None:
-            next_id = (s.query(Refund).count()) + 1
-            refund = Refund(refund_id=next_id, order_id=order_id, status="requested", reason=reason)
+            refund = Refund(order_id=order_id, status="requested", reason=reason)
             s.add(refund)
         else:
             refund.status = "requested"
             refund.reason = reason
-        s.commit()
+        _commit(s)
         return {"success": True, "order_id": order_id, "refund_id": refund.refund_id, "status": "requested"}
 
 
@@ -213,7 +237,7 @@ def process_payment(order_id: int, method: str) -> dict:
 
         payment.status = "paid"
         payment.method = method
-        s.commit()
+        _commit(s)
         return {"success": True, "order_id": order_id, "status": "paid", "method": method}
 
 

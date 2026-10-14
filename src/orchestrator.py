@@ -13,7 +13,7 @@ from src.agents.order_agent import run_order_agent
 from src.agents.payment_agent import run_payment_agent
 from src.agents.refund_agent import run_refund_agent
 from src.direct_executor import execute_approved_action, execute_direct
-from src.errors import classify_exception
+from src.errors import AgentError, classify_exception
 from src.intake import (
     CLARIFICATION_REQUIRED,
     DIRECT,
@@ -28,7 +28,7 @@ from src.intake import (
 )
 from src.llm import extract_usage, get_llm
 from src.logging_config import configure_logging
-from src.runtime import TraceRecorder
+from src.runtime import BudgetLimits, RunRuntime, ToolExecutor, TraceRecorder, current_runtime, runtime_scope
 from src.tools import escalate_to_human
 
 configure_logging()
@@ -68,6 +68,9 @@ class SupportState(TypedDict, total=False):
 
 
 def _event(run_id: str, sequence: int, event_type: str, **data) -> dict:
+    context = current_runtime()
+    if context and context.run_id == run_id:
+        return context.record(event_type, **data)
     return {
         "run_id": run_id,
         "sequence": sequence,
@@ -88,11 +91,20 @@ def route_node(state: SupportState) -> dict:
     run_id = state.get("run_id") or uuid.uuid4().hex
     started_at = time.perf_counter()
     llm = get_llm()
-    result = llm.invoke(ROUTER_PROMPT.format(user_message=state["user_message"]))
+    prompt = ROUTER_PROMPT.format(user_message=state["user_message"])
+    context = current_runtime()
+    result = context.model_call(llm, prompt, purpose="route", allow_tools=False) if context else llm.invoke(prompt)
     duration_ms = round((time.perf_counter() - started_at) * 1000, 2)
-    route = parse_route(as_text(result.content))
+    text = as_text(result.content)
+    labels = set(re.findall(r"\b(ORDER|REFUND|PAYMENT|FAQ|ESCALATE)\b", text.upper()))
+    if len(labels) != 1:
+        raise AgentError("MODEL_FORMAT_ERROR", "路由模型未返回唯一有效业务类型", retryable=False)
+    route = labels.pop()
     events = list(state.get("events") or [])
-    events.append(
+    if context:
+        events = list(context.events)
+    else:
+        events.append(
         _event(
             run_id,
             len(events) + 1,
@@ -131,43 +143,22 @@ def _make_agent_node(agent_name: str, run_fn):
     return node
 
 
+def _escalate(run_id, request, reason, terminal_reason, usage=None):
+    recorder = TraceRecorder(run_id)
+    executor = ToolExecutor({"escalate_to_human": escalate_to_human}, recorder, max_calls=1)
+    args = {"reason": reason, "context": request}
+    result, event = executor.execute("escalate_to_human", args)
+    recorder.record("terminal", status="ESCALATED", reason=terminal_reason)
+    return dict(run_id=run_id, reply=f"已转交人工客服（工单 #{result['ticket_id']}），处理进展会在后续通知你。",
+                trace=[dict(run_id=run_id, agent="escalate", tool="escalate_to_human", args=args,
+                            result=result, status=event["status"], duration_ms=event["duration_ms"])],
+                events=recorder.events, agent="escalate", route="ESCALATE", usage=usage or {},
+                status="ESCALATED", terminal_reason=terminal_reason, pending_action=None, error=None)
+
+
 def escalate_node(state: SupportState) -> dict:
-    run_id = state.get("run_id") or uuid.uuid4().hex
-    reason = "模型路由判断该请求需要人工客服"
-    result = escalate_to_human(reason=reason, context=state["user_message"])
-    trace = [
-        {
-            "run_id": run_id,
-            "agent": "escalate",
-            "tool": "escalate_to_human",
-            "args": {"reason": reason, "context": state["user_message"]},
-            "result": result,
-            "status": "SUCCEEDED",
-            "duration_ms": 0.0,
-        }
-    ]
-    events = list(state.get("events") or [])
-    events.append(_event(run_id, len(events) + 1, "tool_call", tool="escalate_to_human", args=trace[0]["args"]))
-    events.append(
-        _event(
-            run_id,
-            len(events) + 1,
-            "tool_result",
-            tool="escalate_to_human",
-            result=result,
-            status="SUCCEEDED",
-            duration_ms=0.0,
-        )
-    )
-    return {
-        "reply": f"当前请求已转交人工客服（工单 #{result['ticket_id']}），处理进展会在后续通知你。",
-        "trace": trace,
-        "events": events,
-        "agent": "escalate",
-        "usage": state.get("usage", {}),
-        "status": "ESCALATED",
-        "terminal_reason": "MODEL_ROUTED_ESCALATION",
-    }
+    return _escalate(state["run_id"], state["user_message"], "模型路由判断该请求需要人工客服",
+                     "MODEL_ROUTED_ESCALATION", state.get("usage"))
 
 
 def build_graph():
@@ -234,51 +225,16 @@ def _simple_result(
 
 
 def _explicit_escalation(intake: TaskIntake, run_id: str, user_message: str) -> dict:
-    reason = "用户明确要求人工客服"
-    result = escalate_to_human(reason=reason, context=user_message)
-    trace = [
-        {
-            "run_id": run_id,
-            "agent": "escalate",
-            "tool": "escalate_to_human",
-            "args": {"reason": reason, "context": user_message},
-            "result": result,
-            "status": "SUCCEEDED",
-            "duration_ms": 0.0,
-        }
-    ]
-    response = _simple_result(
-        intake,
-        run_id,
-        reply=f"已按你的要求转交人工客服（工单 #{result['ticket_id']}），处理进展会在后续通知你。",
-        agent="escalate",
-        route="ESCALATE",
-        status="ESCALATED",
-        terminal_reason="USER_REQUESTED_ESCALATION",
-        trace=trace,
-    )
-    response["events"].insert(
-        1,
-        _event(
-            run_id,
-            2,
-            "tool_result",
-            tool="escalate_to_human",
-            args=trace[0]["args"],
-            result=result,
-            status="SUCCEEDED",
-            duration_ms=0.0,
-        ),
-    )
-    for sequence, event in enumerate(response["events"], start=1):
-        event["sequence"] = sequence
-    return response
+    TraceRecorder(run_id).record("route_decision", source="deterministic", route="ESCALATE", confidence=1.0)
+    result = _escalate(run_id, user_message, "用户明确要求人工客服", "USER_REQUESTED_ESCALATION")
+    result["intake"] = intake.to_dict()
+    return result
 
 
-def run_orchestrator(user_message: str, history: list | None = None, pending_action: dict | None = None) -> dict:
+def _run_orchestrator(user_message: str, history: list | None = None, pending_action: dict | None = None) -> dict:
     """Run the V1 intake and execution path without replaying the whole graph."""
 
-    run_id = uuid.uuid4().hex
+    run_id = current_runtime().run_id if current_runtime() else uuid.uuid4().hex
     started_at = time.perf_counter()
     intake = analyze_request(user_message)
 
@@ -406,4 +362,29 @@ def run_orchestrator(user_message: str, history: list | None = None, pending_act
             }
         },
     )
+    return result
+
+
+def run_orchestrator(user_message: str, history: list | None = None, pending_action: dict | None = None, *, limits=None) -> dict:
+    """Shared runtime boundary used by API, Streamlit and offline evaluation."""
+    context = current_runtime()
+    if context is None:
+        context = RunRuntime(uuid.uuid4().hex, limits or BudgetLimits())
+        with runtime_scope(context):
+            return run_orchestrator(user_message, history, pending_action)
+    context.record("intake", request=user_message)
+    try:
+        result = _run_orchestrator(user_message, history, pending_action)
+    except AgentError as error:
+        trace = [dict(run_id=context.run_id, agent="runtime", tool=event["tool"], args=event.get("args", {}),
+                      result=event.get("result"), status=event.get("status"), duration_ms=event.get("duration_ms"))
+                 for event in context.events if event["type"] == "tool_result"]
+        status = "PARTIAL" if trace else "FAILED"
+        context.record("terminal", status=status, reason=error.code)
+        result = dict(run_id=context.run_id, reply="运行已停止，已保留此前获得的结果。" if trace else str(error),
+                      trace=trace, agent="runtime", route="RUNTIME", status=status, terminal_reason=error.code,
+                      error={"code": error.code, "message": str(error), "retryable": error.retryable}, pending_action=pending_action,
+                      intake={}, usage={"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}, cached=False)
+    result["events"] = context.events
+    result["budget"] = {"limits": context.limits.__dict__, "consumed": dict(context.counters)}
     return result

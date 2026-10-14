@@ -42,6 +42,19 @@ class RotatingChatModel:
     def bind_tools(self, tools):
         return RotatingChatModel([m.bind_tools(tools) for m in self._models], state=self._state)
 
+    def bind(self, **kwargs):
+        return RotatingChatModel([m.bind(**kwargs) for m in self._models], state=self._state)
+
+    def invoke_once(self, messages):
+        """Runtime owns retries so every provider attempt consumes its budget."""
+        idx = self._state["index"] % len(self._models)
+        try:
+            return self._models[idx].invoke(messages)
+        except Exception as exc:
+            if _is_quota_error(exc):
+                self._state["index"] = (idx + 1) % len(self._models)
+            raise
+
     def invoke(self, messages):
         n = len(self._models)
         last_exc: Exception | None = None

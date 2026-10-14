@@ -287,7 +287,7 @@ def execute_approved_action(pending_action: dict, user_message: str, run_id: str
         action=action_type,
         order_id=order_id,
     )
-    executor = ToolExecutor(_APPROVED_TOOLS, recorder, max_calls=1)
+    executor = ToolExecutor(_APPROVED_TOOLS, recorder, max_calls=1, approved_action=pending_action)
     trace: list[dict] = []
 
     if action_type == "PROCESS_PAYMENT":

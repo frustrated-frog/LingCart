@@ -19,30 +19,7 @@ SYSTEM_PROMPT = (
     "Reply concisely and naturally to the customer."
 )
 
-# FAQ answers are deterministic policy text, so identical questions are cached
-# to skip a repeat LLM call entirely (saves quota + latency).
-_faq_cache: dict[str, dict] = {}
-
-
 def run_faq_agent(user_message: str, history: list | None = None, run_id: str | None = None) -> dict:
-    cache_key = user_message.strip().lower()
-    cached = _faq_cache.get(cache_key)
-    if cached is not None:
-        active_run_id = run_id or cached.get("run_id")
-        trace = [{**entry, "run_id": active_run_id} for entry in cached.get("trace", [])]
-        events = [
-            {**event, "run_id": active_run_id, "sequence": index}
-            for index, event in enumerate(cached.get("events", []), start=1)
-        ]
-        return {
-            **cached,
-            "run_id": active_run_id,
-            "trace": trace,
-            "events": events,
-            "cached": True,
-            "usage": {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0},
-        }
-
-    result = run_tool_agent("faq", SYSTEM_PROMPT, FAQ_TOOLS, user_message, history, run_id=run_id)
-    _faq_cache[cache_key] = result
-    return {**result, "cached": False}
+    # Deterministic policy requests already use the no-model intake fast path.
+    # Model-led results must carry this run's real events, never another run's trace.
+    return run_tool_agent("faq", SYSTEM_PROMPT, FAQ_TOOLS, user_message, history, run_id=run_id)

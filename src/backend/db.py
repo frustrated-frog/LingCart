@@ -2,7 +2,7 @@ import os
 from datetime import date, datetime
 from pathlib import Path
 
-from sqlalchemy import create_engine, Date, DateTime, Float, ForeignKey, Integer, JSON, String, Text
+from sqlalchemy import create_engine, Date, DateTime, Float, ForeignKey, Integer, JSON, String, Text, UniqueConstraint, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -77,6 +77,73 @@ class WorkspaceRun(Base):
     payload: Mapped[dict] = mapped_column(JSON)
 
 
+class Conversation(Base):
+    __tablename__ = "conversations"
+    session_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    state: Mapped[dict] = mapped_column(JSON, default=dict)
+    active_run_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+
+class AgentRun(Base):
+    __tablename__ = "agent_runs"
+    __table_args__ = (UniqueConstraint("session_id", "request_id"),)
+    run_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    session_id: Mapped[str] = mapped_column(ForeignKey("conversations.session_id"), index=True)
+    request_id: Mapped[str] = mapped_column(String(64))
+    request: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(32), default="RUNNING")
+    result: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime)
+    lease_token: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    lease_until: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    limits: Mapped[dict] = mapped_column(JSON)
+
+
+class ConversationMessage(Base):
+    __tablename__ = "conversation_messages"
+    __table_args__ = (UniqueConstraint("run_id", "role"),)
+    message_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    session_id: Mapped[str] = mapped_column(ForeignKey("conversations.session_id"), index=True)
+    run_id: Mapped[str] = mapped_column(ForeignKey("agent_runs.run_id"))
+    role: Mapped[str] = mapped_column(String(16))
+    content: Mapped[str] = mapped_column(Text)
+
+
+class AgentStep(Base):
+    __tablename__ = "agent_steps"
+    __table_args__ = (UniqueConstraint("run_id", "sequence"),)
+    step_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    run_id: Mapped[str] = mapped_column(ForeignKey("agent_runs.run_id"), index=True)
+    sequence: Mapped[int] = mapped_column(Integer)
+    payload: Mapped[dict] = mapped_column(JSON)
+
+
+class Checkpoint(Base):
+    __tablename__ = "checkpoints"
+    run_id: Mapped[str] = mapped_column(ForeignKey("agent_runs.run_id"), primary_key=True)
+    payload: Mapped[dict] = mapped_column(JSON)
+
+
+class ToolLedger(Base):
+    __tablename__ = "tool_ledger"
+    call_key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    run_id: Mapped[str] = mapped_column(ForeignKey("agent_runs.run_id"), index=True)
+    tool_name: Mapped[str] = mapped_column(String(80))
+    args: Mapped[dict] = mapped_column(JSON)
+    status: Mapped[str] = mapped_column(String(32))
+    result: Mapped[dict | str | None] = mapped_column(JSON, nullable=True)
+
+
+class PendingAction(Base):
+    __tablename__ = "pending_actions"
+    action_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    session_id: Mapped[str] = mapped_column(ForeignKey("conversations.session_id"), index=True)
+    source_run_id: Mapped[str] = mapped_column(ForeignKey("agent_runs.run_id"))
+    status: Mapped[str] = mapped_column(String(24), default="OPEN")
+    payload: Mapped[dict] = mapped_column(JSON)
+    approved_run_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+
 def get_engine(db_url: str | None = None):
     default_url = f"sqlite:///{DEFAULT_DB_PATH.as_posix()}"
     url = db_url or os.environ.get("SUPPORT_AGENT_DB_URL", default_url)
@@ -93,6 +160,11 @@ def get_engine(db_url: str | None = None):
 
 def init_db(engine) -> None:
     Base.metadata.create_all(engine)
+    # Add constraints to existing SQLite files as well as fresh databases.
+    # Duplicate legacy rows produce a migration error instead of being deleted.
+    with engine.begin() as connection:
+        connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS uq_refund_order ON refunds(order_id)"))
+        connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS uq_payment_order ON payments(order_id)"))
 
 
 def get_session_factory(engine):

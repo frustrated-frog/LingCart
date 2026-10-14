@@ -153,7 +153,6 @@ def test_api_exposes_v1_run_status_and_events():
 
 
 def test_api_session_carries_pending_action_into_confirmation(seeded_db):
-    api._sessions.clear()
     client = TestClient(api.app)
     first = client.post(
         "/chat",

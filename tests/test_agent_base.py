@@ -137,5 +137,5 @@ def test_model_failure_after_tool_does_not_replay_tool(monkeypatch):
 
     assert len(result["trace"]) == 1
     assert result["reply"] == "echoed:safe"
-    assert result["status"] == "SUCCEEDED"
+    assert result["status"] == "PARTIAL"
     assert result["terminal_reason"] == "MODEL_FAILED_AFTER_TOOL_RESULT"

@@ -75,3 +75,78 @@ def test_tool_budget_is_enforced():
     with pytest.raises(AgentError) as caught:
         executor.execute("echo", {"value": "two"})
     assert caught.value.code == ErrorCode.TOOL_BUDGET_EXHAUSTED
+
+
+def test_deadline_is_bounded_and_does_not_start_a_second_write():
+    import time
+    from src.runtime import BudgetLimits, RunRuntime, ToolSpec, runtime_scope
+    calls = []
+    def slow(value: str):
+        calls.append(value)
+        time.sleep(.1)
+        return {"value": value}
+    context = RunRuntime("deadline", BudgetLimits(call_timeout=.01, read_attempts=1))
+    started = time.monotonic()
+    with runtime_scope(context), pytest.raises(AgentError) as error:
+        ToolExecutor({"slow": slow}, TraceRecorder(context.run_id)).execute("slow", {"value": "a"})
+    assert error.value.code == "TOOL_TIMEOUT"
+    assert time.monotonic() - started < .08
+    assert calls == ["a"]
+
+
+def test_budget_priority_and_strict_argument_types():
+    from src.runtime import BudgetLimits, RunRuntime, runtime_scope
+    context = RunRuntime("limits", BudgetLimits(max_model_calls=0, max_tool_calls=0, max_prompt_tokens=0))
+    assert context.stop_reason("model", 1) == "MODEL_ROUND_BUDGET_EXHAUSTED"
+    assert context.stop_reason("tool") == "TOOL_BUDGET_EXHAUSTED"
+    context.started -= 31
+    assert context.stop_reason("model", 1) == "TIME_BUDGET_EXHAUSTED"
+    with pytest.raises(AgentError) as error:
+        ToolExecutor({"echo": echo}, TraceRecorder("strict")).execute("echo", {"value": 123})
+    assert error.value.code == "INVALID_TOOL_ARGUMENTS"
+
+
+def test_final_model_round_cannot_execute_tools(monkeypatch):
+    from langchain_core.messages import AIMessage
+    from langchain_core.tools import tool
+    from src.agents import base
+    from src.runtime import BudgetLimits, RunRuntime, runtime_scope
+    calls = []
+    @tool
+    def final_tool(value: str):
+        """A test tool that must not execute on the final model round."""
+        calls.append(value)
+        return value
+    class Model:
+        def bind_tools(self, tools):
+            return self
+        def invoke(self, messages):
+            return AIMessage(content="", tool_calls=[{"name": "final_tool", "args": {"value": "a"}, "id": "one"}])
+    monkeypatch.setattr(base, "get_llm", Model)
+    context = RunRuntime("final", BudgetLimits(max_model_calls=1))
+    with runtime_scope(context):
+        result = base.run_tool_agent("test", "system", [final_tool], "hello", run_id=context.run_id)
+    assert result["terminal_reason"] == "FINAL_TOOL_CALL_FORBIDDEN"
+    assert calls == []
+
+
+def test_provider_rotation_counts_each_attempt_against_runtime_budget():
+    from langchain_core.messages import AIMessage
+    from src.llm import RotatingChatModel
+    from src.runtime import BudgetLimits, RunRuntime
+    calls = []
+    class Provider:
+        def __init__(self, name):
+            self.name = name
+        def bind(self, **kwargs):
+            return self
+        def invoke(self, messages):
+            calls.append(self.name)
+            if self.name == "rate_limited":
+                raise RuntimeError("429 rate limit")
+            return AIMessage(content="done")
+    context = RunRuntime("rotation", BudgetLimits(max_model_calls=2))
+    result = context.model_call(RotatingChatModel([Provider("rate_limited"), Provider("okay")], {"index": 0}), "hi", purpose="test")
+    assert result.content == "done"
+    assert calls == ["rate_limited", "okay"]
+    assert context.counters["model_calls"] == 2

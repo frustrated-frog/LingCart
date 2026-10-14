@@ -16,7 +16,9 @@ from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from src.logging_config import configure_logging
-from src.memory import ConversationMemory
+from src.durable import run_conversation, resume_run
+from src.errors import AgentError
+from src.persistence import RunStore
 from src.orchestrator import run_orchestrator
 
 configure_logging()
@@ -31,14 +33,14 @@ app = FastAPI(
     version="1.0.0",
 )
 
-# In-memory conversation store keyed by session_id. A real deployment would
-# back this with Redis/a database; in-memory is fine for a single-process demo.
-_sessions: dict[str, ConversationMemory] = {}
+
 
 
 class ChatRequest(BaseModel):
     message: str = Field(..., min_length=1, description="The customer's message")
-    session_id: str | None = Field(None, description="Omit to start a new conversation")
+    session_id: str | None = Field(None, max_length=64, description="Omit to start a new conversation")
+    request_id: str | None = Field(None, min_length=1, max_length=64, description="Reuse when retrying the same request")
+    action_id: str | None = Field(None, min_length=1, max_length=64, description="Current pending action shown to the user")
 
 
 class ToolCall(BaseModel):
@@ -49,9 +51,9 @@ class ToolCall(BaseModel):
 
 
 class Usage(BaseModel):
-    input_tokens: int = 0
-    output_tokens: int = 0
-    total_tokens: int = 0
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    total_tokens: int | None = None
 
 
 class ChatResponse(BaseModel):
@@ -65,6 +67,8 @@ class ChatResponse(BaseModel):
     trace: list[ToolCall]
     events: list[dict] = Field(default_factory=list)
     intake: dict = Field(default_factory=dict)
+    budget: dict = Field(default_factory=dict)
+    plan: dict | None = None
     pending_action: dict | None = None
     error: dict | None = None
     latency_ms: float | None = None
@@ -99,21 +103,17 @@ def health():
 @app.post("/chat", response_model=ChatResponse)
 def chat(req: ChatRequest):
     session_id = req.session_id or uuid.uuid4().hex
-    memory = _sessions.setdefault(session_id, ConversationMemory())
-
-    augmented_message = memory.context_note() + req.message
     try:
-        orchestrator_kwargs = {"history": memory.turns}
-        if memory.pending_action is not None:
-            orchestrator_kwargs["pending_action"] = memory.pending_action
-        result = run_orchestrator(augmented_message, **orchestrator_kwargs)
-    except Exception as exc:  # pragma: no cover - orchestrator already retries + escalates internally
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        result = run_conversation(req.message, session_id, request_id=req.request_id,
+                                  action_id=req.action_id, runner=run_orchestrator)
+    except AgentError as exc:
+        raise HTTPException(status_code=409, detail={"code": exc.code, "message": str(exc), "retryable": exc.retryable}) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail="任务中断，可通过会话接口查找并恢复运行") from exc
+    return _response(session_id, result)
 
-    memory.add_turn(req.message, result["reply"])
-    memory.update_last_order_id(result["trace"])
-    memory.update_pending_action(result)
 
+def _response(session_id, result):
     return ChatResponse(
         session_id=session_id,
         run_id=result.get("run_id", uuid.uuid4().hex),
@@ -125,9 +125,36 @@ def chat(req: ChatRequest):
         trace=result["trace"],
         events=result.get("events") or [],
         intake=result.get("intake") or {},
+        budget=result.get("budget") or {},
+        plan=result.get("plan"),
         pending_action=result.get("pending_action"),
         error=result.get("error"),
         latency_ms=result.get("latency_ms"),
         usage=Usage(**(result.get("usage") or {})),
         cached=result.get("cached", False),
     )
+
+
+class ResumeRequest(BaseModel):
+    session_id: str = Field(..., min_length=1, max_length=64)
+
+
+@app.get("/conversations/{session_id}")
+def conversation(session_id: str):
+    return RunStore().conversation(session_id)
+
+
+@app.get("/runs/{run_id}")
+def get_run(run_id: str, session_id: str):
+    run = RunStore().run(run_id)
+    if not run or run["session_id"] != session_id:
+        raise HTTPException(404, "没有找到该会话的任务")
+    return run
+
+
+@app.post("/runs/{run_id}/resume", response_model=ChatResponse)
+def resume(run_id: str, req: ResumeRequest):
+    try:
+        return _response(req.session_id, resume_run(req.session_id, run_id, runner=run_orchestrator))
+    except AgentError as exc:
+        raise HTTPException(status_code=409, detail={"code": exc.code, "message": str(exc), "retryable": exc.retryable}) from exc
