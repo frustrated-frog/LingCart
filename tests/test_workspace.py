@@ -5,8 +5,9 @@ from src import tools
 from src import orchestrator
 from src.agents import base
 from src.agents.payment_agent import PAYMENT_TOOLS
+from src.agents.refund_agent import REFUND_TOOLS
 from src.backend.catalog import seed_catalog
-from src.backend.db import Product, get_engine, get_session_factory
+from src.backend.db import Order, Payment, Product, Refund, get_engine, get_session_factory
 from src.backend.seed import seed
 from src.intake import PRODUCT_SEARCH, analyze_request
 from src.orchestrator import run_orchestrator
@@ -34,6 +35,31 @@ def test_catalog_seed_is_additive_and_keeps_edited_stock(seeded_workspace):
         assert len(session.scalars(select(Product)).all()) == 60
         assert product.stock == 0
         assert product.price == 88
+
+
+def test_business_seed_is_additive_and_preserves_changed_state(seeded_workspace):
+    with get_session_factory(seeded_workspace)() as session:
+        order = session.get(Order, 1003)
+        payment = session.scalar(select(Payment).where(Payment.order_id == 1003))
+        refund = session.scalar(select(Refund).where(Refund.order_id == 1001))
+        order.status = "shipped"
+        payment.status = "paid"
+        payment.method = "paypal"
+        refund.status = "requested"
+        refund.reason = "用户已确认的原因"
+        session.commit()
+
+        seed(session)
+
+        session.refresh(order)
+        session.refresh(payment)
+        session.refresh(refund)
+        assert order.status == "shipped"
+        assert (payment.status, payment.method) == ("paid", "paypal")
+        assert (refund.status, refund.reason) == ("requested", "用户已确认的原因")
+        assert len(session.scalars(select(Order)).all()) == 10
+        assert len(session.scalars(select(Payment)).all()) == 10
+        assert len(session.scalars(select(Refund)).all()) == 10
 
 
 def test_search_enforces_budget_category_features_and_availability(seeded_workspace):
@@ -114,6 +140,22 @@ def test_model_path_cannot_execute_unconfirmed_payment(monkeypatch):
     assert result["pending_action"]["order_id"] == 1003
     assert tools.get_payment_status(1003)["status"] == "pending"
     assert not any(t["tool"] == "process_payment" for t in result["trace"])
+
+
+def test_model_path_cannot_execute_unconfirmed_refund(monkeypatch, seeded_workspace):
+    response = FakeToolCallMessage(
+        tool_calls=[
+            {"name": "initiate_refund", "args": {"order_id": 1001, "reason": "商品损坏"}, "id": "1"}
+        ]
+    )
+    monkeypatch.setattr(base, "get_llm", lambda: FakeLLM([response]))
+    result = base.run_tool_agent("refund", "system", REFUND_TOOLS, "处理这个退款")
+    with get_session_factory(seeded_workspace)() as session:
+        refund = session.scalar(select(Refund).where(Refund.order_id == 1001))
+        assert refund.status == "none"
+    assert result["status"] == "WAITING_APPROVAL"
+    assert result["pending_action"]["order_id"] == 1001
+    assert not any(t["tool"] == "initiate_refund" for t in result["trace"])
 
 
 def test_langgraph_carries_model_requested_approval_to_frontend(monkeypatch):

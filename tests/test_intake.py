@@ -1,6 +1,8 @@
 import pytest
 
 from src.intake import (
+    APPROVAL_CONFIRMED,
+    APPROVAL_UNKNOWN,
     CLARIFICATION_REQUIRED,
     DIRECT,
     ESCALATION_REQUESTED,
@@ -15,6 +17,7 @@ from src.intake import (
     SHIPMENT_TRACKING,
     UNSUPPORTED,
     analyze_request,
+    parse_approval_response,
 )
 
 
@@ -82,3 +85,17 @@ def test_out_of_domain_request_is_unsupported():
 def test_ambiguous_request_uses_model_fallback():
     result = analyze_request("你是谁")
     assert result.execution_mode == LLM_REQUIRED
+
+
+@pytest.mark.parametrize(
+    "message",
+    ["我还没确认", "帮我确认一下订单 1003 的物流", "取消订单有什么政策", "not confirmed yet"],
+)
+def test_approval_requires_an_explicit_standalone_confirmation(message):
+    pending = {"type": "PROCESS_PAYMENT", "order_id": 1003}
+    assert parse_approval_response(message, pending) == APPROVAL_UNKNOWN
+
+
+def test_explicit_confirmation_still_matches_pending_action():
+    pending = {"type": "PROCESS_PAYMENT", "order_id": 1003}
+    assert parse_approval_response("确认使用 paypal 支付", pending) == APPROVAL_CONFIRMED

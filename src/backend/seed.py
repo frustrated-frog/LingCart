@@ -1,5 +1,7 @@
 from datetime import date
 
+from sqlalchemy import select
+
 from src.backend.db import Order, Payment, Refund, get_engine, get_session_factory, init_db
 from src.backend.catalog import seed_catalog, seed_shipments
 
@@ -47,25 +49,41 @@ REFUNDS = [
 
 
 def seed(session) -> None:
+    """Add missing demo fixtures without overwriting live demo state."""
+
     for order_id, customer_name, item, status, order_date, amount in ORDERS:
-        session.merge(
-            Order(
-                order_id=order_id,
-                customer_name=customer_name,
-                item=item,
-                status=status,
-                order_date=order_date,
-                amount=amount,
+        if session.get(Order, order_id) is None:
+            session.add(
+                Order(
+                    order_id=order_id,
+                    customer_name=customer_name,
+                    item=item,
+                    status=status,
+                    order_date=order_date,
+                    amount=amount,
+                )
             )
-        )
     for payment_id, order_id, status, method, amount in PAYMENTS:
-        session.merge(
-            Payment(payment_id=payment_id, order_id=order_id, status=status, method=method, amount=amount)
-        )
+        payment_exists = session.get(Payment, payment_id) is not None or session.scalar(
+            select(Payment.payment_id).where(Payment.order_id == order_id)
+        ) is not None
+        if not payment_exists:
+            session.add(
+                Payment(payment_id=payment_id, order_id=order_id, status=status, method=method, amount=amount)
+            )
     for refund_id, order_id, status, reason in REFUNDS:
-        session.merge(Refund(refund_id=refund_id, order_id=order_id, status=status, reason=reason))
+        refund_exists = session.get(Refund, refund_id) is not None or session.scalar(
+            select(Refund.refund_id).where(Refund.order_id == order_id)
+        ) is not None
+        if not refund_exists:
+            session.add(Refund(refund_id=refund_id, order_id=order_id, status=status, reason=reason))
     seed_catalog(session)
-    seed_shipments(session, ORDERS)
+    session.flush()
+    orders = session.scalars(select(Order)).all()
+    seed_shipments(
+        session,
+        [(order.order_id, order.customer_name, order.item, order.status, order.order_date, order.amount) for order in orders],
+    )
     session.commit()
 
 
@@ -74,4 +92,4 @@ if __name__ == "__main__":
     init_db(engine)
     session = get_session_factory(engine)()
     seed(session)
-    print(f"Seeded {len(ORDERS)} orders, {len(PAYMENTS)} payments, {len(REFUNDS)} refunds.")
+    print(f"Ensured {len(ORDERS)} orders, {len(PAYMENTS)} payments, {len(REFUNDS)} refunds exist.")

@@ -11,7 +11,6 @@ from contextvars import ContextVar
 from sqlalchemy import select
 
 from src.backend.db import Order, Payment, Product, Refund, ShipmentEvent, get_engine, get_session_factory, init_db
-from src.backend.catalog import seed_catalog, seed_shipments
 from src.backend.seed import seed as _seed_data
 
 logger = logging.getLogger("support_agent.tools")
@@ -23,17 +22,10 @@ _transaction_session = ContextVar("business_transaction_session", default=None)
 
 
 def _ensure_seeded() -> None:
-    """Deployed environments (e.g. Streamlit Cloud) only ever run app.py, with
-    no separate seed step - so seed on first import if the DB is empty."""
+    """Add any missing demo fixtures without resetting existing state."""
     with _SessionLocal() as s:
-        if s.query(Order).count() == 0:
-            _seed_data(s)
-            logger.info("Auto-seeded empty database on startup.")
-        else:
-            seed_catalog(s)
-            orders = s.scalars(select(Order)).all()
-            seed_shipments(s, [(o.order_id, o.customer_name, o.item, o.status, o.order_date, o.amount) for o in orders])
-            s.commit()
+        _seed_data(s)
+        logger.info("Ensured missing demo fixtures on startup.")
 
 
 _ensure_seeded()
