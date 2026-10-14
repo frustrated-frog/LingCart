@@ -10,6 +10,12 @@ from sqlalchemy import select, text
 from src import tools
 from src.backend.db import AgentRun, AgentStep, Checkpoint, Conversation, ConversationMessage, PendingAction, ToolLedger
 from src.errors import AgentError
+from src.runtime_state import (
+    advance_runtime_snapshot,
+    new_runtime_snapshot,
+    restore_runtime_snapshot,
+    seal_runtime_snapshot,
+)
 
 
 def utcnow():
@@ -80,9 +86,11 @@ class RunStore:
                 session.flush()
                 history = session.scalars(select(ConversationMessage).where(ConversationMessage.session_id == session_id)
                                           .order_by(ConversationMessage.message_id.desc()).limit(40)).all()
-                snapshot = {"phase": "INTAKE", "conversation": conversation.state,
-                            "history": [{"role": m.role, "content": m.content} for m in reversed(history)],
-                            "budget": {}, "models": {}, "sequence": 0}
+                snapshot = new_runtime_snapshot(
+                    run.run_id,
+                    conversation=conversation.state,
+                    history=[{"role": m.role, "content": m.content} for m in reversed(history)],
+                )
                 session.add(Checkpoint(run_id=run.run_id, payload=snapshot))
                 session.add(ConversationMessage(session_id=session_id, run_id=run.run_id, role="user", content=request))
             run.status = "RUNNING"
@@ -90,7 +98,12 @@ class RunStore:
             run.lease_until = utcnow() + timedelta(seconds=run.limits.get("max_seconds", 30) + 15)
             conversation.active_run_id = run.run_id
             checkpoint = session.get(Checkpoint, run.run_id)
-            snapshot = checkpoint.payload
+            snapshot = restore_runtime_snapshot(checkpoint.payload, run.run_id)
+            if snapshot.get("status") == "INTERRUPTED":
+                snapshot = advance_runtime_snapshot(
+                    snapshot, run.run_id, status="RUNNING", current_node=snapshot.get("current_node", "INTAKE")
+                )
+                checkpoint.payload = json_value(snapshot)
             pending = (snapshot.get("conversation") or {}).get("pending_action")
             if pending and self._is_confirmation(run.request, pending):
                 action = session.get(PendingAction, pending.get("action_id"))
@@ -118,7 +131,19 @@ class RunStore:
         with transaction() as session:
             self._lease(session, run_id, token)
             checkpoint = session.get(Checkpoint, run_id)
-            checkpoint.payload = json_value(snapshot)
+            stored = restore_runtime_snapshot(checkpoint.payload, run_id)
+            incoming = seal_runtime_snapshot(snapshot, run_id)
+            if incoming["state_version"] != stored["state_version"]:
+                raise AgentError("CHECKPOINT_CONFLICT", "任务状态已被其他执行者更新", retryable=False)
+            next_snapshot = advance_runtime_snapshot(
+                incoming,
+                run_id,
+                status="RUNNING",
+                current_node=incoming.get("phase", incoming.get("current_node", "INTAKE")),
+            )
+            checkpoint.payload = json_value(next_snapshot)
+            snapshot.clear()
+            snapshot.update(next_snapshot)
             if event is not None:
                 session.add(AgentStep(run_id=run_id, sequence=event["sequence"], payload=json_value(event)))
 
@@ -200,13 +225,27 @@ class RunStore:
             conversation.state = json_value(state)
             conversation.active_run_id = None
             session.add(ConversationMessage(session_id=run.session_id, run_id=run_id, role="assistant", content=result["reply"]))
-            session.get(Checkpoint, run_id).payload = {**session.get(Checkpoint, run_id).payload, "phase": "TERMINAL"}
+            checkpoint = session.get(Checkpoint, run_id)
+            checkpoint.payload = json_value(advance_runtime_snapshot(
+                checkpoint.payload,
+                run_id,
+                status=result["status"],
+                current_node="TERMINAL",
+                terminal_reason=result.get("terminal_reason"),
+            ))
         return result
 
     def interrupt(self, run_id, token):
         with transaction() as session:
             run = self._lease(session, run_id, token)
             run.status, run.lease_token, run.lease_until = "INTERRUPTED", None, None
+            checkpoint = session.get(Checkpoint, run_id)
+            checkpoint.payload = json_value(advance_runtime_snapshot(
+                checkpoint.payload,
+                run_id,
+                status="INTERRUPTED",
+                current_node=checkpoint.payload.get("current_node", checkpoint.payload.get("phase", "INTAKE")),
+            ))
 
     def run(self, run_id):
         with tools._session() as session:

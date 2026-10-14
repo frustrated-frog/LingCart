@@ -5,6 +5,8 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from enum import StrEnum
+import hashlib
 import inspect
 import json
 import math
@@ -17,6 +19,7 @@ from langchain_core.messages import AIMessage
 from pydantic import ConfigDict, ValidationError, create_model
 
 from src.errors import AgentError, ErrorCode, classify_exception
+from src.runtime_state import restore_runtime_snapshot
 
 
 @dataclass(frozen=True)
@@ -88,7 +91,7 @@ class RunRuntime:
         self.run_id = run_id
         self.limits = limits or BudgetLimits()
         self.store, self.token = store, token
-        self.snapshot = dict(snapshot or {})
+        self.snapshot = restore_runtime_snapshot(snapshot, run_id) if snapshot else {}
         self.models = dict(self.snapshot.get("models", {}))
         self.counters = {"model_calls": 0, "tool_calls": 0, "prompt_tokens": 0, "completion_tokens": 0,
                          "elapsed_seconds": 0.0, **self.snapshot.get("budget", {})}
@@ -126,7 +129,8 @@ class RunRuntime:
     def checkpoint(self, **updates):
         self.snapshot.update(updates)
         self.counters["elapsed_seconds"] = self.prior_elapsed + time.monotonic() - self.started
-        self.snapshot.update(phase=self.phase, models=self.models, budget=self.counters, sequence=self.sequence)
+        self.snapshot.update(phase=self.phase, current_node=self.phase, status="RUNNING",
+                             models=self.models, budget=self.counters, sequence=self.sequence)
         if self.store:
             self.store.save_checkpoint(self.run_id, self.token, self.snapshot)
 
@@ -136,7 +140,8 @@ class RunRuntime:
                  "type": event_type, **data}
         self.events.append(event)
         self.counters["elapsed_seconds"] = self.prior_elapsed + time.monotonic() - self.started
-        self.snapshot.update(phase=self.phase, models=self.models, budget=self.counters, sequence=self.sequence)
+        self.snapshot.update(phase=self.phase, current_node=self.phase, status="RUNNING",
+                             models=self.models, budget=self.counters, sequence=self.sequence)
         if self.store:
             self.store.save_checkpoint(self.run_id, self.token, self.snapshot, event)
         return event
@@ -226,12 +231,54 @@ class ApprovalRequired(AgentError):
         self.pending = pending
 
 
+class ToolRiskLevel(StrEnum):
+    READ_ONLY = "READ_ONLY"
+    GUARDED = "GUARDED"
+    HIGH = "HIGH"
+
+
+class ToolEffect(StrEnum):
+    READ = "READ"
+    WRITE = "WRITE"
+
+
+class ReplayPolicy(StrEnum):
+    REPLAY_SAFE = "REPLAY_SAFE"
+    AT_MOST_ONCE = "AT_MOST_ONCE"
+    REQUIRES_APPROVAL = "REQUIRES_APPROVAL"
+
+
+class ConcurrencyPolicy(StrEnum):
+    PARALLEL_SAFE = "PARALLEL_SAFE"
+    SERIAL_PER_RUN = "SERIAL_PER_RUN"
+
+
 @dataclass
 class ToolSpec:
     function: object
     schema: object = None
     side_effect: bool = False
     transactional: bool = False
+    risk_level: ToolRiskLevel = ToolRiskLevel.READ_ONLY
+    effect: ToolEffect = ToolEffect.READ
+    replay_policy: ReplayPolicy = ReplayPolicy.REPLAY_SAFE
+    concurrency_policy: ConcurrencyPolicy = ConcurrencyPolicy.PARALLEL_SAFE
+
+    def __post_init__(self):
+        if self.side_effect:
+            self.risk_level = ToolRiskLevel.HIGH
+            self.effect = ToolEffect.WRITE
+            self.replay_policy = ReplayPolicy.REQUIRES_APPROVAL
+            self.concurrency_policy = ConcurrencyPolicy.SERIAL_PER_RUN
+
+    def policy_payload(self) -> dict:
+        return {
+            "risk_level": self.risk_level.value,
+            "effect": self.effect.value,
+            "replay_policy": self.replay_policy.value,
+            "concurrency_policy": self.concurrency_policy.value,
+            "transactional": self.transactional,
+        }
 
 
 def tool_spec(name, fn):
@@ -269,7 +316,8 @@ class ToolExecutor:
 
     @staticmethod
     def fingerprint(tool_name, args):
-        return f"{tool_name}:" + json.dumps(args, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str)
+        canonical = json.dumps(args, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str)
+        return hashlib.sha256(f"{tool_name.strip()}\n{canonical}".encode("utf-8")).hexdigest()
 
     def _fail(self, error, name, args):
         self.recorder.record("error", tool=name, args=args, code=error.code, message=str(error), retryable=error.retryable)
@@ -279,6 +327,7 @@ class ToolExecutor:
         if name not in self.registry:
             self._fail(AgentError(ErrorCode.UNKNOWN_TOOL, f"工具 {name} 不在允许列表中", retryable=False), name, args)
         spec = self.registry[name]
+        policy = spec.policy_payload()
         try:
             if not isinstance(args, dict):
                 raise TypeError("工具参数必须是对象")
@@ -290,8 +339,10 @@ class ToolExecutor:
         context = current_runtime()
         context = context if context and context.run_id == self.recorder.run_id else None
         approval = context.approval if context and context.store else (context.approval if context else None) or self.approval
-        if spec.side_effect and (not approval or approval.get("order_id") != args.get("order_id") or
-                                approval.get("type") != ("PROCESS_PAYMENT" if name == "process_payment" else "INITIATE_REFUND")):
+        if spec.replay_policy == ReplayPolicy.REQUIRES_APPROVAL and (
+            not approval or approval.get("order_id") != args.get("order_id") or
+            approval.get("type") != ("PROCESS_PAYMENT" if name == "process_payment" else "INITIATE_REFUND")
+        ):
             pending = {"type": "PROCESS_PAYMENT" if name == "process_payment" else "INITIATE_REFUND",
                        "order_id": args["order_id"], "requires_approval": True,
                        **{key: value for key, value in args.items() if key in {"reason", "method"}}}
@@ -304,21 +355,26 @@ class ToolExecutor:
                 if payment.get("error"):
                     self._fail(AgentError("BUSINESS_DATA_NOT_FOUND", payment["error"], retryable=False), name, args)
                 pending["amount"] = payment.get("amount")
-            self.recorder.record("approval_required", tool=name, args=args)
+            self.recorder.record("approval_required", tool=name, args=args, policy=policy)
             raise ApprovalRequired(pending)
         fingerprint = self.fingerprint(name, args)
-        key = context.store.ledger_key(context.run_id, name, args, approval if spec.side_effect else None) if context and context.store else None
+        key = context.store.ledger_key(
+            context.run_id, name, args, approval if spec.effect == ToolEffect.WRITE else None
+        ) if context and context.store else None
         saved = context.store.ledger(key, name, args) if key else None
-        if saved and (saved["status"] == "UNKNOWN" or (saved["status"] == "RUNNING" and spec.side_effect and not spec.transactional)):
+        if saved and (saved["status"] == "UNKNOWN" or (
+            saved["status"] == "RUNNING" and spec.effect == ToolEffect.WRITE and not spec.transactional
+        )):
             self._fail(AgentError("UNCERTAIN_TOOL_OUTCOME", "外部操作结果不确定，禁止自动重放", retryable=False), name, args)
         cached = saved["result"] if saved and saved["status"] == "SUCCEEDED" else self._results.get(fingerprint)
         if (saved and saved["status"] == "SUCCEEDED") or fingerprint in self._results:
             event = self.recorder.record("tool_result", tool=name, args=args, result=cached,
-                                         status="BUSINESS_ERROR" if isinstance(cached, dict) and cached.get("error") else "REUSED", duration_ms=0.0)
+                                         status="BUSINESS_ERROR" if isinstance(cached, dict) and cached.get("error") else "REUSED",
+                                         duration_ms=0.0, policy=policy, action_fingerprint=fingerprint)
             return cached, event
         if self.call_count >= self.max_calls:
             self._fail(AgentError(ErrorCode.TOOL_BUDGET_EXHAUSTED, "工具调用预算已耗尽", retryable=False), name, args)
-        attempts = context.limits.read_attempts if context and not spec.side_effect else 1
+        attempts = context.limits.read_attempts if context and spec.replay_policy == ReplayPolicy.REPLAY_SAFE else 1
         for attempt in range(attempts):
             if self.call_count >= self.max_calls:
                 self._fail(AgentError(ErrorCode.TOOL_BUDGET_EXHAUSTED, "工具调用预算已耗尽", retryable=False), name, args)
@@ -327,7 +383,8 @@ class ToolExecutor:
                 context.counters["tool_calls"] += 1
                 context.phase = "TOOL_CALL"
             self.call_count += 1
-            self.recorder.record("tool_call", tool=name, args=args, call_index=self.call_count, attempt=attempt + 1)
+            self.recorder.record("tool_call", tool=name, args=args, call_index=self.call_count, attempt=attempt + 1,
+                                 policy=policy, action_fingerprint=fingerprint)
             started = time.monotonic()
             try:
                 if key and spec.transactional:
@@ -335,9 +392,9 @@ class ToolExecutor:
                 else:
                     if key:
                         context.store.save_ledger(context.run_id, context.token, key, name, args, "RUNNING")
-                    if context and not spec.side_effect:
+                    if context and spec.effect == ToolEffect.READ:
                         result = bounded_call(lambda: spec.function(**args), min(context.limits.call_timeout, context.remaining_seconds), "tool")
-                    elif context and spec.side_effect:
+                    elif context and spec.effect == ToolEffect.WRITE:
                         # Non-transactional writes may finish after a deadline;
                         # UNKNOWN is deliberately not eligible for automatic replay.
                         result = bounded_call(lambda: spec.function(**args), min(context.limits.call_timeout, context.remaining_seconds), "tool")
@@ -349,10 +406,12 @@ class ToolExecutor:
                 error = classify_exception(exc, source="tool")
                 if key:
                     context.store.save_ledger(context.run_id, context.token, key, name, args,
-                                              "UNKNOWN" if spec.side_effect and not spec.transactional else "FAILED", {"error": str(error), "code": error.code})
+                                              "UNKNOWN" if spec.effect == ToolEffect.WRITE and not spec.transactional else "FAILED",
+                                              {"error": str(error), "code": error.code})
                 self.recorder.record("error", tool=name, args=args, code=error.code, message=str(error), retryable=error.retryable,
-                                     duration_ms=round((time.monotonic() - started) * 1000, 2))
-                if not spec.side_effect and error.retryable and attempt + 1 < attempts and self.call_count < self.max_calls:
+                                     duration_ms=round((time.monotonic() - started) * 1000, 2), policy=policy,
+                                     action_fingerprint=fingerprint)
+                if spec.replay_policy == ReplayPolicy.REPLAY_SAFE and error.retryable and attempt + 1 < attempts and self.call_count < self.max_calls:
                     self.recorder.record("tool_retry", tool=name, attempt=attempt + 2)
                     continue
                 raise error from exc
@@ -360,5 +419,6 @@ class ToolExecutor:
             status = "BUSINESS_ERROR" if isinstance(result, dict) and result.get("error") else (
                 "BUSINESS_REJECTED" if isinstance(result, dict) and result.get("success") is False else "SUCCEEDED")
             event = self.recorder.record("tool_result", tool=name, args=args, result=result, status=status,
-                                         duration_ms=round((time.monotonic() - started) * 1000, 2))
+                                         duration_ms=round((time.monotonic() - started) * 1000, 2), policy=policy,
+                                         action_fingerprint=fingerprint)
             return result, event

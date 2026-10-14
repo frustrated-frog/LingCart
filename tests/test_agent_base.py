@@ -88,6 +88,28 @@ def test_run_tool_agent_stops_on_repeated_identical_call(monkeypatch):
     assert result["terminal_reason"] == "REPEATED_TOOL_CALL"
 
 
+def test_runtime_closes_every_tool_call_when_a_batch_is_stopped(monkeypatch):
+    responses = [
+        FakeToolCallMessage(tool_calls=[{"name": "echo_tool", "args": {"value": "a"}, "id": "first"}]),
+        FakeToolCallMessage(tool_calls=[
+            {"name": "echo_tool", "args": {"value": "a"}, "id": "duplicate"},
+            {"name": "echo_tool", "args": {"value": "b"}, "id": "remaining"},
+        ]),
+    ]
+    monkeypatch.setattr(base, "get_llm", lambda **_kwargs: FakeLLM(responses))
+
+    result = base.run_tool_agent("test", "system prompt", [echo_tool], "hello")
+
+    tool_messages = [message for message in result["messages"] if getattr(message, "type", None) == "tool"]
+    assert [message.tool_call_id for message in tool_messages] == ["first", "duplicate", "remaining"]
+    closed = [event for event in result["events"] if event["type"] == "tool_protocol"]
+    assert [(event["tool_call_id"], event["status"]) for event in closed] == [
+        ("first", "SUCCEEDED"),
+        ("duplicate", "CANCELLED_BY_RUNTIME"),
+        ("remaining", "CANCELLED_BY_RUNTIME"),
+    ]
+
+
 def test_run_tool_agent_rejects_unknown_tool_without_key_error(monkeypatch):
     responses = [
         FakeToolCallMessage(tool_calls=[{"name": "not_allowed", "args": {}, "id": "1"}]),

@@ -32,6 +32,38 @@ def _serialize_tool_result(result):
     return result if isinstance(result, str) else json.dumps(result, ensure_ascii=False, default=str)
 
 
+def _append_protocol_result(messages, recorder, call, call_id, status, result, *, agent_name, reason=None):
+    payload = result if result is not None else {
+        "status": status,
+        "reason": reason,
+        "message": "前序工具已触发运行时收敛，本调用未执行",
+    }
+    messages.append(ToolMessage(content=_serialize_tool_result(payload), tool_call_id=call_id))
+    recorder.record(
+        "tool_protocol",
+        agent=agent_name,
+        tool=call.get("name", ""),
+        tool_call_id=call_id,
+        status=status,
+        reason=reason,
+    )
+
+
+def _cancel_remaining_calls(messages, recorder, calls, start, *, agent_name, round_index, reason):
+    for index, call in enumerate(calls[start:], start=start):
+        call_id = call.get("id") or f"call-{round_index}-{index + 1}"
+        _append_protocol_result(
+            messages,
+            recorder,
+            call,
+            call_id,
+            "CANCELLED_BY_RUNTIME",
+            None,
+            agent_name=agent_name,
+            reason=reason,
+        )
+
+
 def run_tool_agent(agent_name, system_prompt, agent_tools, user_message, history=None,
                    max_rounds=4, max_tool_calls=8, run_id=None):
     run_id = run_id or uuid.uuid4().hex
@@ -88,22 +120,35 @@ def _run_loop(agent_name, system_prompt, agent_tools, user_message, history, max
             errors.append({"code": reason, "message": "最后一轮模型禁止再次请求工具", "retryable": False})
             reply = ""
             recorder.record("error", code=reason, message="最后一轮模型禁止再次请求工具", retryable=False)
+            _cancel_remaining_calls(
+                messages, recorder, calls, 0, agent_name=agent_name, round_index=rounds, reason=reason
+            )
             break
         stop = False
-        for call in calls:
+        for call_index, call in enumerate(calls):
             name, args = call.get("name", ""), call.get("args")
-            call_id = call.get("id") or f"call-{len(trace) + 1}"
+            call_id = call.get("id") or f"call-{rounds}-{call_index + 1}"
             fingerprint = ToolExecutor.fingerprint(name, args)
             if fingerprint in seen:
                 reason = "REPEATED_TOOL_CALL"
                 recorder.record("error", agent=agent_name, tool=name, code=reason, message="重复工具调用已停止", retryable=False)
+                _append_protocol_result(
+                    messages, recorder, call, call_id, "CANCELLED_BY_RUNTIME", None,
+                    agent_name=agent_name, reason=reason,
+                )
+                _cancel_remaining_calls(
+                    messages, recorder, calls, call_index + 1,
+                    agent_name=agent_name, round_index=rounds, reason=reason,
+                )
                 reply = ""
                 stop = True
                 break
             seen.add(fingerprint)
             prior_event_count = len(recorder.events)
+            protocol_status = "FAILED"
             try:
                 result, event = executor.execute(name, args)
+                protocol_status = event["status"]
                 trace.append(dict(run_id=run_id, agent=agent_name, tool=name, args=args,
                                   result=result, status=event["status"], duration_ms=event["duration_ms"]))
             except ApprovalRequired as approval:
@@ -114,6 +159,15 @@ def _run_loop(agent_name, system_prompt, agent_tools, user_message, history, max
                 pending = approval.pending
                 status, reason = "WAITING_APPROVAL", "APPROVAL_REQUIRED"
                 reply = f"订单 {pending['order_id']} 的操作需要你明确确认，尚未修改支付或退款状态。"
+                _append_protocol_result(
+                    messages, recorder, call, call_id, "WAITING_APPROVAL",
+                    {"status": "WAITING_APPROVAL", "requires_approval": True},
+                    agent_name=agent_name, reason=reason,
+                )
+                _cancel_remaining_calls(
+                    messages, recorder, calls, call_index + 1,
+                    agent_name=agent_name, round_index=rounds, reason=reason,
+                )
                 stop = True
                 break
             except AgentError as error:
@@ -124,8 +178,19 @@ def _run_loop(agent_name, system_prompt, agent_tools, user_message, history, max
                 if "BUDGET" in error.code or error.code == "UNCERTAIN_TOOL_OUTCOME":
                     reason, status, stop = error.code, "PARTIAL" if any(t["status"] == "SUCCEEDED" for t in trace) else "FAILED", True
                     reply = ""
+                    _append_protocol_result(
+                        messages, recorder, call, call_id, "FAILED", result,
+                        agent_name=agent_name, reason=reason,
+                    )
+                    _cancel_remaining_calls(
+                        messages, recorder, calls, call_index + 1,
+                        agent_name=agent_name, round_index=rounds, reason=reason,
+                    )
                     break
-            messages.append(ToolMessage(content=_serialize_tool_result(result), tool_call_id=call_id))
+            _append_protocol_result(
+                messages, recorder, call, call_id, protocol_status,
+                result, agent_name=agent_name,
+            )
         if stop:
             break
         rounds += 1

@@ -22,6 +22,14 @@ def test_tool_executor_records_real_call_and_result():
     assert event["status"] == "SUCCEEDED"
     assert [item["type"] for item in recorder.events] == ["tool_call", "tool_result"]
     assert all(item["run_id"] == "run-1" for item in recorder.events)
+    assert len(recorder.events[0]["action_fingerprint"]) == 64
+    assert recorder.events[0]["policy"] == {
+        "risk_level": "READ_ONLY",
+        "effect": "READ",
+        "replay_policy": "REPLAY_SAFE",
+        "concurrency_policy": "PARALLEL_SAFE",
+        "transactional": False,
+    }
 
 
 def test_exact_duplicate_reuses_result_without_second_execution():
@@ -128,6 +136,28 @@ def test_final_model_round_cannot_execute_tools(monkeypatch):
         result = base.run_tool_agent("test", "system", [final_tool], "hello", run_id=context.run_id)
     assert result["terminal_reason"] == "FINAL_TOOL_CALL_FORBIDDEN"
     assert calls == []
+    tool_messages = [message for message in result["messages"] if getattr(message, "type", None) == "tool"]
+    assert len(tool_messages) == 1
+    assert tool_messages[0].tool_call_id == "one"
+    assert any(
+        event["type"] == "tool_protocol" and event["status"] == "CANCELLED_BY_RUNTIME"
+        for event in result["events"]
+    )
+
+
+def test_side_effect_tool_uses_high_risk_serial_policy():
+    from src import tools
+    from src.runtime import tool_spec
+
+    policy = tool_spec("process_payment", tools.process_payment).policy_payload()
+
+    assert policy == {
+        "risk_level": "HIGH",
+        "effect": "WRITE",
+        "replay_policy": "REQUIRES_APPROVAL",
+        "concurrency_policy": "SERIAL_PER_RUN",
+        "transactional": True,
+    }
 
 
 def test_provider_rotation_counts_each_attempt_against_runtime_budget():

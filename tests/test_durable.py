@@ -1,4 +1,5 @@
 """Crash/restart boundaries use a file-backed DB and fresh store instances."""
+from copy import deepcopy
 import threading
 
 import pytest
@@ -30,6 +31,34 @@ def test_request_retry_returns_same_run_and_one_answer(database):
     assert len(RunStore().conversation("session")["messages"]) == 2
     with pytest.raises(AgentError, match="不同的需求"):
         run_conversation("另一个请求", "session", request_id="same")
+
+
+def test_completed_run_keeps_a_versioned_terminal_checkpoint(database):
+    result = run_conversation("查询订单 1002 的物流", "versioned")
+
+    checkpoint = RunStore().run(result["run_id"])["checkpoint"]
+    assert checkpoint["schema_version"] == 2
+    assert checkpoint["state_version"] > 1
+    assert checkpoint["run_id"] == result["run_id"]
+    assert checkpoint["status"] == "SUCCEEDED"
+    assert checkpoint["current_node"] == "TERMINAL"
+    assert checkpoint["phase"] == "TERMINAL"
+    assert checkpoint["terminal_reason"] == "COMPLETED"
+    assert len(checkpoint["checksum"]) == 64
+
+
+def test_stale_checkpoint_writer_is_rejected(database):
+    store = RunStore()
+    claim = store.claim("conflict", "request", "查询订单 1002", {"max_seconds": 30})
+    first_writer = deepcopy(claim["snapshot"])
+    stale_writer = deepcopy(claim["snapshot"])
+
+    store.save_checkpoint(claim["run_id"], claim["token"], first_writer)
+    with pytest.raises(AgentError) as conflict:
+        store.save_checkpoint(claim["run_id"], claim["token"], stale_writer)
+    assert conflict.value.code == "CHECKPOINT_CONFLICT"
+
+    store.interrupt(claim["run_id"], claim["token"])
 
 
 class CrashAfterWrite(BaseException):
