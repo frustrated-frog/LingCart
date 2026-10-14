@@ -70,20 +70,25 @@ def test_run_tool_agent_falls_back_when_model_never_answers(monkeypatch):
     result = base.run_tool_agent("test", "system prompt", [echo_tool], "hello")
 
     assert result["reply"] == "echoed:x"  # falls back to the tool result, never blank
-    assert len(result["trace"]) == 1  # loop-detection stopped after the first repeat
+    assert len(result["trace"]) == 2  # one warning/reuse, then the no-progress loop is blocked
+    assert result["trace"][1]["status"] == "REUSED"
+    assert any(event["type"] == "loop_warning" for event in result["events"])
+    assert any(event["type"] == "loop_blocked" for event in result["events"])
 
 
 def test_run_tool_agent_stops_on_repeated_identical_call(monkeypatch):
     responses = [
         FakeToolCallMessage(tool_calls=[{"name": "echo_tool", "args": {"value": "a"}, "id": "1"}]),
         FakeToolCallMessage(tool_calls=[{"name": "echo_tool", "args": {"value": "a"}, "id": "2"}]),
+        FakeToolCallMessage(tool_calls=[{"name": "echo_tool", "args": {"value": "a"}, "id": "3"}]),
         FakeToolCallMessage(content="should never get here"),
     ]
     monkeypatch.setattr(base, "get_llm", lambda **_kwargs: FakeLLM(responses))
 
     result = base.run_tool_agent("test", "system prompt", [echo_tool], "hello")
 
-    assert len(result["trace"]) == 1
+    assert len(result["trace"]) == 2
+    assert result["trace"][1]["status"] == "REUSED"
     assert result["reply"] == "echoed:a"
     assert result["terminal_reason"] == "REPEATED_TOOL_CALL"
 
@@ -91,8 +96,9 @@ def test_run_tool_agent_stops_on_repeated_identical_call(monkeypatch):
 def test_runtime_closes_every_tool_call_when_a_batch_is_stopped(monkeypatch):
     responses = [
         FakeToolCallMessage(tool_calls=[{"name": "echo_tool", "args": {"value": "a"}, "id": "first"}]),
+        FakeToolCallMessage(tool_calls=[{"name": "echo_tool", "args": {"value": "a"}, "id": "duplicate"}]),
         FakeToolCallMessage(tool_calls=[
-            {"name": "echo_tool", "args": {"value": "a"}, "id": "duplicate"},
+            {"name": "echo_tool", "args": {"value": "a"}, "id": "blocked"},
             {"name": "echo_tool", "args": {"value": "b"}, "id": "remaining"},
         ]),
     ]
@@ -101,11 +107,12 @@ def test_runtime_closes_every_tool_call_when_a_batch_is_stopped(monkeypatch):
     result = base.run_tool_agent("test", "system prompt", [echo_tool], "hello")
 
     tool_messages = [message for message in result["messages"] if getattr(message, "type", None) == "tool"]
-    assert [message.tool_call_id for message in tool_messages] == ["first", "duplicate", "remaining"]
+    assert [message.tool_call_id for message in tool_messages] == ["first", "duplicate", "blocked", "remaining"]
     closed = [event for event in result["events"] if event["type"] == "tool_protocol"]
     assert [(event["tool_call_id"], event["status"]) for event in closed] == [
         ("first", "SUCCEEDED"),
-        ("duplicate", "CANCELLED_BY_RUNTIME"),
+        ("duplicate", "REUSED"),
+        ("blocked", "CANCELLED_BY_RUNTIME"),
         ("remaining", "CANCELLED_BY_RUNTIME"),
     ]
 

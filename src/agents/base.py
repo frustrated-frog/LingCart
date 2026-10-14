@@ -6,6 +6,7 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, Tool
 
 from src.errors import AgentError, classify_exception
 from src.llm import extract_usage, get_llm
+from src.loop_guard import LoopAction, ProgressAwareLoopGuard
 from src.runtime import ApprovalRequired, BudgetLimits, RunRuntime, ToolExecutor, TraceRecorder, current_runtime, runtime_scope
 
 _EMPTY_USAGE = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
@@ -46,6 +47,7 @@ def _append_protocol_result(messages, recorder, call, call_id, status, result, *
         tool_call_id=call_id,
         status=status,
         reason=reason,
+        action_fingerprint=ToolExecutor.fingerprint(call.get("name", ""), call.get("args")),
     )
 
 
@@ -83,7 +85,7 @@ def _run_loop(agent_name, system_prompt, agent_tools, user_message, history, max
     final_model = get_llm(purpose="final_response")
     bound_model = decision_model.bind_tools(agent_tools)
     messages = [SystemMessage(content=system_prompt), *(history or []), HumanMessage(content=user_message)]
-    trace, errors, seen = [], [], set()
+    trace, errors, loop_guard = [], [], ProgressAwareLoopGuard()
     usage = dict(_EMPTY_USAGE)
     rounds = 0
     reason, status, reply, pending = "COMPLETED", "SUCCEEDED", "", None
@@ -129,9 +131,16 @@ def _run_loop(agent_name, system_prompt, agent_tools, user_message, history, max
             name, args = call.get("name", ""), call.get("args")
             call_id = call.get("id") or f"call-{rounds}-{call_index + 1}"
             fingerprint = ToolExecutor.fingerprint(name, args)
-            if fingerprint in seen:
+            loop_decision = loop_guard.before_call(fingerprint)
+            if loop_decision.action == LoopAction.BLOCK:
                 reason = "REPEATED_TOOL_CALL"
-                recorder.record("error", agent=agent_name, tool=name, code=reason, message="重复工具调用已停止", retryable=False)
+                recorder.record(
+                    "loop_blocked", agent=agent_name, tool=name, code=reason,
+                    message="工具调用未产生新进展，已停止循环", retryable=False,
+                    occurrence=loop_decision.occurrence,
+                    stagnant_results=loop_decision.stagnant_results,
+                    action_fingerprint=fingerprint,
+                )
                 _append_protocol_result(
                     messages, recorder, call, call_id, "CANCELLED_BY_RUNTIME", None,
                     agent_name=agent_name, reason=reason,
@@ -143,12 +152,19 @@ def _run_loop(agent_name, system_prompt, agent_tools, user_message, history, max
                 reply = ""
                 stop = True
                 break
-            seen.add(fingerprint)
+            if loop_decision.action == LoopAction.WARN:
+                recorder.record(
+                    "loop_warning", agent=agent_name, tool=name,
+                    message="检测到重复工具调用；若结果仍无变化将停止循环",
+                    occurrence=loop_decision.occurrence,
+                    action_fingerprint=fingerprint,
+                )
             prior_event_count = len(recorder.events)
             protocol_status = "FAILED"
             try:
                 result, event = executor.execute(name, args)
                 protocol_status = event["status"]
+                loop_guard.after_result(fingerprint, result)
                 trace.append(dict(run_id=run_id, agent=agent_name, tool=name, args=args,
                                   result=result, status=event["status"], duration_ms=event["duration_ms"]))
             except ApprovalRequired as approval:
@@ -174,6 +190,7 @@ def _run_loop(agent_name, system_prompt, agent_tools, user_message, history, max
                 payload = {"code": error.code, "message": str(error), "retryable": error.retryable}
                 errors.append(payload)
                 result = {"error": str(error), "code": error.code}
+                loop_guard.after_result(fingerprint, result)
                 trace.append(dict(run_id=run_id, agent=agent_name, tool=name, args=args if isinstance(args, dict) else {}, result=result, status="FAILED", duration_ms=None))
                 if "BUDGET" in error.code or error.code == "UNCERTAIN_TOOL_OUTCOME":
                     reason, status, stop = error.code, "PARTIAL" if any(t["status"] == "SUCCEEDED" for t in trace) else "FAILED", True

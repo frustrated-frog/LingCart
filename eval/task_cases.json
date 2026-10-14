@@ -2571,7 +2571,7 @@
               "escalate_to_human"
             ],
             "pending_present": false,
-            "max_model_invocations": 3,
+            "max_model_invocations": 4,
             "terminal_reason": "REPEATED_TOOL_CALL",
             "max_physical_calls_per_tool": {
               "get_order_status": 1
@@ -2604,6 +2604,17 @@
                   "order_id": 1001
                 },
                 "id": "duplicate"
+              }
+            ]
+          },
+          {
+            "tool_calls": [
+              {
+                "name": "get_order_status",
+                "args": {
+                  "order_id": 1001
+                },
+                "id": "blocked"
               }
             ]
           }

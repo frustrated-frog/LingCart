@@ -180,3 +180,32 @@ def test_provider_rotation_counts_each_attempt_against_runtime_budget():
     assert result.content == "done"
     assert calls == ["rate_limited", "okay"]
     assert context.counters["model_calls"] == 2
+
+
+def test_model_call_compacts_context_and_records_budget_event():
+    from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+    from src.runtime import BudgetLimits, RunRuntime
+
+    received = []
+
+    class Model:
+        def invoke(self, messages):
+            received.extend(messages)
+            return AIMessage(content="完成")
+
+    context = RunRuntime("compact", BudgetLimits(max_context_chars=220, max_history_message_chars=100))
+    messages = [
+        SystemMessage(content="system"),
+        HumanMessage(content="old " * 100),
+        AIMessage(content="answer " * 100),
+        HumanMessage(content="current"),
+    ]
+
+    result = context.model_call(Model(), messages, purpose="test")
+
+    assert result.content == "完成"
+    assert received[0].type == "system"
+    assert received[-1].content == "current"
+    event = next(event for event in context.events if event["type"] == "context_compacted")
+    assert event["input_chars"] > event["output_chars"]
+    assert event["dropped_messages"] >= 1

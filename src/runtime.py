@@ -33,6 +33,9 @@ class BudgetLimits:
     max_steps: int = 8
     max_depth: int = 4
     read_attempts: int = 2
+    max_context_chars: int = 12000
+    max_tool_observation_chars: int = 4000
+    max_history_message_chars: int = 6000
 
     def __post_init__(self):
         for key, value in self.__dict__.items():
@@ -40,8 +43,10 @@ class BudgetLimits:
                 raise ValueError(f"Invalid budget: {key}")
             if key not in {"max_seconds", "call_timeout"} and (isinstance(value, bool) or not isinstance(value, int)):
                 raise ValueError(f"Budget must be an integer: {key}")
-        if self.call_timeout <= 0 or self.max_seconds <= 0 or self.read_attempts < 1:
-            raise ValueError("Time limits and read_attempts must be positive")
+        if (self.call_timeout <= 0 or self.max_seconds <= 0 or self.read_attempts < 1 or
+                self.max_context_chars < 1 or self.max_tool_observation_chars < 1 or
+                self.max_history_message_chars < 1):
+            raise ValueError("Time and context limits must be positive")
 
 
 _current_runtime = ContextVar("agent_runtime", default=None)
@@ -147,13 +152,20 @@ class RunRuntime:
         return event
 
     def model_call(self, model, messages, *, purpose, agent=None, allow_tools=True, schemas=None):
+        from src.context_budget import compact_context
         from src.llm import extract_usage
         self.model_cursor += 1
         key = str(self.model_cursor)
-        canonical = messages if isinstance(messages, str) else [
+        effective_messages, compaction = compact_context(
+            messages,
+            max_chars=self.limits.max_context_chars,
+            max_tool_observation_chars=self.limits.max_tool_observation_chars,
+            max_history_message_chars=self.limits.max_history_message_chars,
+        )
+        canonical = effective_messages if isinstance(effective_messages, str) else [
             {"type": getattr(message, "type", "ai" if hasattr(message, "tool_calls") else "human"),
              "content": getattr(message, "content", str(message)), "tool_calls": getattr(message, "tool_calls", []),
-             "tool_call_id": getattr(message, "tool_call_id", None)} for message in messages]
+             "tool_call_id": getattr(message, "tool_call_id", None)} for message in effective_messages]
         encoded = json.dumps([purpose, agent, canonical, schemas], ensure_ascii=False, default=str)
         # This is deliberately conservative. Actual usage remains separately
         # recorded; providers without usage metadata do not report fake zeroes.
@@ -164,6 +176,10 @@ class RunRuntime:
                 raise AgentError("CHECKPOINT_CONFLICT", "恢复时的模型输入与已保存步骤不同", retryable=False)
             self.record("model_reused", purpose=purpose, agent=agent)
             return AIMessage(content=cached["content"], tool_calls=cached["tool_calls"], usage_metadata=cached.get("usage_metadata"))
+        if compaction["changed"]:
+            self.record("context_compacted", purpose=purpose, agent=agent, **{
+                key: value for key, value in compaction.items() if key != "changed"
+            })
         self.require("model", estimate)
         self.counters["model_calls"] += 1
         self.counters["prompt_tokens"] += estimate
@@ -177,7 +193,11 @@ class RunRuntime:
         for attempt in range(max_attempts):
             try:
                 invoke = getattr(model, "invoke_once", model.invoke)
-                response = bounded_call(lambda: invoke(messages), min(self.limits.call_timeout, self.remaining_seconds), "model")
+                response = bounded_call(
+                    lambda: invoke(effective_messages),
+                    min(self.limits.call_timeout, self.remaining_seconds),
+                    "model",
+                )
                 break
             except Exception as exc:
                 error = classify_exception(exc, source="model")
