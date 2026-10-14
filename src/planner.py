@@ -46,7 +46,7 @@ def create_model_plan(request, history):
         + "\nRecent conversation: " + json.dumps([{"role": getattr(m, "type", "unknown"), "content": as_text(m.content)[:1000]} for m in (history or [])[-6:]], ensure_ascii=False)
         + "\nUser request: " + request
     )
-    response = context.model_call(get_llm(), prompt, purpose="task_intake", allow_tools=False,
+    response = context.model_call(get_llm(purpose="planner"), prompt, purpose="task_intake", allow_tools=False,
                                   schemas=[PlanDraft.model_json_schema()])
     try:
         draft = PlanDraft.model_validate(json.loads(as_text(response.content)), strict=True)

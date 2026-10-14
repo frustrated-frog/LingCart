@@ -4,6 +4,7 @@ langchain
 langchain-google-genai
 google-generativeai
 langchain-groq
+langchain-openai>=1,<2
 sqlalchemy
 python-dotenv
 pydantic

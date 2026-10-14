@@ -86,7 +86,7 @@ def test_structured_model_plan_dispatches_multiple_specialists(monkeypatch):
                 {"intent": "ORDER_STATUS", "order_id": 1002},
                 {"intent": "FAQ"},
             ]}))
-    monkeypatch.setattr(planner, "get_llm", PlannerModel)
+    monkeypatch.setattr(planner, "get_llm", lambda **_kwargs: PlannerModel())
     result = run_orchestrator("订单 1002 的包裹怎么样，另外讲讲售后保障")
     assert result["status"] == "SUCCEEDED"
     assert {t["agent"] for t in result["trace"]} == {"order", "faq"}
@@ -104,12 +104,12 @@ def test_model_planner_cannot_invent_order_ids_or_write_without_approval(monkeyp
             self.order_id = order_id
         def invoke(self, message):
             return AIMessage(content=json.dumps({"goals": [{"intent": "PAYMENT_PROCESS", "order_id": self.order_id}]}))
-    monkeypatch.setattr(planner, "get_llm", lambda: PlannerModel(1003))
+    monkeypatch.setattr(planner, "get_llm", lambda **_kwargs: PlannerModel(1003))
     # Use an ambiguous compound phrasing so deterministic intake falls through.
     result = run_orchestrator("订单 1002 的包裹怎么样，另外处理一下账单")
     assert result["terminal_reason"] == "UNGROUNDED_PLAN_ENTITY"
     assert not result["trace"]
-    monkeypatch.setattr(planner, "get_llm", lambda: PlannerModel(1003))
+    monkeypatch.setattr(planner, "get_llm", lambda **_kwargs: PlannerModel(1003))
     result = run_orchestrator("订单 1003 的包裹怎么样，另外处理一下账单")
     assert result["status"] == "WAITING_APPROVAL"
     assert tools.get_payment_status(1003)["status"] == "pending"

@@ -168,16 +168,20 @@ class RunRuntime:
         if hasattr(model, "bind"):
             model = model.bind(max_tokens=completion_limit)
         started = time.monotonic()
-        for attempt in range(2):
+        max_attempts = getattr(model, "max_attempts", 2)
+        for attempt in range(max_attempts):
             try:
                 invoke = getattr(model, "invoke_once", model.invoke)
                 response = bounded_call(lambda: invoke(messages), min(self.limits.call_timeout, self.remaining_seconds), "model")
                 break
             except Exception as exc:
                 error = classify_exception(exc, source="model")
+                provider = getattr(model, "last_call", {})
                 self.record("error", source="model", purpose=purpose, agent=agent, code=error.code,
-                            message=str(error), retryable=error.retryable)
-                if not error.retryable or attempt == 1:
+                            message=str(error), retryable=error.retryable,
+                            provider=provider.get("provider"), model=provider.get("model"),
+                            provider_failure=provider.get("failure_kind"))
+                if not error.retryable or attempt + 1 == max_attempts:
                     raise error from exc
                 self.require("model", estimate)
                 self.counters["model_calls"] += 1
@@ -192,7 +196,9 @@ class RunRuntime:
         self.counters["completion_tokens"] += output_tokens
         self.models[key] = {"input": encoded, "content": response.content,
                             "tool_calls": getattr(response, "tool_calls", []), "usage_metadata": getattr(response, "usage_metadata", None)}
+        provider = getattr(model, "last_call", {})
         self.record("model_call", purpose=purpose, agent=agent, status="SUCCEEDED", usage=usage,
+                    provider=provider.get("provider"), model=provider.get("model"), provider_slot=provider.get("slot"),
                     budget_usage_source="provider" if all(usage.get(k) is not None for k in ("input_tokens", "output_tokens")) else "conservative_estimate",
                     duration_ms=round((time.monotonic() - started) * 1000, 2), allow_tools=allow_tools)
         return response

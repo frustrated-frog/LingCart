@@ -17,7 +17,7 @@ def seeded_db():
 
 
 def test_chinese_order_1004_status_and_tracking_succeeds_without_llm(monkeypatch):
-    monkeypatch.setattr(orchestrator, "get_llm", lambda: (_ for _ in ()).throw(AssertionError("LLM must not run")))
+    monkeypatch.setattr(orchestrator, "get_llm", lambda **_kwargs: (_ for _ in ()).throw(AssertionError("LLM must not run")))
 
     result = orchestrator.run_orchestrator("请帮我查询订单 1004 的状态和物流进度")
 
@@ -115,7 +115,7 @@ def test_model_unavailable_is_failed_not_fake_escalation(monkeypatch):
     monkeypatch.setattr(
         orchestrator,
         "get_llm",
-        lambda: (_ for _ in ()).throw(RuntimeError("No LLM configured. Set a key")),
+        lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("No LLM configured. Set a key")),
     )
     result = orchestrator.run_orchestrator("你是谁")
     assert result["status"] == "FAILED"

@@ -9,6 +9,7 @@ logger = logging.getLogger("support_agent.errors")
 
 class ErrorCode(StrEnum):
     MODEL_UNAVAILABLE = "MODEL_UNAVAILABLE"
+    MODEL_CONFIGURATION_ERROR = "MODEL_CONFIGURATION_ERROR"
     MODEL_TIMEOUT = "MODEL_TIMEOUT"
     MODEL_RATE_LIMIT = "MODEL_RATE_LIMIT"
     MODEL_FORMAT_ERROR = "MODEL_FORMAT_ERROR"
@@ -35,6 +36,9 @@ def classify_exception(exc: Exception, *, source: str = "model") -> AgentError:
         return exc
     text = str(exc)
     lowered = text.lower()
+    configuration_code = getattr(exc, "code", None)
+    if configuration_code in {ErrorCode.MODEL_UNAVAILABLE, ErrorCode.MODEL_CONFIGURATION_ERROR}:
+        return AgentError(configuration_code, text, retryable=False)
     if "no llm configured" in lowered:
         return AgentError(ErrorCode.MODEL_UNAVAILABLE, text, retryable=False)
     if isinstance(exc, TimeoutError) or "timeout" in lowered or "timed out" in lowered:

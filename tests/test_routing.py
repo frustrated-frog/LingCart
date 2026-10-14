@@ -42,7 +42,7 @@ def test_parse_route(raw_response, expected):
     ],
 )
 def test_orchestrator_routes_to_correct_agent(monkeypatch, user_message, fake_route, expected_agent):
-    monkeypatch.setattr(orchestrator, "get_llm", lambda: FakeLLM(fake_route))
+    monkeypatch.setattr(orchestrator, "get_llm", lambda **_kwargs: FakeLLM(fake_route))
 
     fake_result = {"reply": "stub reply", "trace": [], "agent": expected_agent}
     for name in ("run_order_agent", "run_refund_agent", "run_payment_agent", "run_faq_agent"):

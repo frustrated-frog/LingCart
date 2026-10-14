@@ -134,7 +134,7 @@ def test_run_archive_survives_new_sessions_and_deduplicates():
 
 def test_model_path_cannot_execute_unconfirmed_payment(monkeypatch):
     response = FakeToolCallMessage(tool_calls=[{"name": "process_payment", "args": {"order_id": 1003, "method": "card"}, "id": "1"}])
-    monkeypatch.setattr(base, "get_llm", lambda: FakeLLM([response]))
+    monkeypatch.setattr(base, "get_llm", lambda **_kwargs: FakeLLM([response]))
     result = base.run_tool_agent("payment", "system", PAYMENT_TOOLS, "处理这个付款")
     assert result["status"] == "WAITING_APPROVAL"
     assert result["pending_action"]["order_id"] == 1003
@@ -148,7 +148,7 @@ def test_model_path_cannot_execute_unconfirmed_refund(monkeypatch, seeded_worksp
             {"name": "initiate_refund", "args": {"order_id": 1001, "reason": "商品损坏"}, "id": "1"}
         ]
     )
-    monkeypatch.setattr(base, "get_llm", lambda: FakeLLM([response]))
+    monkeypatch.setattr(base, "get_llm", lambda **_kwargs: FakeLLM([response]))
     result = base.run_tool_agent("refund", "system", REFUND_TOOLS, "处理这个退款")
     with get_session_factory(seeded_workspace)() as session:
         refund = session.scalar(select(Refund).where(Refund.order_id == 1001))
@@ -160,8 +160,8 @@ def test_model_path_cannot_execute_unconfirmed_refund(monkeypatch, seeded_worksp
 
 def test_langgraph_carries_model_requested_approval_to_frontend(monkeypatch):
     response = FakeToolCallMessage(tool_calls=[{"name": "process_payment", "args": {"order_id": 1003, "method": "card"}, "id": "1"}])
-    monkeypatch.setattr(base, "get_llm", lambda: FakeLLM([response]))
-    monkeypatch.setattr(orchestrator, "get_llm", lambda: FakeLLM([FakeToolCallMessage(content="PAYMENT")]))
+    monkeypatch.setattr(base, "get_llm", lambda **_kwargs: FakeLLM([response]))
+    monkeypatch.setattr(orchestrator, "get_llm", lambda **_kwargs: FakeLLM([FakeToolCallMessage(content="PAYMENT")]))
     result = run_orchestrator("could you take care of it")
     assert result["status"] == "WAITING_APPROVAL"
     assert result["pending_action"]["order_id"] == 1003
@@ -177,7 +177,7 @@ def test_read_only_browsing_keeps_existing_pending_approval():
 
 def test_zero_tool_budget_cannot_propose_mutation(monkeypatch):
     response = FakeToolCallMessage(tool_calls=[{"name": "process_payment", "args": {"order_id": 1003, "method": "card"}, "id": "1"}])
-    monkeypatch.setattr(base, "get_llm", lambda: FakeLLM([response]))
+    monkeypatch.setattr(base, "get_llm", lambda **_kwargs: FakeLLM([response]))
     result = base.run_tool_agent("payment", "system", PAYMENT_TOOLS, "付款", max_tool_calls=0)
     assert result["terminal_reason"] == "TOOL_BUDGET_EXHAUSTED"
     assert result.get("pending_action") is None

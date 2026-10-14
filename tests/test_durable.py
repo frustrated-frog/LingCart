@@ -149,7 +149,7 @@ def test_model_decision_and_tool_result_survive_restart(database, monkeypatch):
             self.calls += 1
             return AIMessage(content="", tool_calls=[{"name": "get_order_status", "args": {"order_id": 1002}, "id": "one"}])
     first_model = Scripted()
-    monkeypatch.setattr(base, "get_llm", lambda: first_model)
+    monkeypatch.setattr(base, "get_llm", lambda **_kwargs: first_model)
     def runner(message, **kwargs):
         return base.run_tool_agent("order", "Get real order status", [get_order_status], message,
                                    kwargs.get("history"), run_id=__import__('src.runtime', fromlist=['current_runtime']).current_runtime().run_id)
@@ -162,7 +162,7 @@ def test_model_decision_and_tool_result_survive_restart(database, monkeypatch):
             assert any(getattr(m, "type", None) == "tool" for m in messages)
             return AIMessage(content="订单 1002 运输中")
     next_model = FinalModel()
-    monkeypatch.setattr(base, "get_llm", lambda: next_model)
+    monkeypatch.setattr(base, "get_llm", lambda **_kwargs: next_model)
     result = resume_run("model", RunStore().conversation("model")["active_run_id"], runner=runner)
     assert result["status"] == "SUCCEEDED"
     assert next_model.calls == 1
@@ -220,7 +220,7 @@ def test_structured_intake_clarification_survives_service_restart(database, monk
         def invoke(self, messages):
             order_id = 1002 if '订单 1002' in messages else None
             return AIMessage(content=json.dumps({"goals": [{"intent": "ORDER_STATUS", "order_id": order_id}, {"intent": "FAQ"}]}))
-    monkeypatch.setattr(planner, "get_llm", Model)
+    monkeypatch.setattr(planner, "get_llm", lambda **_kwargs: Model())
     first = run_conversation("包裹怎么样，另外讲讲售后保障", "model-slots")
     assert first["status"] == "WAITING_CLARIFICATION"
     assert RunStore().conversation("model-slots")["state"]["clarification"]["missing_slots"] == ["order_id"]

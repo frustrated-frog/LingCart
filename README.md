@@ -79,7 +79,7 @@ instead of the chat UI — same reply, same tool trace, same backend.
 
 ## Tech
 
-LangGraph multi-agent orchestration · Gemini tool-calling (with Groq fallback)
+LangGraph multi-agent orchestration · Configurable Model Gateway
 · SQLite backend (SQLAlchemy) · Streamlit · FastAPI · pytest
 
 ## Architecture
@@ -106,7 +106,7 @@ Goal verification + terminal result + unique conversation reply
    slots, unsupported requests, and explicit escalation requests. Clear tasks
    use a bounded read-only plan; ambiguous compound tasks use structured model intake, and simple ambiguous tasks fall back to LangGraph.
 2. On the model path, the matching specialist agent decides which tool(s) to call and with what
-   arguments (Gemini/Groq tool-calling), then turns the tool result into a
+   arguments (Gemini/Groq/OpenAI/OpenAI-compatible tool-calling), then turns the tool result into a
    natural-language reply.
 3. Tools read from and write to a SQLite database — refunds and payments are
    real state changes, not simulated text.
@@ -126,10 +126,9 @@ Goal verification + terminal result + unique conversation reply
 1. `python -m venv venv` and activate it
    (`.\venv\Scripts\Activate.ps1` on Windows, `source venv/bin/activate` on macOS/Linux).
 2. `pip install -r requirements.txt`
-3. Copy `.env.example` to `.env` and add your `GEMINI_API_KEY`
-   (free key: https://aistudio.google.com/app/apikey). Optionally add
-   `GROQ_API_KEY` (free key: https://console.groq.com) as a fallback for when
-   the Gemini free tier's daily quota is exhausted.
+3. Copy `.env.example` to `.env`, then configure at least one supported model
+   provider. Gemini remains the zero-migration default; OpenAI, Groq and any
+   OpenAI-compatible endpoint are also supported.
 4. `python -m src.backend.seed` — creates and seeds the SQLite database.
 5. `streamlit run app.py`
 
@@ -208,21 +207,40 @@ docker run -p 8501:8501 -e GEMINI_API_KEY=your_key support-agent
 
 ## Cost
 
-Runs on free-tier infrastructure: Gemini's free tier for the primary LLM,
-with an optional Groq free-tier fallback and FAQ-answer caching to reduce
-repeat calls. Realistic cost: **$0**.
+成本取决于所选 Provider 和模型。清晰业务请求优先走确定性执行路径，不调用模型；模型路径会记录可用的 Token 用量，但不会把未知用量伪装为零。请在 Provider 控制台配置预算与限额。
 
-## Configuration
+## 模型接入
 
-- `GEMINI_API_KEY` — required for ambiguous requests that need the model path;
-  high-confidence deterministic tasks work without it.
-- `GEMINI_API_KEYS` — optional comma-separated pool of Gemini keys (only
-  useful if they're under separate Google Cloud projects with independent
-  quota — keys under the same project share one quota bucket).
-- `GEMINI_MODEL` — optional, defaults to `gemini-2.5-flash`.
-- `GROQ_API_KEY` / `GROQ_MODEL` — optional fallback provider, defaults to
-  `llama-3.3-70b-versatile`. Used automatically once all Gemini keys are
-  exhausted.
+Model Gateway 使用英文配置标识，运行时提示与产品内容保持中文。清晰、可确定的业务请求仍会走零 Token 快速路径；只有需要理解、规划或工具决策的请求才调用模型。
+
+最短配置示例：
+
+```dotenv
+# 保持现有 Gemini 接入
+LLM_PROVIDER=gemini
+LLM_API_KEY=your_key
+LLM_MODEL=gemini-2.5-flash
+
+# 或使用 OpenAI 官方 API
+LLM_PROVIDER=openai
+LLM_API_KEY=your_key
+LLM_MODEL=gpt-4.1-mini
+
+# 或使用任意 OpenAI-compatible 服务
+LLM_PROVIDER=openai_compatible
+LLM_API_KEY=your_key
+LLM_MODEL=your_model
+LLM_BASE_URL=https://provider.example.com/v1
+```
+
+- `LLM_PROVIDER`：`auto`、`gemini`、`groq`、`openai` 或 `openai_compatible`。
+- `LLM_API_KEY` / `LLM_MODEL` / `LLM_BASE_URL`：主 Provider 的统一配置；兼容服务必须同时提供三项。
+- `LLM_FALLBACK_PROVIDERS`：逗号分隔的降级顺序，例如 `groq,gemini`。认证错误不会跨 Provider 重试，限流、超时和服务不可用才会降级。
+- `LLM_MAX_ATTEMPTS` / `LLM_REQUEST_TIMEOUT`：有上限的尝试次数和单次超时。
+- `LLM_ROUTER_MODEL`、`LLM_PLANNER_MODEL`、`LLM_AGENT_MODEL`、`LLM_FINAL_RESPONSE_MODEL`：按职责覆盖主 Provider 的模型名。
+- 原有 `GEMINI_API_KEY(S)`、`GEMINI_MODEL`、`GROQ_API_KEY`、`GROQ_MODEL` 继续兼容；`LLM_PROVIDER=auto` 会按 Gemini、Groq、OpenAI、OpenAI-compatible 的顺序发现配置。
+
+API Key 不会出现在状态数据、事件或日志元数据中。完整模板见 `.env.example`。
 
 
 ## Fixed task evaluation

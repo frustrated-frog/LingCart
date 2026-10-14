@@ -50,7 +50,7 @@ def test_run_tool_agent_returns_normal_reply(monkeypatch):
         FakeToolCallMessage(tool_calls=[{"name": "echo_tool", "args": {"value": "hi"}, "id": "1"}]),
         FakeToolCallMessage(content="Here is your answer."),
     ]
-    monkeypatch.setattr(base, "get_llm", lambda: FakeLLM(responses))
+    monkeypatch.setattr(base, "get_llm", lambda **_kwargs: FakeLLM(responses))
 
     result = base.run_tool_agent("test", "system prompt", [echo_tool], "hello")
 
@@ -65,7 +65,7 @@ def test_run_tool_agent_falls_back_when_model_never_answers(monkeypatch):
     stuck_response = FakeToolCallMessage(
         content="", tool_calls=[{"name": "echo_tool", "args": {"value": "x"}, "id": "1"}]
     )
-    monkeypatch.setattr(base, "get_llm", lambda: FakeLLM([stuck_response] * 10))
+    monkeypatch.setattr(base, "get_llm", lambda **_kwargs: FakeLLM([stuck_response] * 10))
 
     result = base.run_tool_agent("test", "system prompt", [echo_tool], "hello")
 
@@ -79,7 +79,7 @@ def test_run_tool_agent_stops_on_repeated_identical_call(monkeypatch):
         FakeToolCallMessage(tool_calls=[{"name": "echo_tool", "args": {"value": "a"}, "id": "2"}]),
         FakeToolCallMessage(content="should never get here"),
     ]
-    monkeypatch.setattr(base, "get_llm", lambda: FakeLLM(responses))
+    monkeypatch.setattr(base, "get_llm", lambda **_kwargs: FakeLLM(responses))
 
     result = base.run_tool_agent("test", "system prompt", [echo_tool], "hello")
 
@@ -93,7 +93,7 @@ def test_run_tool_agent_rejects_unknown_tool_without_key_error(monkeypatch):
         FakeToolCallMessage(tool_calls=[{"name": "not_allowed", "args": {}, "id": "1"}]),
         FakeToolCallMessage(content="I could not use that tool."),
     ]
-    monkeypatch.setattr(base, "get_llm", lambda: FakeLLM(responses))
+    monkeypatch.setattr(base, "get_llm", lambda **_kwargs: FakeLLM(responses))
 
     result = base.run_tool_agent("test", "system prompt", [echo_tool], "hello")
 
@@ -107,7 +107,7 @@ def test_run_tool_agent_records_invalid_tool_arguments(monkeypatch):
         FakeToolCallMessage(tool_calls=[{"name": "echo_tool", "args": {"wrong": "x"}, "id": "1"}]),
         FakeToolCallMessage(content="The arguments were invalid."),
     ]
-    monkeypatch.setattr(base, "get_llm", lambda: FakeLLM(responses))
+    monkeypatch.setattr(base, "get_llm", lambda **_kwargs: FakeLLM(responses))
 
     result = base.run_tool_agent("test", "system prompt", [echo_tool], "hello")
 
@@ -120,7 +120,7 @@ def test_run_tool_agent_records_tool_exception(monkeypatch):
         FakeToolCallMessage(tool_calls=[{"name": "failing_tool", "args": {"value": "x"}, "id": "1"}]),
         FakeToolCallMessage(content="The tool failed."),
     ]
-    monkeypatch.setattr(base, "get_llm", lambda: FakeLLM(responses))
+    monkeypatch.setattr(base, "get_llm", lambda **_kwargs: FakeLLM(responses))
 
     result = base.run_tool_agent("test", "system prompt", [failing_tool], "hello")
 
@@ -131,7 +131,7 @@ def test_run_tool_agent_records_tool_exception(monkeypatch):
 
 def test_model_failure_after_tool_does_not_replay_tool(monkeypatch):
     first = FakeToolCallMessage(tool_calls=[{"name": "echo_tool", "args": {"value": "safe"}, "id": "1"}])
-    monkeypatch.setattr(base, "get_llm", lambda: FailingAfterToolLLM([first]))
+    monkeypatch.setattr(base, "get_llm", lambda **_kwargs: FailingAfterToolLLM([first]))
 
     result = base.run_tool_agent("test", "system prompt", [echo_tool], "hello")
 

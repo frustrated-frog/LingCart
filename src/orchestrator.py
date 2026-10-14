@@ -90,7 +90,7 @@ def parse_route(text: str) -> str:
 def route_node(state: SupportState) -> dict:
     run_id = state.get("run_id") or uuid.uuid4().hex
     started_at = time.perf_counter()
-    llm = get_llm()
+    llm = get_llm(purpose="router")
     prompt = ROUTER_PROMPT.format(user_message=state["user_message"])
     context = current_runtime()
     result = context.model_call(llm, prompt, purpose="route", allow_tools=False) if context else llm.invoke(prompt)

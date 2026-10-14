@@ -122,7 +122,7 @@ def test_final_model_round_cannot_execute_tools(monkeypatch):
             return self
         def invoke(self, messages):
             return AIMessage(content="", tool_calls=[{"name": "final_tool", "args": {"value": "a"}, "id": "one"}])
-    monkeypatch.setattr(base, "get_llm", Model)
+    monkeypatch.setattr(base, "get_llm", lambda **_kwargs: Model())
     context = RunRuntime("final", BudgetLimits(max_model_calls=1))
     with runtime_scope(context):
         result = base.run_tool_agent("test", "system", [final_tool], "hello", run_id=context.run_id)

@@ -47,8 +47,9 @@ def _run_loop(agent_name, system_prompt, agent_tools, user_message, history, max
     context = current_runtime()
     recorder = TraceRecorder(run_id)
     executor = ToolExecutor({tool.name: tool for tool in agent_tools}, recorder, max_calls=max_tool_calls)
-    raw_model = get_llm()
-    bound_model = raw_model.bind_tools(agent_tools)
+    decision_model = get_llm(purpose="agent")
+    final_model = get_llm(purpose="final_response")
+    bound_model = decision_model.bind_tools(agent_tools)
     messages = [SystemMessage(content=system_prompt), *(history or []), HumanMessage(content=user_message)]
     trace, errors, seen = [], [], set()
     usage = dict(_EMPTY_USAGE)
@@ -61,7 +62,7 @@ def _run_loop(agent_name, system_prompt, agent_tools, user_message, history, max
         if cached_next:
             final_round = json.loads(cached_next["input"])[0] == "final_response"
         try:
-            response = context.model_call(raw_model if final_round else bound_model, messages,
+            response = context.model_call(final_model if final_round else bound_model, messages,
                                           purpose="final_response" if final_round else "agent_decision", agent=agent_name,
                                           allow_tools=not final_round, schemas=[] if final_round else schemas)
         except AgentError as error:
