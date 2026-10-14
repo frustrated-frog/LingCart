@@ -14,6 +14,8 @@ from src.intake import (
     ORDER_STATUS,
     PAYMENT_PROCESS,
     PAYMENT_STATUS,
+    PRODUCT_COMPARE,
+    PRODUCT_SEARCH,
     REFUND_ELIGIBILITY,
     REFUND_REQUEST,
     SHIPMENT_TRACKING,
@@ -29,6 +31,8 @@ _READ_ONLY_TOOLS = {
     "check_refund_eligibility": tools.check_refund_eligibility,
     "get_payment_status": tools.get_payment_status,
     "answer_faq": tools.answer_faq,
+    "search_products": tools.search_products,
+    "compare_products": tools.compare_products,
 }
 
 _APPROVED_TOOLS = {
@@ -98,6 +102,27 @@ def execute_direct(intake: TaskIntake, run_id: str) -> dict:
 
     order_id = intake.entities.get("order_id")
     intents = intake.intents
+
+    if PRODUCT_SEARCH in intents or PRODUCT_COMPARE in intents:
+        if PRODUCT_COMPARE in intents:
+            output = call("compare_products", {"product_ids": intake.entities.get("product_ids", [])})
+        else:
+            args = {key: intake.entities[key] for key in ("query", "category", "max_price") if intake.entities.get(key) is not None}
+            output = call("search_products", args)
+        products = output.get("products", [])
+        if output.get("error"):
+            return _finish(recorder, intake, run_id, "shopping", trace, reply=output["error"],
+                           status="FAILED", terminal_reason="INVALID_PRODUCT_SELECTION")
+        if not products:
+            reply = "本地演示目录中没有符合这些条件的商品。可以提高预算，或调整商品参数后继续搜索。"
+        elif PRODUCT_COMPARE in intents:
+            reply = "以下是所选商品在演示目录中的实际参数，可按价格、规格和库存进行比较。"
+            reply += "\n\n" + "\n".join(f"- {p['name']}（{p['product_id']}）：¥{p['price']:.2f}，{p['summary']}" for p in products)
+        else:
+            reply = f"在本地演示目录中找到 {output['total']} 款符合条件的商品，下面按价格从低到高展示。"
+            reply += "\n\n" + "\n".join(f"- {p['name']}（{p['product_id']}）：¥{p['price']:.2f}，{p['summary']}" for p in products[:3])
+        return _finish(recorder, intake, run_id, "shopping", trace, reply=reply,
+                       status="SUCCEEDED", terminal_reason="COMPLETED" if products else "NO_MATCHING_PRODUCTS")
 
     if FAQ in intents:
         answer = call("answer_faq", {"question": intake.request})

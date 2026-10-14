@@ -25,6 +25,8 @@ REFUND_REQUEST = "REFUND_REQUEST"
 PAYMENT_STATUS = "PAYMENT_STATUS"
 PAYMENT_PROCESS = "PAYMENT_PROCESS"
 FAQ = "FAQ"
+PRODUCT_SEARCH = "PRODUCT_SEARCH"
+PRODUCT_COMPARE = "PRODUCT_COMPARE"
 
 APPROVAL_CONFIRMED = "CONFIRMED"
 APPROVAL_CANCELLED = "CANCELLED"
@@ -95,6 +97,30 @@ def analyze_request(user_message: str) -> TaskIntake:
             confidence=1.0,
             reason="用户明确要求人工服务",
         )
+
+    # A remembered order is useful for service follow-ups, but must not turn
+    # an unrelated shopping request into an order task.
+    shopping_text = re.sub(r"^\(context:.*?\)\s*", "", normalized)
+    product_ids = re.findall(r"(?<![a-z0-9])p\d{4}s?(?![a-z0-9])", shopping_text, re.IGNORECASE)
+    category = next((name for name in ("耳机", "键盘", "扩展坞") if name in shopping_text), None)
+    shopping_action = _has_any(shopping_text, ("找", "选", "推荐", "对比", "比较", "搜索", "预算", "search", "compare"))
+    if shopping_action and (category or product_ids or "商品" in shopping_text) and not _has_any(shopping_text, ("订单", "order")):
+        budget_match = re.search(r"(?:预算\s*(?:为|是|不超过)?\s*[¥￥]?\s*)(-?\d+(?:\.\d+)?)", shopping_text)
+        if not budget_match:
+            budget_match = re.search(r"(\d+(?:\.\d+)?)\s*元?\s*(?:以内|以下|不超过)", shopping_text)
+        shopping_entities = {"category": category, "query": ""}
+        if budget_match:
+            shopping_entities["max_price"] = float(budget_match.group(1))
+        if product_ids:
+            shopping_entities["product_ids"] = list(dict.fromkeys(value.upper() for value in product_ids))
+        # Keep recognized feature constraints rather than passing sentence
+        # filler to keyword search or silently dropping explicit needs.
+        features = [word for word in ("降噪", "静音", "三模", "头戴式", "开放式", "4k", "便携", "通勤", "办公") if word in shopping_text]
+        shopping_entities["query"] = " ".join(features)
+        return TaskIntake(request=request,
+                          intents=(PRODUCT_COMPARE if product_ids else PRODUCT_SEARCH,),
+                          entities=shopping_entities, execution_mode=DIRECT, confidence=.96,
+                          reason="本地商品目录搜索或对比")
 
     policy_words = ("规则", "政策", "时效", "多久", "policy", "how long", "shipping time", "return window")
     faq_topics = ("退货", "退款", "发货", "配送", "取消", "联系", "return", "refund", "shipping", "cancel", "contact")

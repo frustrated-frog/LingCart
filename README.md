@@ -9,6 +9,29 @@ routes each request to a specialist agent (orders, refunds, payments, FAQ) that
 calls real backend tools to resolve it — with deterministic task intake,
 bounded tool execution, typed failures, approval boundaries, and observable runs.
 
+## 选序消费工作空间
+
+The Streamlit frontend uses persistent sidebar navigation with five connected pages:
+
+- **工作台**: start or continue a conversation, query active orders, and explore shopping scenarios.
+- **商品发现**: search 60 fictional demo products across headphones, keyboards, and USB-C hubs; filter by budget and stock; compare two or three products.
+- **订单与售后**: browse the existing seed orders, inspect stored shipment events, and pass an order into the assistant. Payment/refund writes require a separate confirmation.
+- **任务记录**: view the latest 100 actual run snapshots saved in SQLite, including results and historical statuses. These are run archives, not restart checkpoints.
+- **Agent Lab**: inspect actual events, tool parameters/results, token usage, latency, and terminal reasons for a selected run.
+
+Product discovery and comparison also work through `/chat`, for example
+`推荐通勤降噪耳机，预算 500 元以内` and `对比商品 P1101 和 P1102`.
+These explicit requests use the deterministic path without model calls.
+
+All brands, prices, stock, customer accounts, and shipment events are **demo data**.
+The workspace displays a shared local dataset rather than authenticated customer accounts;
+payments and refunds only mutate the demo SQLite database. Product/order pages read
+database records rather than embedding sample results in the frontend.
+New tables are added automatically without resetting existing orders, payments,
+refunds, or modified product stock. Starting a new conversation leaves archived runs intact.
+Conversation memory and pending approvals still live in the current browser session;
+the run archive does not provide durable task resumption.
+
 ## Live demo
 
 **▶️ Live app:** https://support-agent-htg6lfc8qdjeez9bhx8b9o.streamlit.app/
@@ -144,11 +167,13 @@ agent logic is written once and consumed by either a human (UI) or a machine
 pytest
 ```
 
-84 tests covering: deterministic Chinese/English task intake, compound
+101 tests covering: deterministic Chinese/English task intake, compound
 intent parsing, clarification and unsupported requests, run-linked events,
 tool validation/budgets/deduplication, failure semantics, approval boundaries,
 the order-1004 Chinese regression, every SQLite business tool, specialist
-agent loops, conversation memory, and the FastAPI endpoints.
+agent loops, conversation memory, FastAPI endpoints, catalog constraints and
+comparison, shipment events, persisted run archives, model-path confirmation,
+and Streamlit workspace interactions.
 
 ## Evaluation
 

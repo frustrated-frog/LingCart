@@ -1,8 +1,8 @@
 import os
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 
-from sqlalchemy import create_engine, Date, Float, ForeignKey, Integer, String
+from sqlalchemy import create_engine, Date, DateTime, Float, ForeignKey, Integer, JSON, String, Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -42,6 +42,39 @@ class Refund(Base):
     order_id: Mapped[int] = mapped_column(ForeignKey("orders.order_id"))
     status: Mapped[str] = mapped_column(String(20), default="none")  # none/requested/approved/completed
     reason: Mapped[str | None] = mapped_column(String(300), nullable=True)
+
+
+class Product(Base):
+    __tablename__ = "products"
+
+    product_id: Mapped[str] = mapped_column(String(20), primary_key=True)
+    name: Mapped[str] = mapped_column(String(200))
+    category: Mapped[str] = mapped_column(String(40))
+    price: Mapped[float] = mapped_column(Float)
+    summary: Mapped[str] = mapped_column(Text)
+    specs: Mapped[dict] = mapped_column(JSON)
+    stock: Mapped[int] = mapped_column(Integer)
+
+
+class ShipmentEvent(Base):
+    __tablename__ = "shipment_events"
+
+    event_id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    order_id: Mapped[int] = mapped_column(ForeignKey("orders.order_id"), index=True)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime)
+    description: Mapped[str] = mapped_column(String(200))
+
+
+class WorkspaceRun(Base):
+    """Completed run snapshots for the local demo workspace, not checkpoints."""
+
+    __tablename__ = "workspace_runs"
+
+    run_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    conversation_id: Mapped[str] = mapped_column(String(64), index=True)
+    request: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+    payload: Mapped[dict] = mapped_column(JSON)
 
 
 def get_engine(db_url: str | None = None):

@@ -1,6 +1,7 @@
 from datetime import date
 
 from src.backend.db import Order, Payment, Refund, get_engine, get_session_factory, init_db
+from src.backend.catalog import seed_catalog, seed_shipments
 
 ORDERS = [
     # order_id, customer_name, item, status, order_date, amount
@@ -63,6 +64,8 @@ def seed(session) -> None:
         )
     for refund_id, order_id, status, reason in REFUNDS:
         session.merge(Refund(refund_id=refund_id, order_id=order_id, status=status, reason=reason))
+    seed_catalog(session)
+    seed_shipments(session, ORDERS)
     session.commit()
 
 

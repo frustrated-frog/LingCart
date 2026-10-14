@@ -35,7 +35,7 @@ class ConversationMemory:
     def update_pending_action(self, result: dict) -> None:
         """Keep only an action that is actively waiting for confirmation."""
 
-        if result.get("status") == "WAITING_APPROVAL" and result.get("pending_action"):
+        if result.get("pending_action"):
             self.pending_action = result["pending_action"]
         else:
             self.pending_action = None

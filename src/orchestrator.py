@@ -64,6 +64,7 @@ class SupportState(TypedDict, total=False):
     terminal_reason: str
     run_id: str
     error: dict | None
+    pending_action: dict | None
 
 
 def _event(run_id: str, sequence: int, event_type: str, **data) -> dict:
@@ -124,6 +125,7 @@ def _make_agent_node(agent_name: str, run_fn):
             "status": result.get("status", "SUCCEEDED"),
             "terminal_reason": result.get("terminal_reason", "COMPLETED"),
             "error": result.get("error"),
+            "pending_action": result.get("pending_action"),
         }
 
     return node
@@ -382,6 +384,10 @@ def run_orchestrator(user_message: str, history: list | None = None, pending_act
     else:  # pragma: no cover - defensive guard for future intake modes
         raise ValueError(f"Unknown intake mode: {intake.execution_mode}")
 
+    # Browsing another read-only task must not silently discard an existing
+    # approval. Only explicit confirmation/cancellation consumes that action.
+    if pending_action and approval_decision not in {APPROVAL_CONFIRMED, APPROVAL_CANCELLED} and not result.get("pending_action"):
+        result["pending_action"] = pending_action
     result["latency_ms"] = round((time.perf_counter() - started_at) * 1000, 2)
     logger.info(
         "agent_decision",

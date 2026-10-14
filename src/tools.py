@@ -3,9 +3,13 @@
 Docstrings are written for the LLM to read when deciding which tool to call.
 """
 import logging
+import json
 import uuid
 
-from src.backend.db import Order, Payment, Refund, get_engine, get_session_factory, init_db
+from sqlalchemy import select
+
+from src.backend.db import Order, Payment, Product, Refund, ShipmentEvent, get_engine, get_session_factory, init_db
+from src.backend.catalog import seed_catalog, seed_shipments
 from src.backend.seed import seed as _seed_data
 
 logger = logging.getLogger("support_agent.tools")
@@ -22,6 +26,11 @@ def _ensure_seeded() -> None:
         if s.query(Order).count() == 0:
             _seed_data(s)
             logger.info("Auto-seeded empty database on startup.")
+        else:
+            seed_catalog(s)
+            orders = s.scalars(select(Order)).all()
+            seed_shipments(s, [(o.order_id, o.customer_name, o.item, o.status, o.order_date, o.amount) for o in orders])
+            s.commit()
 
 
 _ensure_seeded()
@@ -80,7 +89,54 @@ def track_shipment(order_id: int) -> dict:
             "order_id": order.order_id,
             "status": order.status,
             "tracking_message": messages.get(order.status, "Unknown status."),
+            "events": [dict(timestamp=event.occurred_at.isoformat(), description=event.description)
+                       for event in s.scalars(select(ShipmentEvent).where(ShipmentEvent.order_id == order_id)
+                                              .order_by(ShipmentEvent.occurred_at, ShipmentEvent.event_id))],
         }
+
+
+def _product_dict(product: Product) -> dict:
+    return dict(product_id=product.product_id, name=product.name, category=product.category,
+                price=product.price, currency="CNY", summary=product.summary, specs=product.specs,
+                stock=product.stock, data_source="DEMO_CATALOG")
+
+
+def search_products(query: str = "", category: str | None = None, max_price: float | None = None,
+                    available_only: bool = True, limit: int = 12) -> dict:
+    """Search the local, fictional demo catalog. Prices are in CNY."""
+    if max_price is not None and max_price < 0:
+        return {"error": "预算不能为负数"}
+    if not 1 <= limit <= 60:
+        return {"error": "返回数量必须在 1 到 60 之间"}
+    with _session() as session:
+        statement = select(Product).order_by(Product.price, Product.product_id)
+        if category:
+            statement = statement.where(Product.category == category)
+        if max_price is not None:
+            statement = statement.where(Product.price <= max_price)
+        if available_only:
+            statement = statement.where(Product.stock > 0)
+        products = session.scalars(statement).all()
+        terms = query.strip().casefold().split()
+        matched = [product for product in products if all(term in (
+            f"{product.product_id} {product.name} {product.summary} "
+            + json.dumps(product.specs, ensure_ascii=False)).casefold() for term in terms)]
+        return {"products": [_product_dict(product) for product in matched[:limit]], "total": len(matched),
+                "filters": {"query": query, "category": category, "max_price": max_price,
+                            "available_only": available_only}, "data_source": "DEMO_CATALOG"}
+
+
+def compare_products(product_ids: list[str]) -> dict:
+    """Return real catalog records for two or three distinct products."""
+    ids = list(dict.fromkeys(str(value).upper() for value in product_ids))
+    if not 2 <= len(ids) <= 3:
+        return {"error": "请选择 2 到 3 款不同商品进行对比"}
+    with _session() as session:
+        products = [session.get(Product, product_id) for product_id in ids]
+        missing = [product_id for product_id, product in zip(ids, products) if product is None]
+        if missing:
+            return {"error": f"商品不存在：{', '.join(missing)}"}
+        return {"products": [_product_dict(product) for product in products], "data_source": "DEMO_CATALOG"}
 
 
 def check_refund_eligibility(order_id: int) -> dict:

@@ -113,16 +113,35 @@ def run_tool_agent(
             seen_calls.add(fingerprint)
 
             if tool_calls >= max_tool_calls:
-                error_payload = {
-                    "code": ErrorCode.TOOL_BUDGET_EXHAUSTED,
-                    "message": "工具调用预算已耗尽",
-                    "retryable": False,
-                }
+                error_payload = {"code": ErrorCode.TOOL_BUDGET_EXHAUSTED, "message": "工具调用预算已耗尽", "retryable": False}
                 errors.append(error_payload)
                 recorder.record("error", agent=agent_name, tool=tool_name, args=args, **error_payload)
                 terminal_reason = ErrorCode.TOOL_BUDGET_EXHAUSTED
                 repeated = True
                 break
+
+            if tool_name in {"process_payment", "initiate_refund"} and tool_name in tools_by_name:
+                # Model-selected mutations use the same confirmation boundary
+                # as the deterministic path. The model cannot grant approval.
+                schema = tools_by_name[tool_name].args_schema
+                try:
+                    validated = schema.model_validate(args).model_dump()
+                except Exception as exc:
+                    failure = classify_exception(exc, source="tool")
+                    error_payload = {"code": failure.code, "message": str(failure), "retryable": False}
+                    errors.append(error_payload)
+                    recorder.record("error", agent=agent_name, tool=tool_name, **error_payload)
+                    messages.append(ToolMessage(content=_serialize_tool_result({"error": str(failure)}), tool_call_id=call_id))
+                    continue
+                action_type = "PROCESS_PAYMENT" if tool_name == "process_payment" else "INITIATE_REFUND"
+                pending = {"type": action_type, "order_id": validated["order_id"], "requires_approval": True}
+                pending.update({key: value for key, value in validated.items() if key in {"method", "reason"}})
+                recorder.record("approval_required", agent=agent_name, tool=tool_name, args=validated)
+                recorder.record("terminal", status="WAITING_APPROVAL", reason="APPROVAL_REQUIRED")
+                return {"run_id": run_id, "reply": f"订单 {validated['order_id']} 的操作需要你明确确认，尚未修改支付或退款状态。",
+                        "trace": trace, "events": recorder.events, "messages": messages, "agent": agent_name,
+                        "usage": usage, "status": "WAITING_APPROVAL", "terminal_reason": "APPROVAL_REQUIRED",
+                        "pending_action": pending, "error": None}
 
             tool_calls += 1
             recorder.record("tool_call", agent=agent_name, tool=tool_name, args=args, call_index=tool_calls)
@@ -247,7 +266,8 @@ def run_tool_agent(
     if not reply:
         reply = "任务没有产生可验证的结果。"
         status = "FAILED"
-        terminal_reason = "EMPTY_MODEL_RESPONSE"
+        if terminal_reason == "COMPLETED":
+            terminal_reason = "EMPTY_MODEL_RESPONSE"
 
     recorder.record("terminal", status=status, reason=terminal_reason, error=errors[-1] if errors else None)
     return {
