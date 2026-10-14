@@ -164,3 +164,23 @@ def test_report_retains_wrong_expectations_as_failed_tasks():
     assert report["summary"]["success_rate"] == 0
     assert report["cases"][0]["turns"][0]["failures"]
     assert report["summary"]["by_category"]["order"]["total"] == 1
+
+
+def test_evaluation_gate_rejects_dataset_or_budget_regressions():
+    baseline = {
+        "schema_version": 1,
+        "dataset_sha256": "expected",
+        "expected": {"cases_passed": 2, "cases_total": 2, "turns_passed": 3, "turns_total": 3},
+        "maximums": {"model_invocations": 4, "tool_calls": 5, "physical_tool_calls": 5},
+    }
+    report = {
+        "dataset_sha256": "changed",
+        "summary": {"passed": 1, "total": 2, "turns_passed": 2, "turns_total": 3},
+        "metrics": {"model_invocations": 6, "tool_calls": 5, "physical_tool_calls": 5},
+    }
+
+    failures = task_eval.evaluate_gate(report, baseline)
+
+    assert any("fingerprint" in failure for failure in failures)
+    assert any("passed" in failure for failure in failures)
+    assert any("model_invocations" in failure for failure in failures)

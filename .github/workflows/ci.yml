@@ -25,3 +25,6 @@ jobs:
 
       - name: Run tests
         run: pytest -q
+
+      - name: Enforce offline task baseline
+        run: python eval/run_task_eval.py --gate

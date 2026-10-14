@@ -18,6 +18,8 @@ _MODEL_ENV = {
     "LLM_FALLBACK_PROVIDERS",
     "LLM_MAX_ATTEMPTS",
     "LLM_REQUEST_TIMEOUT",
+    "LLM_CIRCUIT_FAILURE_THRESHOLD",
+    "LLM_CIRCUIT_COOLDOWN_SECONDS",
     "LLM_ROUTER_MODEL",
     "LLM_PLANNER_MODEL",
     "LLM_AGENT_MODEL",
@@ -153,6 +155,65 @@ def test_authentication_failure_does_not_fall_through_to_another_provider():
 
     assert denied.calls == 1
     assert fallback.calls == 0
+
+
+def test_circuit_breaker_skips_unhealthy_providers_until_cooldown(monkeypatch):
+    now = {"value": 1000.0}
+    monkeypatch.setattr(model_gateway.time, "time", lambda: now["value"])
+    first = _Provider(error=TimeoutError("provider timeout"))
+    second = _Provider(error=RuntimeError("503 service unavailable"))
+    state = {"index": 0}
+    model = RotatingChatModel(
+        [
+            ModelCandidate(ProviderConfig("gemini", "gemini-test", "secret-one"), first),
+            ModelCandidate(ProviderConfig("groq", "groq-test", "secret-two"), second),
+        ],
+        state,
+        max_attempts=2,
+        circuit_failure_threshold=1,
+        circuit_cooldown_seconds=30,
+    )
+
+    with pytest.raises(RuntimeError, match="service unavailable"):
+        model.invoke("你好")
+    assert first.calls == second.calls == 1
+
+    with pytest.raises(ModelGatewayConfigurationError) as open_error:
+        model.invoke_once("你好")
+    assert open_error.value.code == "MODEL_UNAVAILABLE"
+    assert first.calls == second.calls == 1
+    assert state["last_call"]["failure_kind"] == "CIRCUIT_OPEN"
+
+    now["value"] += 31
+    with pytest.raises(TimeoutError, match="provider timeout"):
+        model.invoke_once("你好")
+    assert first.calls == 2
+
+
+def test_model_status_exposes_sanitized_provider_health(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "gemini-secret")
+    monkeypatch.setenv("LLM_CIRCUIT_FAILURE_THRESHOLD", "3")
+    monkeypatch.setenv("LLM_CIRCUIT_COOLDOWN_SECONDS", "45")
+
+    status = model_gateway.get_model_status()
+
+    assert status["circuit_failure_threshold"] == 3
+    assert status["circuit_cooldown_seconds"] == 45
+    assert status["providers"][0]["health"] == "READY"
+    assert status["providers"][0]["failure_count"] == 0
+    assert "gemini-secret" not in repr(status)
+
+    key = "gemini:gemini-2.5-flash:1"
+    model_gateway._gateway_state["health"][key] = {
+        "failure_count": 3,
+        "open_until": model_gateway.time.time() + 30,
+        "last_failure_kind": "TIMEOUT",
+    }
+    unavailable = model_gateway.get_model_status()
+    assert unavailable["ready"] is False
+    assert unavailable["configured"] is True
+    assert unavailable["error_code"] == "MODEL_UNAVAILABLE"
+    assert unavailable["providers"][0]["health"] == "OPEN"
 
 
 def test_create_chat_model_builds_clients_without_network(monkeypatch):

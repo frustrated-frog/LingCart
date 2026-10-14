@@ -160,7 +160,8 @@ agent logic is written once and consumed by either a human (UI) or a machine
 
 - `GET /health`：仅检查 API 进程是否存活。
 - `GET /ready`：检查数据库连通性和模型配置，失败时返回 `503`；不会触发模型调用或费用。
-- `GET /models/status`：返回脱敏后的 Provider、模型、降级槽位和最近调用状态，不返回 API Key。
+- `GET /models/status`：返回脱敏后的 Provider、模型、降级槽位、熔断健康状态和最近调用状态，不返回 API Key。
+- `GET /runs/{run_id}/trace?session_id=...`：把底层事件投影为统一时间线、完整性检查和运行摘要。
 
 ## Tests
 
@@ -190,6 +191,12 @@ python eval/run_eval.py             # calls the real LLM, reports accuracy
 
 The original 21-scenario dataset (`eval/eval_dataset.json`) is a live router benchmark. Its earlier recorded score is not a task-success measurement for the current runtime; run it with your configured provider to obtain current routing accuracy.
 
+固定离线任务集另有可审计的 `baseline-v1`。CI 会执行以下门禁，校验数据集指纹、60/60 任务、71/71 轮次以及模型/工具调用上限；它只用于回归保护，不宣称实时模型质量：
+
+```bash
+python eval/run_task_eval.py --gate
+```
+
 ## Docker
 
 ```
@@ -218,6 +225,8 @@ docker run -p 8501:8501 -e GEMINI_API_KEY=your_key support-agent
 ## 模型接入
 
 Model Gateway 使用英文配置标识，运行时提示与产品内容保持中文。清晰、可确定的业务请求仍会走零 Token 快速路径；只有需要理解、规划或工具决策的请求才调用模型。
+
+网关会统计各 Provider 的连续瞬时失败。默认连续失败 2 次后熔断 30 秒，期间自动跳过该候选；可通过 `LLM_CIRCUIT_FAILURE_THRESHOLD` 和 `LLM_CIRCUIT_COOLDOWN_SECONDS` 调整。
 
 最短配置示例：
 

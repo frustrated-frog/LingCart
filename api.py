@@ -28,6 +28,7 @@ from src.errors import AgentError
 from src.llm import get_model_status
 from src.persistence import RunStore
 from src.orchestrator import run_orchestrator
+from src.trace_projector import project_trace
 
 configure_logging()
 logger = logging.getLogger("support_agent.api")
@@ -89,6 +90,10 @@ class ProviderStatus(BaseModel):
     model: str
     slot: int
     custom_base_url: bool
+    health: str = "READY"
+    failure_count: int = 0
+    retry_after_seconds: float = 0.0
+    last_failure_kind: str | None = None
 
 
 class ModelStatusResponse(BaseModel):
@@ -100,6 +105,8 @@ class ModelStatusResponse(BaseModel):
     purpose: str | None = None
     max_attempts: int | None = None
     request_timeout: float | None = None
+    circuit_failure_threshold: int | None = None
+    circuit_cooldown_seconds: float | None = None
     providers: list[ProviderStatus] = Field(default_factory=list)
     active: dict | None = None
     last_error: dict | None = None
@@ -223,6 +230,16 @@ def get_run(run_id: str, session_id: str):
     if not run or run["session_id"] != session_id:
         raise HTTPException(404, "没有找到该会话的任务")
     return run
+
+
+@app.get("/runs/{run_id}/trace")
+def get_run_trace(run_id: str, session_id: str):
+    """返回统一的运行轨迹投影，供 Agent Lab 和诊断客户端使用。"""
+
+    run = RunStore().run(run_id)
+    if not run or run["session_id"] != session_id:
+        raise HTTPException(404, "没有找到该会话的任务")
+    return project_trace(run["events"])
 
 
 @app.post("/runs/{run_id}/resume", response_model=ChatResponse)

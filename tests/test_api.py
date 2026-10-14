@@ -152,6 +152,11 @@ def test_api_request_id_deduplicates_and_get_run_is_session_scoped():
     saved = client.get("/conversations/durable-api").json()
     assert len(saved["messages"]) == 2
     assert client.get(f"/runs/{first['run_id']}", params={"session_id": "other"}).status_code == 404
+    trace = client.get(f"/runs/{first['run_id']}/trace", params={"session_id": "durable-api"})
+    assert trace.status_code == 200
+    assert trace.json()["run_id"] == first["run_id"]
+    assert trace.json()["integrity"]["sequential"] is True
+    assert client.get(f"/runs/{first['run_id']}/trace", params={"session_id": "other"}).status_code == 404
     restored = client.post(f"/runs/{first['run_id']}/resume", json={"session_id": "durable-api"})
     assert restored.status_code == 200 and restored.json()["cached"]
     conflicting = client.post("/chat", json={**message, "message": "different"})

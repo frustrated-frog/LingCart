@@ -8,6 +8,7 @@ The legacy live router benchmark in run_eval.py is intentionally separate.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import importlib
 import json
 import logging
@@ -25,6 +26,7 @@ from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_DATASET = Path(__file__).with_name("task_cases.json")
+DEFAULT_BASELINE = Path(__file__).with_name("baseline_v1.json")
 TOOLS = {
     "get_order_status", "get_order_details", "track_shipment",
     "check_refund_eligibility", "initiate_refund", "get_payment_status",
@@ -49,6 +51,11 @@ def load_dataset(path: str | Path = DEFAULT_DATASET) -> dict:
     dataset = json.loads(Path(path).read_text(encoding="utf-8"))
     validate_dataset(dataset)
     return dataset
+
+
+def dataset_fingerprint(dataset: dict) -> str:
+    encoded = json.dumps(dataset, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
 
 
 def validate_dataset(dataset: dict) -> None:
@@ -502,6 +509,7 @@ def build_report(dataset: dict, cases: list[dict]) -> dict:
     passed = sum(case["passed"] for case in cases)
     return {
         "schema_version": 1, "dataset_name": dataset.get("name"),
+        "dataset_sha256": dataset_fingerprint(dataset),
         "generated_at": datetime.now(UTC).isoformat(), "offline": True,
         "summary": {"passed": passed, "total": len(cases), "success_rate": passed / len(cases) if cases else 0.0,
                     "turns_passed": sum(turn["passed"] for turn in turns), "turns_total": len(turns),
@@ -548,12 +556,42 @@ def run_evaluation(dataset: dict, case_ids: list[str] | None = None) -> dict:
         logger.setLevel(previous_level)
 
 
+def evaluate_gate(report: dict, baseline: dict) -> list[str]:
+    """Compare deterministic quality/cost counters against a frozen baseline."""
+
+    failures = []
+    if baseline.get("schema_version") != 1:
+        return ["baseline schema_version must be 1"]
+    if report.get("dataset_sha256") != baseline.get("dataset_sha256"):
+        failures.append("dataset fingerprint differs from baseline-v1")
+    summary = report.get("summary", {})
+    expected = baseline.get("expected", {})
+    for report_key, baseline_key in (
+        ("passed", "cases_passed"),
+        ("total", "cases_total"),
+        ("turns_passed", "turns_passed"),
+        ("turns_total", "turns_total"),
+    ):
+        if summary.get(report_key) != expected.get(baseline_key):
+            failures.append(
+                f"{report_key}: expected {expected.get(baseline_key)!r}, got {summary.get(report_key)!r}"
+            )
+    metrics = report.get("metrics", {})
+    for key, maximum in baseline.get("maximums", {}).items():
+        actual = metrics.get(key)
+        if not isinstance(actual, (int, float)) or actual > maximum:
+            failures.append(f"{key}: maximum {maximum!r}, got {actual!r}")
+    return failures
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dataset", type=Path, default=DEFAULT_DATASET)
     parser.add_argument("--dry-run", action="store_true", help="validate JSON only; no application imports")
     parser.add_argument("--output", type=Path, help="write a detailed JSON report")
     parser.add_argument("--case", action="append", help="run one case ID; repeat to select several")
+    parser.add_argument("--gate", action="store_true", help="compare the full report with eval/baseline_v1.json")
+    parser.add_argument("--baseline", type=Path, help="use this baseline and enable the evaluation gate")
     args = parser.parse_args(argv)
     dataset = load_dataset(args.dataset)
     if args.dry_run:
@@ -577,6 +615,22 @@ def main(argv: list[str] | None = None) -> int:
               f"latency p50/p95: {metrics['latency_ms']['p50']:.2f}/{metrics['latency_ms']['p95']:.2f} ms; "
               "monetary cost: unavailable (no verified pricing)")
         exit_code = 0 if summary["passed"] == summary["total"] else 1
+        if args.gate or args.baseline:
+            if args.case:
+                parser.error("evaluation gate requires the full dataset; remove --case")
+            baseline_path = args.baseline or DEFAULT_BASELINE
+            baseline = json.loads(baseline_path.read_text(encoding="utf-8"))
+            failures = evaluate_gate(report, baseline)
+            report["gate"] = {
+                "passed": not failures,
+                "baseline": baseline.get("name", baseline_path.name),
+                "failures": failures,
+            }
+            print(f"Evaluation gate: {'PASS' if not failures else 'FAIL'} ({baseline_path})")
+            for failure in failures:
+                print(f"  {failure}")
+            if failures:
+                exit_code = 1
     if args.output:
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")

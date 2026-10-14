@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "name": "baseline-v1",
+  "description": "固定离线任务基线；不代表实时模型质量或线上成本。",
+  "dataset_sha256": "bb3aa1a37e805362bb3ece240ab87f3349508348f7521e3927f3f1026c91cea0",
+  "expected": {
+    "cases_passed": 60,
+    "cases_total": 60,
+    "turns_passed": 71,
+    "turns_total": 71
+  },
+  "maximums": {
+    "model_invocations": 12,
+    "tool_calls": 73,
+    "physical_tool_calls": 74
+  }
+}

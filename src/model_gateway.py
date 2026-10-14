@@ -46,6 +46,8 @@ class ModelGatewayConfig:
     purpose: str
     max_attempts: int = 2
     request_timeout: float = 10.0
+    circuit_failure_threshold: int = 2
+    circuit_cooldown_seconds: float = 30.0
 
 
 @dataclass(frozen=True)
@@ -54,7 +56,7 @@ class ModelCandidate:
     client: object
 
 
-_gateway_state = {"index": 0, "last_call": None, "last_success": None, "last_error": None}
+_gateway_state = {"index": 0, "last_call": None, "last_success": None, "last_error": None, "health": {}}
 
 
 def _value(name: str) -> str | None:
@@ -161,6 +163,8 @@ def load_gateway_config(*, purpose: str = "default", model: str | None = None) -
         purpose=normalized_purpose,
         max_attempts=_positive_int("LLM_MAX_ATTEMPTS", 2, 8),
         request_timeout=_positive_float("LLM_REQUEST_TIMEOUT", 10.0),
+        circuit_failure_threshold=_positive_int("LLM_CIRCUIT_FAILURE_THRESHOLD", 2, 20),
+        circuit_cooldown_seconds=_positive_float("LLM_CIRCUIT_COOLDOWN_SECONDS", 30.0),
     )
 
 
@@ -221,7 +225,8 @@ def _can_failover(exc: Exception) -> bool:
 class RotatingChatModel:
     """LangChain-compatible model pool; the runtime owns bounded retries."""
 
-    def __init__(self, models: list, state: dict | None = None, *, max_attempts: int = 2):
+    def __init__(self, models: list, state: dict | None = None, *, max_attempts: int = 2,
+                 circuit_failure_threshold: int = 2, circuit_cooldown_seconds: float = 30.0):
         self._candidates = [
             item if isinstance(item, ModelCandidate) else ModelCandidate(ProviderConfig("unknown", "unknown", ""), item)
             for item in models
@@ -229,7 +234,10 @@ class RotatingChatModel:
         if not self._candidates:
             raise ModelGatewayConfigurationError("No LLM configured：模型候选列表为空")
         self._state = state if state is not None else _gateway_state
+        self._state.setdefault("health", {})
         self.max_attempts = max_attempts
+        self.circuit_failure_threshold = circuit_failure_threshold
+        self.circuit_cooldown_seconds = circuit_cooldown_seconds
 
     @property
     def candidate_count(self) -> int:
@@ -241,7 +249,13 @@ class RotatingChatModel:
 
     def _clone(self, clients: list) -> "RotatingChatModel":
         candidates = [ModelCandidate(old.config, client) for old, client in zip(self._candidates, clients)]
-        return RotatingChatModel(candidates, self._state, max_attempts=self.max_attempts)
+        return RotatingChatModel(
+            candidates,
+            self._state,
+            max_attempts=self.max_attempts,
+            circuit_failure_threshold=self.circuit_failure_threshold,
+            circuit_cooldown_seconds=self.circuit_cooldown_seconds,
+        )
 
     def bind_tools(self, tools):
         return self._clone([candidate.client.bind_tools(tools) for candidate in self._candidates])
@@ -249,21 +263,67 @@ class RotatingChatModel:
     def bind(self, **kwargs):
         return self._clone([candidate.client.bind(**kwargs) for candidate in self._candidates])
 
+    @staticmethod
+    def _health_key(candidate: ModelCandidate) -> str:
+        config = candidate.config
+        return f"{config.provider}:{config.model}:{config.slot}"
+
+    def _health(self, candidate: ModelCandidate) -> dict:
+        return self._state["health"].setdefault(
+            self._health_key(candidate),
+            {"failure_count": 0, "open_until": 0.0, "last_failure_kind": None},
+        )
+
+    def _select_candidate(self) -> tuple[int, ModelCandidate]:
+        now = time.time()
+        start = self._state.get("index", 0) % len(self._candidates)
+        for offset in range(len(self._candidates)):
+            index = (start + offset) % len(self._candidates)
+            candidate = self._candidates[index]
+            if self._health(candidate).get("open_until", 0.0) <= now:
+                self._state["index"] = index
+                return index, candidate
+        retry_after = min(
+            max(0.0, self._health(candidate).get("open_until", now) - now)
+            for candidate in self._candidates
+        )
+        call = {
+            "status": "SKIPPED",
+            "failure_kind": "CIRCUIT_OPEN",
+            "retry_after_seconds": round(retry_after, 3),
+        }
+        self._state["last_call"] = call
+        self._state["last_error"] = call
+        raise ModelGatewayConfigurationError(
+            f"所有模型 Provider 暂时熔断，请在约 {max(1, round(retry_after))} 秒后重试",
+            code="MODEL_UNAVAILABLE",
+        )
+
     def invoke_once(self, messages):
-        index = self._state.get("index", 0) % len(self._candidates)
-        candidate = self._candidates[index]
+        index, candidate = self._select_candidate()
         started = time.monotonic()
         descriptor = {"provider": candidate.config.provider, "model": candidate.config.model, "slot": candidate.config.slot}
         try:
             result = candidate.client.invoke(messages)
         except Exception as exc:
-            call = {**descriptor, "status": "FAILED", "failure_kind": _failure_kind(exc),
+            failure_kind = _failure_kind(exc)
+            health = self._health(candidate)
+            if _can_failover(exc):
+                health["failure_count"] = health.get("failure_count", 0) + 1
+                health["last_failure_kind"] = failure_kind
+                if health["failure_count"] >= self.circuit_failure_threshold:
+                    health["open_until"] = time.time() + self.circuit_cooldown_seconds
+            call = {**descriptor, "status": "FAILED", "failure_kind": failure_kind,
                     "duration_ms": round((time.monotonic() - started) * 1000, 2)}
+            if health.get("open_until", 0.0) > time.time():
+                call["circuit_status"] = "OPEN"
             self._state["last_call"] = call
             self._state["last_error"] = call
             if _can_failover(exc):
                 self._state["index"] = (index + 1) % len(self._candidates)
             raise
+        health = self._health(candidate)
+        health.update(failure_count=0, open_until=0.0, last_failure_kind=None)
         call = {**descriptor, "status": "SUCCEEDED",
                 "duration_ms": round((time.monotonic() - started) * 1000, 2)}
         self._state.update(index=index, last_call=call, last_success=call, last_error=None)
@@ -287,7 +347,28 @@ def create_chat_model(*, purpose: str = "default", model: str | None = None, tem
         ModelCandidate(item, build_provider_client(item, temperature=temperature, timeout=config.request_timeout))
         for item in config.providers
     ]
-    return RotatingChatModel(candidates, _gateway_state, max_attempts=config.max_attempts)
+    return RotatingChatModel(
+        candidates,
+        _gateway_state,
+        max_attempts=config.max_attempts,
+        circuit_failure_threshold=config.circuit_failure_threshold,
+        circuit_cooldown_seconds=config.circuit_cooldown_seconds,
+    )
+
+
+def _provider_status(config: ProviderConfig) -> dict:
+    payload = config.public_payload()
+    health = _gateway_state.get("health", {}).get(
+        f"{config.provider}:{config.model}:{config.slot}", {}
+    )
+    retry_after = max(0.0, health.get("open_until", 0.0) - time.time())
+    payload.update(
+        health="OPEN" if retry_after > 0 else ("RECOVERING" if health.get("failure_count") else "READY"),
+        failure_count=health.get("failure_count", 0),
+        retry_after_seconds=round(retry_after, 3),
+        last_failure_kind=health.get("last_failure_kind"),
+    )
+    return payload
 
 
 def get_model_status() -> dict:
@@ -297,15 +378,24 @@ def get_model_status() -> dict:
         return {"ready": False, "configured": False, "message": str(exc), "providers": [],
                 "error_code": exc.code, "active": _gateway_state.get("last_success"),
                 "last_error": _gateway_state.get("last_error")}
+    providers = [_provider_status(provider) for provider in config.providers]
+    ready = any(provider["health"] != "OPEN" for provider in providers)
     return {
-        "ready": True,
+        "ready": ready,
         "configured": True,
         "live_verified": _gateway_state.get("last_success") is not None,
-        "message": "最近一次模型调用成功" if _gateway_state.get("last_success") else "模型配置已加载，尚未执行实时请求",
+        "message": (
+            "所有模型 Provider 暂时熔断，请稍后重试" if not ready else
+            "最近一次模型调用成功" if _gateway_state.get("last_success") else
+            "模型配置已加载，尚未执行实时请求"
+        ),
+        "error_code": None if ready else "MODEL_UNAVAILABLE",
         "purpose": config.purpose,
         "max_attempts": config.max_attempts,
         "request_timeout": config.request_timeout,
-        "providers": [provider.public_payload() for provider in config.providers],
+        "circuit_failure_threshold": config.circuit_failure_threshold,
+        "circuit_cooldown_seconds": config.circuit_cooldown_seconds,
+        "providers": providers,
         "active": _gateway_state.get("last_success"),
         "last_error": _gateway_state.get("last_error"),
     }
@@ -314,4 +404,4 @@ def get_model_status() -> dict:
 def reset_gateway_state() -> None:
     """Reset process-local provider rotation; intended for tests and diagnostics."""
 
-    _gateway_state.update(index=0, last_call=None, last_success=None, last_error=None)
+    _gateway_state.update(index=0, last_call=None, last_success=None, last_error=None, health={})
