@@ -10,6 +10,7 @@ logger = logging.getLogger("support_agent.errors")
 class ErrorCode(StrEnum):
     MODEL_UNAVAILABLE = "MODEL_UNAVAILABLE"
     MODEL_CONFIGURATION_ERROR = "MODEL_CONFIGURATION_ERROR"
+    MODEL_AUTH_ERROR = "MODEL_AUTH_ERROR"
     MODEL_TIMEOUT = "MODEL_TIMEOUT"
     MODEL_RATE_LIMIT = "MODEL_RATE_LIMIT"
     MODEL_FORMAT_ERROR = "MODEL_FORMAT_ERROR"
@@ -46,6 +47,14 @@ def classify_exception(exc: Exception, *, source: str = "model") -> AgentError:
         return AgentError(code, text, retryable=True)
     if "429" in lowered or "rate limit" in lowered or "resource_exhausted" in lowered:
         return AgentError(ErrorCode.MODEL_RATE_LIMIT, text, retryable=True)
+    if source == "model" and any(token in lowered for token in (
+        "401", "403", "unauthorized", "forbidden", "invalid api key", "api key not valid", "authentication",
+    )):
+        return AgentError(ErrorCode.MODEL_AUTH_ERROR, text, retryable=False)
+    if source == "model" and any(token in lowered for token in (
+        "502", "503", "service unavailable", "connection error", "connection refused",
+    )):
+        return AgentError(ErrorCode.MODEL_UNAVAILABLE, text, retryable=True)
     if source == "tool":
         if "validation error" in lowered or "field required" in lowered or "unexpected keyword" in lowered:
             return AgentError(ErrorCode.INVALID_TOOL_ARGUMENTS, text, retryable=False)

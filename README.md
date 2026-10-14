@@ -156,6 +156,12 @@ The Streamlit UI and the API both use `src/durable.py` and `src/orchestrator.py`
 agent logic is written once and consumed by either a human (UI) or a machine
 (API).
 
+运行状态接口：
+
+- `GET /health`：仅检查 API 进程是否存活。
+- `GET /ready`：检查数据库连通性和模型配置，失败时返回 `503`；不会触发模型调用或费用。
+- `GET /models/status`：返回脱敏后的 Provider、模型、降级槽位和最近调用状态，不返回 API Key。
+
 ## Tests
 
 ```
@@ -241,6 +247,16 @@ LLM_BASE_URL=https://provider.example.com/v1
 - 原有 `GEMINI_API_KEY(S)`、`GEMINI_MODEL`、`GROQ_API_KEY`、`GROQ_MODEL` 继续兼容；`LLM_PROVIDER=auto` 会按 Gemini、Groq、OpenAI、OpenAI-compatible 的顺序发现配置。
 
 API Key 不会出现在状态数据、事件或日志元数据中。完整模板见 `.env.example`。
+
+接入后可先做零费用配置检查，再执行一次真实请求：
+
+```bash
+python scripts/check_model.py --config-only
+python scripts/check_model.py --purpose agent
+python scripts/check_model.py --purpose agent --check-tools
+```
+
+最后一条会验证工具调用协议，适合确认 OpenAI-compatible 服务是否真正支持当前 Agent 所需的 tool calling。
 
 
 ## Fixed task evaluation

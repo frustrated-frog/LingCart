@@ -207,7 +207,9 @@ def _failure_kind(exc: Exception) -> str:
         return "TIMEOUT"
     if any(token in text for token in ("503", "502", "service unavailable", "connection error", "connection refused")):
         return "UNAVAILABLE"
-    if any(token in text for token in ("401", "403", "unauthorized", "forbidden", "invalid api key")):
+    if any(token in text for token in (
+        "401", "403", "unauthorized", "forbidden", "invalid api key", "api key not valid", "authentication",
+    )):
         return "AUTH_ERROR"
     return "PROVIDER_ERROR"
 
@@ -298,6 +300,8 @@ def get_model_status() -> dict:
     return {
         "ready": True,
         "configured": True,
+        "live_verified": _gateway_state.get("last_success") is not None,
+        "message": "最近一次模型调用成功" if _gateway_state.get("last_success") else "模型配置已加载，尚未执行实时请求",
         "purpose": config.purpose,
         "max_attempts": config.max_attempts,
         "request_timeout": config.request_timeout,

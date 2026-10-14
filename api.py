@@ -1,10 +1,12 @@
 """FastAPI backend for the AI Customer Support Agent.
 
 Exposes the same multi-agent orchestration logic as the Streamlit UI over a
-clean JSON API, so the system can be consumed by any frontend, mobile app, or
-another service. Endpoints:
+clean JSON API, so the system can be consumed by the web frontend or another
+service. Endpoints:
 
     GET  /health   liveness check
+    GET  /ready    database and model-configuration readiness
+    GET  /models/status  sanitized model gateway status
     POST /chat     durable message execution with request deduplication
     GET /conversations/{session_id}  saved state and active run
     GET /runs/{run_id}  saved checkpoint, result and events
@@ -16,11 +18,14 @@ import time
 import uuid
 
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
+from src import tools
 from src.logging_config import configure_logging
 from src.durable import run_conversation, resume_run
 from src.errors import AgentError
+from src.llm import get_model_status
 from src.persistence import RunStore
 from src.orchestrator import run_orchestrator
 
@@ -33,7 +38,7 @@ app = FastAPI(
         "Multi-agent customer support system: an orchestrator routes each message "
         "to a specialist (order/refund/payment/FAQ) agent that calls real backend tools."
     ),
-    version="1.0.0",
+    version="1.1.0",
 )
 
 
@@ -79,6 +84,40 @@ class ChatResponse(BaseModel):
     cached: bool = False
 
 
+class ProviderStatus(BaseModel):
+    provider: str
+    model: str
+    slot: int
+    custom_base_url: bool
+
+
+class ModelStatusResponse(BaseModel):
+    ready: bool
+    configured: bool
+    live_verified: bool = False
+    message: str
+    error_code: str | None = None
+    purpose: str | None = None
+    max_attempts: int | None = None
+    request_timeout: float | None = None
+    providers: list[ProviderStatus] = Field(default_factory=list)
+    active: dict | None = None
+    last_error: dict | None = None
+
+
+class ComponentReadiness(BaseModel):
+    ready: bool
+    message: str
+    latency_ms: float | None = None
+
+
+class ReadinessResponse(BaseModel):
+    status: str
+    ready: bool
+    message: str
+    checks: dict[str, ComponentReadiness]
+
+
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
     start = time.perf_counter()
@@ -101,6 +140,35 @@ async def log_requests(request: Request, call_next):
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+@app.get("/models/status", response_model=ModelStatusResponse)
+def model_status():
+    """返回脱敏后的模型配置与最近调用状态，不发起计费请求。"""
+
+    return get_model_status()
+
+
+@app.get("/ready", response_model=ReadinessResponse)
+def readiness():
+    """检查数据库连通性和模型配置；实时模型调用请使用自检脚本。"""
+
+    database = tools.get_database_status()
+    model = get_model_status()
+    checks = {
+        "database": ComponentReadiness(**database),
+        "model_gateway": ComponentReadiness(ready=model["ready"], message=model["message"]),
+    }
+    ready = all(check.ready for check in checks.values())
+    payload = ReadinessResponse(
+        status="ready" if ready else "not_ready",
+        ready=ready,
+        message="服务已就绪" if ready else "服务尚未就绪，请检查失败项",
+        checks=checks,
+    )
+    if not ready:
+        return JSONResponse(status_code=503, content=payload.model_dump())
+    return payload
 
 
 @app.post("/chat", response_model=ChatResponse)

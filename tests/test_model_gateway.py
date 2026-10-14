@@ -77,6 +77,14 @@ def test_openai_compatible_requires_key_model_and_base_url(monkeypatch):
     )
 
 
+def test_unconfigured_status_has_stable_code_and_chinese_message():
+    status = model_gateway.get_model_status()
+
+    assert status["ready"] is False
+    assert status["error_code"] == "MODEL_UNAVAILABLE"
+    assert status["message"].startswith("未配置可用模型")
+
+
 def test_purpose_override_only_changes_primary_auto_provider(monkeypatch):
     monkeypatch.setenv("GEMINI_API_KEY", "gemini-secret")
     monkeypatch.setenv("GROQ_API_KEY", "groq-secret")

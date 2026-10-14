@@ -1,6 +1,6 @@
 import pytest
 
-from src.errors import call_with_retry
+from src.errors import call_with_retry, classify_exception
 from src.memory import ConversationMemory
 
 
@@ -58,3 +58,18 @@ def test_call_with_retry_escalates_after_exhausting_attempts():
     assert escalation["escalated"] is True
     assert "ticket_id" in escalation
     assert attempts["count"] == 2
+
+
+@pytest.mark.parametrize(
+    "message,code,retryable",
+    [
+        ("401 invalid api key", "MODEL_AUTH_ERROR", False),
+        ("503 service unavailable", "MODEL_UNAVAILABLE", True),
+        ("connection refused", "MODEL_UNAVAILABLE", True),
+    ],
+)
+def test_model_provider_failures_have_stable_semantics(message, code, retryable):
+    error = classify_exception(RuntimeError(message), source="model")
+
+    assert error.code == code
+    assert error.retryable is retryable

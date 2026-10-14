@@ -4,11 +4,12 @@ Docstrings are written for the LLM to read when deciding which tool to call.
 """
 import logging
 import json
+import time
 import uuid
 from contextlib import contextmanager
 from contextvars import ContextVar
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 
 from src.backend.db import Order, Payment, Product, Refund, ShipmentEvent, get_engine, get_session_factory, init_db
 from src.backend.seed import seed as _seed_data
@@ -37,6 +38,23 @@ def configure_db(engine) -> None:
     _engine = engine
     init_db(_engine)
     _SessionLocal = get_session_factory(_engine)
+
+
+def get_database_status() -> dict:
+    """Return a safe connectivity check without exposing database details."""
+
+    started = time.monotonic()
+    try:
+        with _SessionLocal() as session:
+            session.execute(text("SELECT 1"))
+    except Exception:
+        logger.exception("Database readiness check failed")
+        return {"ready": False, "message": "数据库连接失败"}
+    return {
+        "ready": True,
+        "message": "数据库连接正常",
+        "latency_ms": round((time.monotonic() - started) * 1000, 2),
+    }
 
 
 @contextmanager

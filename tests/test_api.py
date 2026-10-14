@@ -38,6 +38,63 @@ def test_health():
     assert response.json() == {"status": "ok"}
 
 
+def test_model_status_is_sanitized_and_does_not_probe_provider(monkeypatch):
+    calls = {"count": 0}
+
+    def fake_status():
+        calls["count"] += 1
+        return {
+            "ready": True,
+            "configured": True,
+            "live_verified": False,
+            "message": "模型配置已加载，尚未执行实时请求",
+            "purpose": "default",
+            "max_attempts": 2,
+            "request_timeout": 10,
+            "providers": [{"provider": "openai", "model": "gpt-test", "slot": 1, "custom_base_url": False}],
+            "active": None,
+            "last_error": None,
+        }
+
+    monkeypatch.setattr(api, "get_model_status", fake_status)
+    response = client.get("/models/status")
+
+    assert response.status_code == 200
+    assert response.json()["providers"][0]["model"] == "gpt-test"
+    assert "api_key" not in response.text.lower()
+    assert calls["count"] == 1
+
+
+def test_readiness_checks_database_and_model_configuration(monkeypatch):
+    monkeypatch.setattr(api.tools, "get_database_status", lambda: {
+        "ready": True, "message": "数据库连接正常", "latency_ms": 1.2,
+    })
+    monkeypatch.setattr(api, "get_model_status", lambda: {
+        "ready": True, "configured": True, "message": "模型配置已加载",
+    })
+
+    response = client.get("/ready")
+
+    assert response.status_code == 200
+    assert response.json()["ready"] is True
+    assert response.json()["checks"]["database"]["latency_ms"] == 1.2
+
+
+def test_readiness_returns_503_when_model_is_not_configured(monkeypatch):
+    monkeypatch.setattr(api.tools, "get_database_status", lambda: {
+        "ready": True, "message": "数据库连接正常", "latency_ms": 1.2,
+    })
+    monkeypatch.setattr(api, "get_model_status", lambda: {
+        "ready": False, "configured": False, "message": "未配置可用模型",
+    })
+
+    response = client.get("/ready")
+
+    assert response.status_code == 503
+    assert response.json()["status"] == "not_ready"
+    assert response.json()["checks"]["model_gateway"]["ready"] is False
+
+
 def test_chat_returns_agent_reply_and_trace(monkeypatch):
     monkeypatch.setattr(api, "run_orchestrator", lambda *_a, **_k: FAKE_RESULT)
 
