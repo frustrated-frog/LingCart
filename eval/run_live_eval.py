@@ -33,6 +33,10 @@ def fingerprint(value):
     return hashlib.sha256(json.dumps(value, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
 
 
+def _files_fingerprint(paths):
+    return fingerprint({str(path.relative_to(ROOT)): path.read_text() for path in paths if path.exists()})
+
+
 def environment_manifest(dataset, execution_mode):
     try:
         revision = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip()
@@ -40,12 +44,16 @@ def environment_manifest(dataset, execution_mode):
         revision = None
     prompt_files = sorted(set(['src/orchestrator.py', 'src/planner.py', 'src/adaptive.py', 'src/adaptive_decision.py', 'src/adaptive_goals.py', 'src/request_audit.py'] +
                              [str(p.relative_to(ROOT)) for p in (ROOT / 'src/agents').glob('*.py')]))
+    evaluator_files = [ROOT / name for name in ('eval/run_live_eval.py', 'eval/run_task_eval.py', 'eval/adaptive_checks.py')]
+    business_files = [ROOT / name for name in ('src/tools.py', 'src/backend/db.py', 'src/backend/seed.py')]
     return {'source_revision': revision, 'dataset_sha256': fingerprint(dataset), 'execution_mode': execution_mode,
-            'source_tree_sha256': fingerprint({str(p.relative_to(ROOT)): p.read_text()
-                for p in sorted([*(ROOT / 'src').rglob('*.py'), *(ROOT / 'eval').glob('*.py')])}),
+            'source_tree_sha256': _files_fingerprint(sorted([*(ROOT / 'src').rglob('*.py'), *(ROOT / 'eval').glob('*.py'),
+                                                             *(ROOT / 'configs/harness').glob('*.json')])),
             'prompt_source_sha256': {name: fingerprint([ast.dump(node.value) for node in ast.walk(ast.parse((ROOT / name).read_text()))
                 if isinstance(node, (ast.Assign, ast.AnnAssign)) and any('prompt' in getattr(target, 'id', '').lower() for target in (node.targets if isinstance(node, ast.Assign) else [node.target]))])
                 for name in prompt_files if (ROOT / name).exists()},
+            'evaluation_protocol_sha256': _files_fingerprint(evaluator_files),
+            'business_protocol_sha256': _files_fingerprint(business_files),
             'business_environment': 'fresh_demo_sqlite_per_sample', 'pricing_verified': False}
 
 
@@ -73,8 +81,10 @@ def summarize(samples, repeats):
             'tokens': tokens, 'monetary_cost': None}
 
 
-def evaluate(dataset, *, repeats=3, split='all', execution_mode='auto', runner=None, readiness=None):
+def evaluate(dataset, *, repeats=3, split='all', execution_mode='auto', harness_profile=None,
+             interventions=(), runner=None, readiness=None):
     """runner 注入只用于基础设施测试，报告会明确标识为 test_harness。"""
+    injected_runner = runner is not None
     if not 1 <= repeats <= 10:
         raise ValueError('重复次数必须在 1 至 10 之间')
     suite = dataset.get('suite', 'support')
@@ -88,9 +98,20 @@ def evaluate(dataset, *, repeats=3, split='all', execution_mode='auto', runner=N
     from src.llm import get_model_status
     from src.runtime import BudgetLimits
     from src.trace_projector import project_trace
-    report = {'schema_version': 1, 'generated_at': datetime.now(UTC).isoformat(),
-              'execution_source': 'test_harness' if runner is not None else 'live_provider',
+    report = {'schema_version': 2, 'generated_at': datetime.now(UTC).isoformat(),
+              'execution_source': 'test_harness' if injected_runner else 'live_provider',
               'manifest': {**environment_manifest(dataset, execution_mode), 'suite': suite, 'split': split, 'repeats': repeats}, 'samples': []}
+    if not injected_runner:
+        from src.harness import get_runner
+        profile_id = harness_profile or ('adaptive-v1' if execution_mode == 'adaptive' else 'baseline-v1')
+        runner = get_runner(profile_id)
+        if runner.execution_mode != execution_mode:
+            raise ValueError(f'Harness Profile {profile_id} 的执行模式不是 {execution_mode}')
+        report['manifest']['harness_profile'] = runner.profile.provenance()
+    else:
+        report['manifest']['harness_profile'] = getattr(getattr(runner, 'profile', None), 'provenance', lambda: {
+            'profile_id': 'injected-test-runner', 'profile_version': 'unversioned', 'profile_sha256': None})()
+    report['manifest']['intervention'] = {'changes': list(interventions)}
     status = readiness if readiness is not None else get_model_status()
     report['providers'] = [{key: p.get(key) for key in ('provider', 'model', 'slot', 'custom_base_url', 'thinking_mode', 'reasoning_effort', 'strict_tools')} for p in status.get('providers', [])]
     from src.model_gateway import load_gateway_config, ModelGatewayConfigurationError
@@ -102,15 +123,9 @@ def evaluate(dataset, *, repeats=3, split='all', execution_mode='auto', runner=N
                 'thinking_mode': p.thinking_mode, 'reasoning_effort': p.reasoning_effort, 'strict_tools': p.strict_tools} for p in config.providers]
         except ModelGatewayConfigurationError:
             report['manifest']['purpose_models'][purpose] = None
-    if not status.get('configured') and runner is None:
+    if not status.get('configured') and not injected_runner:
         report.update(status='NOT_RUN', reason='MODEL_NOT_CONFIGURED', message='尚未配置模型，未执行真实评测', metrics=summarize([], repeats))
         return report
-    if runner is None:
-        if execution_mode == 'adaptive':
-            from src.adaptive import run_adaptive
-            runner = run_adaptive
-        else:
-            runner = runtime['orchestrator'].run_orchestrator
     limits = BudgetLimits.adaptive() if suite == 'adaptive' else BudgetLimits(max_seconds=45)
     report['manifest']['limits'] = limits.__dict__
     selected = [case for case in dataset['cases'] if split == 'all' or case['split'] == split]
@@ -224,9 +239,16 @@ def evaluate_gate(report, baseline=None):
         validate_samples(baseline, '基线')
         if baseline.get('status') != 'COMPLETED' or not baseline.get('live_verified') or baseline.get('execution_source') != 'live_provider':
             failures.append('基线必须来自已完成的真实模型评测')
-        for key in ('dataset_sha256', 'execution_mode', 'suite', 'prompt_source_sha256', 'source_tree_sha256', 'limits', 'split', 'repeats', 'purpose_models', 'selected_cases'):
+        for key in ('dataset_sha256', 'suite', 'evaluation_protocol_sha256', 'business_protocol_sha256',
+                    'business_environment', 'limits', 'split', 'repeats', 'purpose_models', 'selected_cases'):
             if baseline.get('manifest', {}).get(key) != report.get('manifest', {}).get(key):
                 failures.append(f'基线 {key} 不一致，不能直接比较')
+        change_keys = ('execution_mode', 'prompt_source_sha256', 'source_tree_sha256', 'harness_profile')
+        changed = [key for key in change_keys
+                   if baseline.get('manifest', {}).get(key) != report.get('manifest', {}).get(key)]
+        interventions = report.get('manifest', {}).get('intervention', {}).get('changes', [])
+        if changed and not interventions:
+            failures.append('候选实现改变了 ' + '、'.join(changed) + '，但没有声明实验干预')
         if baseline.get('providers') != report.get('providers'):
             failures.append('基线模型配置不一致')
         for key in ('pass_at_1', 'all_repeats_success_rate'):
@@ -245,6 +267,8 @@ def main(argv=None):
     parser.add_argument('--repeats', type=int, default=3)
     parser.add_argument('--split', choices=['all', 'dev', 'test'], default='all')
     parser.add_argument('--execution-mode', choices=['auto', 'adaptive'], default='auto')
+    parser.add_argument('--harness-profile', help='使用已注册的 Harness Profile，例如 baseline-v1')
+    parser.add_argument('--intervention', action='append', default=[], help='声明候选相对基线改变的机制，可重复传入')
     parser.add_argument('--output', type=Path)
     parser.add_argument('--baseline', type=Path)
     parser.add_argument('--gate', action='store_true')
@@ -257,7 +281,8 @@ def main(argv=None):
                   'cases': 20, 'repeats': args.repeats, 'planned_samples': len([c for c in dataset['cases'] if args.split == 'all' or c['split'] == args.split]) * args.repeats,
                   'message': '任务集校验通过，未导入应用、未调用模型'}
     else:
-        report = evaluate(dataset, repeats=args.repeats, split=args.split, execution_mode=args.execution_mode)
+        report = evaluate(dataset, repeats=args.repeats, split=args.split, execution_mode=args.execution_mode,
+                          harness_profile=args.harness_profile, interventions=args.intervention)
     failures = evaluate_gate(report, json.loads(args.baseline.read_text()) if args.baseline else None) if args.gate else []
     if args.gate:
         report['gate'] = {'passed': not failures, 'failures': failures}

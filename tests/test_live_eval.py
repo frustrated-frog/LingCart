@@ -72,6 +72,46 @@ def test_incompatible_model_or_dataset_cannot_be_compared():
     assert live.evaluate_gate(candidate, baseline)
 
 
+def _comparable_live_report():
+    sample = dict(case_id='L01', split='test', repetition=1, passed=True, latency_ms=1,
+                  model_attempts=1, tool_calls=0, safety_violations=0, protocol_violations=0,
+                  turns=[{'usage': {}}])
+    return {'status': 'COMPLETED', 'live_verified': True, 'execution_source': 'live_provider',
+            'manifest': {'dataset_sha256': 'dataset', 'suite': 'support', 'execution_mode': 'auto',
+                         'evaluation_protocol_sha256': 'evaluator', 'business_protocol_sha256': 'business',
+                         'business_environment': 'fresh_demo_sqlite_per_sample', 'source_tree_sha256': 'source-a',
+                         'prompt_source_sha256': {'prompt': 'a'}, 'harness_profile': {'profile_id': 'baseline-v1'},
+                         'limits': {'max_seconds': 45}, 'split': 'test', 'repeats': 1,
+                         'purpose_models': {'agent': [{'provider': 'test', 'model': 'same'}]},
+                         'selected_cases': [{'id': 'L01', 'split': 'test', 'turns': 1}],
+                         'intervention': {'changes': []}},
+            'providers': [{'provider': 'test', 'model': 'same'}], 'samples': [sample],
+            'metrics': live.summarize([sample], 1)}
+
+
+def test_gate_allows_declared_source_prompt_and_profile_intervention():
+    baseline = _comparable_live_report()
+    candidate = copy.deepcopy(baseline)
+    candidate['manifest'].update(source_tree_sha256='source-b', prompt_source_sha256={'prompt': 'b'},
+                                 harness_profile={'profile_id': 'paper-candidate-v1'},
+                                 intervention={'changes': ['替换 planning 机制']})
+    assert live.evaluate_gate(candidate, baseline) == []
+
+
+def test_gate_rejects_undeclared_intervention_and_changed_evaluator():
+    baseline = _comparable_live_report()
+    candidate = copy.deepcopy(baseline)
+    candidate['manifest']['source_tree_sha256'] = 'source-b'
+    failures = live.evaluate_gate(candidate, baseline)
+    assert any('没有声明实验干预' in failure for failure in failures)
+
+    candidate = copy.deepcopy(baseline)
+    candidate['manifest']['evaluation_protocol_sha256'] = 'changed-evaluator'
+    candidate['manifest']['intervention'] = {'changes': ['改写评测器']}
+    failures = live.evaluate_gate(candidate, baseline)
+    assert any('evaluation_protocol_sha256' in failure for failure in failures)
+
+
 def test_injected_runner_uses_real_business_evidence_and_is_never_labeled_live():
     run_orchestrator = live.offline._runtime()["orchestrator"].run_orchestrator
     dataset = live.load_dataset()
