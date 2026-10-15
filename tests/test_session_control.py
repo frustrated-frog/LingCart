@@ -127,6 +127,41 @@ def test_async_follow_up_is_durable_and_sequential(database):
     raise AssertionError('后续任务未启动')
 
 
+def test_queued_follow_up_inherits_the_original_harness_profile(database):
+    from src.harness import get_runner
+
+    store = ControlStore()
+    selected = get_runner('adaptive-objective-context-v1')
+    first = True
+
+    def runner(message, **kwargs):
+        nonlocal first
+        if first:
+            first = False
+            context = current_runtime()
+            store.enqueue('profile-queue', context.run_id, 'FOLLOW_UP', message='查询订单1003状态',
+                          command_id='profile-follow-up', expected_revision=0)
+        return selected(message, **kwargs)
+
+    runner.harness_runner = selected
+    runner.execution_mode = selected.execution_mode
+    parent = SessionController(store=store).start(
+        'profile-queue', '查询订单1002状态', runner=runner,
+        harness_profile='adaptive-objective-context-v1')
+    assert wait_result(parent['run_id'])['harness']['profile_id'] == 'adaptive-objective-context-v1'
+
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        command = store.commands('profile-queue', parent['run_id'])[0]
+        if command.get('outcome'):
+            child = wait_result(command['outcome']['run_id'])
+            assert child['harness']['profile_id'] == 'adaptive-objective-context-v1'
+            assert child['trace'][0]['args']['order_id'] == 1003
+            return
+        time.sleep(.01)
+    raise AssertionError('后续任务未继承 Harness Profile')
+
+
 def test_cancel_survives_process_interruption(database):
     class Crash(BaseException): pass
     def runner(message, **kwargs):

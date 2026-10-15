@@ -15,18 +15,22 @@ integration:
   layer: planning # planning | context | memory | verification | tool_protocol | engine | runtime
   baseline_profile: adaptive-v1
   candidate_profile: paper-short-name-v1
+  experiment_contract: research/experiments/paper-short-name-v1/experiment-spec.json
   declared_changes:
     - "替换或新增的具体机制"
 evaluation:
-  dataset: eval/live_tasks.json
-  split: test
+  dataset: eval/adaptive_tasks.json
+  tuning_split: dev
+  evaluation_split: test
   repeats: 3
   primary_metrics:
-    - all_repeats_success_rate
+    - tokens.total_tokens
   guard_metrics:
+    - pass_at_1
+    - all_repeats_success_rate
     - safety_violations
     - protocol_violations
-  success_criteria: "主指标不低于基线，且明确改善目标能力；安全与协议违规保持为零。"
+  success_criteria: "只在 dev 上调参；以 test 作为留出集。主指标达到契约阈值，正确率和稳定性不退化，安全与协议违规保持为零。"
 decision:
   status: proposed # proposed | running | promoted | rejected | inconclusive
   summary: "实验结束后填写。"

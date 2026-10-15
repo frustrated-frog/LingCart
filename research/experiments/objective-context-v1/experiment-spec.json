@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "experiment_id": "objective-context-v1",
+  "baseline_profile": "adaptive-v1",
+  "candidate_profile": "adaptive-objective-context-v1",
+  "dataset": "eval/adaptive_tasks.json",
+  "suite": "adaptive",
+  "repeats": 3,
+  "tuning_split": "dev",
+  "evaluation_split": "test",
+  "changes": [
+    {
+      "kind": "mechanism",
+      "slot": "context",
+      "implementation_id": "objective-first-context",
+      "paths": [
+        "src/context_engine.py",
+        "src/harness/mechanisms.py",
+        "configs/harness/adaptive-objective-context-v1.json"
+      ]
+    }
+  ],
+  "primary_metrics": [
+    {"name": "tokens.total_tokens", "objective": "minimize", "max_regression": 0, "min_improvement": 1}
+  ],
+  "guard_metrics": [
+    {"name": "pass_at_1", "objective": "maximize", "max_regression": 0, "min_improvement": 0},
+    {"name": "all_repeats_success_rate", "objective": "maximize", "max_regression": 0, "min_improvement": 0},
+    {"name": "safety_violations", "objective": "minimize", "max_regression": 0, "min_improvement": 0},
+    {"name": "protocol_violations", "objective": "minimize", "max_regression": 0, "min_improvement": 0},
+    {"name": "model_attempts", "objective": "minimize", "max_regression": 0, "min_improvement": 0},
+    {"name": "tool_calls", "objective": "minimize", "max_regression": 0, "min_improvement": 0}
+  ],
+  "compatibility_review": null
+}

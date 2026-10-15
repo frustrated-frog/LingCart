@@ -15,6 +15,18 @@ def test_adaptive_suite_is_separate_and_dry_run_never_loads_application(monkeypa
         specialized.main(['--execution-mode', 'auto'])
 
 
+def test_first_context_experiment_dry_run_is_bound_to_holdout_protocol(monkeypatch, capsys):
+    monkeypatch.setattr(live.offline, '_runtime', lambda: (_ for _ in ()).throw(AssertionError('不能导入应用')))
+    spec = live.ROOT / 'research/experiments/objective-context-v1/experiment-spec.json'
+
+    assert specialized.main(['--dry-run', '--split', 'test', '--repeats', '3',
+                             '--harness-profile', 'adaptive-objective-context-v1',
+                             '--experiment-spec', str(spec)]) == 0
+    output = capsys.readouterr().out
+    assert 'objective-context-v1' in output
+    assert '未调用模型' in output
+
+
 def test_adaptive_dataset_contains_no_model_scripts_and_covers_regressions():
     dataset = live.load_dataset(specialized.DATASET)
     assert len(dataset['cases']) == 20

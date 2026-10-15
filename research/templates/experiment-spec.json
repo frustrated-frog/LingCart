@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "experiment_id": "paper-short-name-v1",
+  "baseline_profile": "adaptive-v1",
+  "candidate_profile": "paper-short-name-v1",
+  "dataset": "eval/adaptive_tasks.json",
+  "suite": "adaptive",
+  "repeats": 3,
+  "tuning_split": "dev",
+  "evaluation_split": "test",
+  "changes": [
+    {
+      "kind": "mechanism",
+      "slot": "context",
+      "implementation_id": "paper-context-v1",
+      "paths": [
+        "src/harness/mechanisms.py",
+        "configs/harness/paper-short-name-v1.json"
+      ]
+    }
+  ],
+  "primary_metrics": [
+    {
+      "name": "tokens.total_tokens",
+      "objective": "minimize",
+      "max_regression": 0,
+      "min_improvement": 1
+    }
+  ],
+  "guard_metrics": [
+    {"name": "pass_at_1", "objective": "maximize", "max_regression": 0, "min_improvement": 0},
+    {"name": "all_repeats_success_rate", "objective": "maximize", "max_regression": 0, "min_improvement": 0},
+    {"name": "safety_violations", "objective": "minimize", "max_regression": 0, "min_improvement": 0},
+    {"name": "protocol_violations", "objective": "minimize", "max_regression": 0, "min_improvement": 0},
+    {"name": "latency_ms.p95", "objective": "minimize", "max_regression": 5000, "min_improvement": 0}
+  ],
+  "compatibility_review": null
+}

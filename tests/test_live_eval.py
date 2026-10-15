@@ -72,44 +72,105 @@ def test_incompatible_model_or_dataset_cannot_be_compared():
     assert live.evaluate_gate(candidate, baseline)
 
 
-def _comparable_live_report():
+def _comparable_live_report(profile_id='adaptive-v1', *, model_attempts=1):
+    from src.harness import get_runner
+
     sample = dict(case_id='L01', split='test', repetition=1, passed=True, latency_ms=1,
-                  model_attempts=1, tool_calls=0, safety_violations=0, protocol_violations=0,
-                  turns=[{'usage': {}}])
+                  model_attempts=model_attempts, tool_calls=0, safety_violations=0, protocol_violations=0,
+                  adaptive_verified=True, turns=[{'usage': {}}])
+    source_files = {'src/context_engine.py': 'same', 'src/runtime.py': 'same'}
+    kernel_sha = live.fingerprint({name: source_files.get(name) for name in sorted(live.KERNEL_FILES)})
     return {'status': 'COMPLETED', 'live_verified': True, 'execution_source': 'live_provider',
-            'manifest': {'dataset_sha256': 'dataset', 'suite': 'support', 'execution_mode': 'auto',
+            'manifest': {'dataset_path': 'eval/adaptive_tasks.json', 'dataset_sha256': 'dataset',
+                         'suite': 'adaptive', 'execution_mode': 'adaptive',
                          'evaluation_protocol_sha256': 'evaluator', 'business_protocol_sha256': 'business',
-                         'business_environment': 'fresh_demo_sqlite_per_sample', 'source_tree_sha256': 'source-a',
-                         'prompt_source_sha256': {'prompt': 'a'}, 'harness_profile': {'profile_id': 'baseline-v1'},
+                         'business_environment': 'fresh_demo_sqlite_per_sample',
+                         'source_tree_sha256': live.fingerprint(source_files),
+                         'source_files_sha256': source_files, 'kernel_source_sha256': kernel_sha,
+                         'prompt_source_sha256': {'src/adaptive_decision.py': 'a'},
+                         'harness_profile': get_runner(profile_id).provenance(),
                          'limits': {'max_seconds': 45}, 'split': 'test', 'repeats': 1,
                          'purpose_models': {'agent': [{'provider': 'test', 'model': 'same'}]},
                          'selected_cases': [{'id': 'L01', 'split': 'test', 'turns': 1}],
-                         'intervention': {'changes': []}},
+                         'experiment_spec': None},
             'providers': [{'provider': 'test', 'model': 'same'}], 'samples': [sample],
             'metrics': live.summarize([sample], 1)}
 
 
-def test_gate_allows_declared_source_prompt_and_profile_intervention():
+def _experiment_spec(*, minimum=0, paths=None):
+    return {'schema_version': 1, 'experiment_id': 'context-test-v1', 'baseline_profile': 'adaptive-v1',
+            'candidate_profile': 'adaptive-objective-context-v1',
+            'dataset': 'eval/adaptive_tasks.json', 'suite': 'adaptive', 'repeats': 1,
+            'tuning_split': 'dev',
+            'evaluation_split': 'test',
+            'changes': [{'kind': 'mechanism', 'slot': 'context', 'implementation_id': 'objective-first-context',
+                         'paths': paths or ['src/context_engine.py', 'src/harness/mechanisms.py']}],
+            'primary_metrics': [{'name': 'model_attempts', 'objective': 'minimize',
+                                 'max_regression': 0, 'min_improvement': minimum}],
+            'guard_metrics': [
+                {'name': 'pass_at_1', 'objective': 'maximize', 'max_regression': 0, 'min_improvement': 0},
+                {'name': 'all_repeats_success_rate', 'objective': 'maximize', 'max_regression': 0, 'min_improvement': 0},
+                {'name': 'safety_violations', 'objective': 'minimize', 'max_regression': 0, 'min_improvement': 0},
+                {'name': 'protocol_violations', 'objective': 'minimize', 'max_regression': 0, 'min_improvement': 0}],
+            'compatibility_review': None}
+
+
+def test_gate_allows_structured_mechanism_intervention():
     baseline = _comparable_live_report()
     candidate = copy.deepcopy(baseline)
-    candidate['manifest'].update(source_tree_sha256='source-b', prompt_source_sha256={'prompt': 'b'},
-                                 harness_profile={'profile_id': 'paper-candidate-v1'},
-                                 intervention={'changes': ['替换 planning 机制']})
+    candidate['manifest'].update(harness_profile=_comparable_live_report(
+        'adaptive-objective-context-v1')['manifest']['harness_profile'], experiment_spec=_experiment_spec())
     assert live.evaluate_gate(candidate, baseline) == []
 
 
 def test_gate_rejects_undeclared_intervention_and_changed_evaluator():
     baseline = _comparable_live_report()
     candidate = copy.deepcopy(baseline)
-    candidate['manifest']['source_tree_sha256'] = 'source-b'
+    candidate['manifest']['harness_profile'] = _comparable_live_report(
+        'adaptive-objective-context-v1')['manifest']['harness_profile']
     failures = live.evaluate_gate(candidate, baseline)
-    assert any('没有声明实验干预' in failure for failure in failures)
+    assert any('没有结构化实验契约' in failure for failure in failures)
 
     candidate = copy.deepcopy(baseline)
     candidate['manifest']['evaluation_protocol_sha256'] = 'changed-evaluator'
-    candidate['manifest']['intervention'] = {'changes': ['改写评测器']}
+    candidate['manifest']['harness_profile'] = _comparable_live_report(
+        'adaptive-objective-context-v1')['manifest']['harness_profile']
+    candidate['manifest']['experiment_spec'] = _experiment_spec()
     failures = live.evaluate_gate(candidate, baseline)
     assert any('evaluation_protocol_sha256' in failure for failure in failures)
+
+
+def test_gate_rejects_unapproved_source_and_kernel_changes():
+    baseline = _comparable_live_report()
+    candidate = _comparable_live_report('adaptive-objective-context-v1')
+    candidate['manifest']['experiment_spec'] = _experiment_spec()
+    candidate['manifest']['source_tree_sha256'] = 'changed'
+    candidate['manifest']['source_files_sha256']['src/runtime.py'] = 'changed'
+    failures = live.evaluate_gate(candidate, baseline)
+    assert any('未声明的源码变更' in failure for failure in failures)
+    assert any('Stable Kernel' in failure for failure in failures)
+
+
+def test_gate_applies_declared_cost_metric_threshold():
+    baseline = _comparable_live_report(model_attempts=1)
+    candidate = _comparable_live_report('adaptive-objective-context-v1', model_attempts=2)
+    candidate['manifest']['experiment_spec'] = _experiment_spec(minimum=1)
+    failures = live.evaluate_gate(candidate, baseline)
+    assert any('model_attempts' in failure and ('退化' in failure or '未达到' in failure) for failure in failures)
+
+
+def test_gate_requires_declared_mechanism_source_files_and_manifest_integrity():
+    baseline = _comparable_live_report()
+    candidate = _comparable_live_report('adaptive-objective-context-v1')
+    candidate['manifest']['experiment_spec'] = _experiment_spec(paths=['src/context_engine.py'])
+    failures = live.evaluate_gate(candidate, baseline)
+    assert any('机制源码未完整纳入变更范围' in failure for failure in failures)
+
+    candidate = _comparable_live_report('adaptive-objective-context-v1')
+    candidate['manifest']['experiment_spec'] = _experiment_spec()
+    candidate['manifest']['source_tree_sha256'] = 'forged'
+    failures = live.evaluate_gate(candidate, baseline)
+    assert any('源码树指纹与逐文件指纹不一致' in failure for failure in failures)
 
 
 def test_injected_runner_uses_real_business_evidence_and_is_never_labeled_live():

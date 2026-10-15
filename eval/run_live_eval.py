@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import argparse
-import ast
 from collections import defaultdict
 from datetime import UTC, datetime
 import hashlib
@@ -15,11 +14,17 @@ import uuid
 
 try:
     from eval import run_task_eval as offline
+    from eval.experiment_contract import ExperimentSpec
 except ModuleNotFoundError:
     import run_task_eval as offline
+    from experiment_contract import ExperimentSpec
 
 ROOT = Path(__file__).resolve().parents[1]
 DATASET = Path(__file__).with_name('live_tasks.json')
+KERNEL_FILES = {
+    'src/runtime.py', 'src/runtime_state.py', 'src/persistence.py', 'src/durable.py',
+    'src/session_control.py', 'src/direct_executor.py', 'src/tools.py', 'src/backend/db.py',
+}
 
 
 def load_dataset(path=DATASET):
@@ -37,20 +42,45 @@ def _files_fingerprint(paths):
     return fingerprint({str(path.relative_to(ROOT)): path.read_text() for path in paths if path.exists()})
 
 
-def environment_manifest(dataset, execution_mode):
+def _source_files_manifest(paths):
+    return {str(path.relative_to(ROOT)): hashlib.sha256(path.read_bytes()).hexdigest()
+            for path in paths if path.exists()}
+
+
+def _repo_relative(path):
+    try:
+        return str(Path(path).resolve().relative_to(ROOT))
+    except ValueError:
+        return str(Path(path).resolve())
+
+
+def _prompt_fingerprint(path):
+    """Fingerprint every literal that can become prompt text, including f-strings."""
+    import ast
+
+    values = [node.value for node in ast.walk(ast.parse(path.read_text()))
+              if isinstance(node, ast.Constant) and isinstance(node.value, str)]
+    return fingerprint(values)
+
+
+def environment_manifest(dataset, execution_mode, dataset_path=DATASET):
     try:
         revision = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip()
     except (OSError, subprocess.CalledProcessError):
         revision = None
     prompt_files = sorted(set(['src/orchestrator.py', 'src/planner.py', 'src/adaptive.py', 'src/adaptive_decision.py', 'src/adaptive_goals.py', 'src/request_audit.py'] +
                              [str(p.relative_to(ROOT)) for p in (ROOT / 'src/agents').glob('*.py')]))
-    evaluator_files = [ROOT / name for name in ('eval/run_live_eval.py', 'eval/run_task_eval.py', 'eval/adaptive_checks.py')]
+    evaluator_files = [ROOT / name for name in ('eval/run_live_eval.py', 'eval/run_task_eval.py',
+                                                'eval/adaptive_checks.py', 'eval/experiment_contract.py')]
     business_files = [ROOT / name for name in ('src/tools.py', 'src/backend/db.py', 'src/backend/seed.py')]
-    return {'source_revision': revision, 'dataset_sha256': fingerprint(dataset), 'execution_mode': execution_mode,
-            'source_tree_sha256': _files_fingerprint(sorted([*(ROOT / 'src').rglob('*.py'), *(ROOT / 'eval').glob('*.py'),
-                                                             *(ROOT / 'configs/harness').glob('*.json')])),
-            'prompt_source_sha256': {name: fingerprint([ast.dump(node.value) for node in ast.walk(ast.parse((ROOT / name).read_text()))
-                if isinstance(node, (ast.Assign, ast.AnnAssign)) and any('prompt' in getattr(target, 'id', '').lower() for target in (node.targets if isinstance(node, ast.Assign) else [node.target]))])
+    source_files = sorted([*(ROOT / 'src').rglob('*.py'), *(ROOT / 'eval').glob('*.py'),
+                           *(ROOT / 'configs/harness').glob('*.json')])
+    file_hashes = _source_files_manifest(source_files)
+    return {'source_revision': revision, 'dataset_path': _repo_relative(dataset_path),
+            'dataset_sha256': fingerprint(dataset), 'execution_mode': execution_mode,
+            'source_tree_sha256': fingerprint(file_hashes), 'source_files_sha256': file_hashes,
+            'kernel_source_sha256': fingerprint({name: file_hashes.get(name) for name in sorted(KERNEL_FILES)}),
+            'prompt_source_sha256': {name: _prompt_fingerprint(ROOT / name)
                 for name in prompt_files if (ROOT / name).exists()},
             'evaluation_protocol_sha256': _files_fingerprint(evaluator_files),
             'business_protocol_sha256': _files_fingerprint(business_files),
@@ -82,7 +112,7 @@ def summarize(samples, repeats):
 
 
 def evaluate(dataset, *, repeats=3, split='all', execution_mode='auto', harness_profile=None,
-             interventions=(), runner=None, readiness=None):
+             experiment_spec=None, dataset_path=DATASET, runner=None, readiness=None):
     """runner 注入只用于基础设施测试，报告会明确标识为 test_harness。"""
     injected_runner = runner is not None
     if not 1 <= repeats <= 10:
@@ -100,7 +130,8 @@ def evaluate(dataset, *, repeats=3, split='all', execution_mode='auto', harness_
     from src.trace_projector import project_trace
     report = {'schema_version': 2, 'generated_at': datetime.now(UTC).isoformat(),
               'execution_source': 'test_harness' if injected_runner else 'live_provider',
-              'manifest': {**environment_manifest(dataset, execution_mode), 'suite': suite, 'split': split, 'repeats': repeats}, 'samples': []}
+              'manifest': {**environment_manifest(dataset, execution_mode, dataset_path),
+                           'suite': suite, 'split': split, 'repeats': repeats}, 'samples': []}
     if not injected_runner:
         from src.harness import get_runner
         profile_id = harness_profile or ('adaptive-v1' if execution_mode == 'adaptive' else 'baseline-v1')
@@ -109,9 +140,24 @@ def evaluate(dataset, *, repeats=3, split='all', execution_mode='auto', harness_
             raise ValueError(f'Harness Profile {profile_id} 的执行模式不是 {execution_mode}')
         report['manifest']['harness_profile'] = runner.provenance()
     else:
-        report['manifest']['harness_profile'] = getattr(getattr(runner, 'profile', None), 'provenance', lambda: {
+        selected = getattr(runner, 'harness_runner', runner)
+        report['manifest']['harness_profile'] = getattr(selected, 'provenance', lambda: {
             'profile_id': 'injected-test-runner', 'profile_version': 'unversioned', 'profile_sha256': None})()
-    report['manifest']['intervention'] = {'changes': list(interventions)}
+    if experiment_spec is not None:
+        experiment_spec = (experiment_spec if isinstance(experiment_spec, ExperimentSpec) else
+                           ExperimentSpec.model_validate_json(json.dumps(experiment_spec, ensure_ascii=False)))
+        actual_profile = report['manifest']['harness_profile'].get('profile_id')
+        if actual_profile != experiment_spec.candidate_profile:
+            raise ValueError(f'实验候选要求 {experiment_spec.candidate_profile}，实际运行 {actual_profile}')
+        if report['manifest']['dataset_path'] != experiment_spec.dataset or suite != experiment_spec.suite:
+            raise ValueError('实验任务集或 suite 与契约不一致')
+        if repeats != experiment_spec.repeats:
+            raise ValueError(f'实验必须按契约重复 {experiment_spec.repeats} 次')
+        if split != experiment_spec.evaluation_split:
+            raise ValueError(f'实验结论必须使用未参与调参的 {experiment_spec.evaluation_split} 分组')
+        report['manifest']['experiment_spec'] = experiment_spec.model_dump(mode='json')
+    else:
+        report['manifest']['experiment_spec'] = None
     status = readiness if readiness is not None else get_model_status()
     report['providers'] = [{key: p.get(key) for key in ('provider', 'model', 'slot', 'custom_base_url', 'thinking_mode', 'reasoning_effort', 'strict_tools')} for p in status.get('providers', [])]
     from src.model_gateway import load_gateway_config, ModelGatewayConfigurationError
@@ -241,24 +287,144 @@ def evaluate_gate(report, baseline=None):
         validate_samples(baseline, '基线')
         if baseline.get('status') != 'COMPLETED' or not baseline.get('live_verified') or baseline.get('execution_source') != 'live_provider':
             failures.append('基线必须来自已完成的真实模型评测')
-        for key in ('dataset_sha256', 'suite', 'evaluation_protocol_sha256', 'business_protocol_sha256',
+        for key in ('dataset_path', 'dataset_sha256', 'suite', 'evaluation_protocol_sha256', 'business_protocol_sha256',
                     'business_environment', 'limits', 'split', 'repeats', 'purpose_models', 'selected_cases'):
             if baseline.get('manifest', {}).get(key) != report.get('manifest', {}).get(key):
                 failures.append(f'基线 {key} 不一致，不能直接比较')
+        if baseline.get('providers') != report.get('providers'):
+            failures.append('基线模型配置不一致')
         change_keys = ('execution_mode', 'prompt_source_sha256', 'source_tree_sha256', 'harness_profile')
         changed = [key for key in change_keys
                    if baseline.get('manifest', {}).get(key) != report.get('manifest', {}).get(key)]
-        interventions = report.get('manifest', {}).get('intervention', {}).get('changes', [])
-        if changed and not interventions:
-            failures.append('候选实现改变了 ' + '、'.join(changed) + '，但没有声明实验干预')
-        if baseline.get('providers') != report.get('providers'):
-            failures.append('基线模型配置不一致')
-        for key in ('pass_at_1', 'all_repeats_success_rate'):
-            value, previous = metrics.get(key), baseline.get('metrics', {}).get(key)
-            if value is None or previous is None or value < previous:
-                failures.append(f'{key} 低于基线或缺少数据')
+        experiment_spec = report.get('manifest', {}).get('experiment_spec')
+        if changed and not experiment_spec:
+            failures.append('候选实现改变了 ' + '、'.join(changed) + '，但没有结构化实验契约')
+        if experiment_spec:
+            failures.extend(_validate_experiment_contract(report, baseline, experiment_spec))
+        else:
+            for key in ('pass_at_1', 'all_repeats_success_rate'):
+                value, previous = metrics.get(key), baseline.get('metrics', {}).get(key)
+                if value is None or previous is None or value < previous:
+                    failures.append(f'{key} 低于基线或缺少数据')
     elif metrics.get('mean_success_rate') != 1:
         failures.append('初始门禁要求全部样本通过；后续可显式提供冻结基线')
+    return failures
+
+
+def _metric_value(metrics, name):
+    value = metrics
+    for part in name.split('.'):
+        if not isinstance(value, dict) or part not in value:
+            return None
+        value = value[part]
+    return value if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+
+
+def _profile_parts(manifest):
+    profile = manifest.get('harness_profile') or {}
+    mechanisms = {item.get('slot'): item for item in profile.get('mechanisms', []) if item.get('slot')}
+    return profile, mechanisms
+
+
+def _validate_experiment_contract(report, baseline, payload):
+    from pydantic import ValidationError
+    try:
+        spec = ExperimentSpec.model_validate_json(json.dumps(payload, ensure_ascii=False))
+    except ValidationError as error:
+        return ['实验契约无效：' + '; '.join('.'.join(map(str, item['loc'])) + ' ' + item['msg']
+                                            for item in error.errors(include_url=False)[:6])]
+    failures = []
+    current_manifest, baseline_manifest = report.get('manifest', {}), baseline.get('manifest', {})
+    current_profile, current_mechanisms = _profile_parts(current_manifest)
+    baseline_profile, baseline_mechanisms = _profile_parts(baseline_manifest)
+    if baseline_profile.get('profile_id') != spec.baseline_profile:
+        failures.append('实验契约的 baseline_profile 与基线报告不一致')
+    if current_profile.get('profile_id') != spec.candidate_profile:
+        failures.append('实验契约的 candidate_profile 与候选报告不一致')
+    if current_manifest.get('split') != spec.evaluation_split or baseline_manifest.get('split') != spec.evaluation_split:
+        failures.append('论文实验必须在契约声明的未调参分组上对照')
+    if (current_manifest.get('dataset_path') != spec.dataset or
+            baseline_manifest.get('dataset_path') != spec.dataset or
+            current_manifest.get('suite') != spec.suite or baseline_manifest.get('suite') != spec.suite):
+        failures.append('实验任务集或 suite 与契约不一致')
+    if current_manifest.get('repeats') != spec.repeats or baseline_manifest.get('repeats') != spec.repeats:
+        failures.append('实验重复次数与契约不一致')
+
+    declarations = list(spec.changes)
+    changed_slots = {slot for slot in set(current_mechanisms) | set(baseline_mechanisms)
+                     if current_mechanisms.get(slot) != baseline_mechanisms.get(slot)}
+    mechanism_declarations = {(item.slot, item.implementation_id): item for item in declarations
+                              if item.kind == 'mechanism'}
+    declared_slots = set(mechanism_declarations)
+    for slot in changed_slots:
+        candidate = current_mechanisms.get(slot) or {}
+        if (slot, candidate.get('id')) not in declared_slots:
+            failures.append(f'机制变更未声明：{slot}/{candidate.get("id")}')
+    for slot, implementation_id in declared_slots:
+        candidate = current_mechanisms.get(slot) or {}
+        if slot not in changed_slots or candidate.get('id') != implementation_id:
+            failures.append(f'契约声明的机制未成为实际差异：{slot}/{implementation_id}')
+        elif not set(candidate.get('source_files') or ()) <= set(mechanism_declarations[(slot, implementation_id)].paths):
+            failures.append(f'机制源码未完整纳入变更范围：{slot}/{implementation_id}')
+
+    engine_changed = current_profile.get('engine') != baseline_profile.get('engine')
+    engine_declarations = {item.implementation_id: item for item in declarations if item.kind == 'engine'}
+    declared_engines = set(engine_declarations)
+    current_engine = (current_profile.get('engine') or {}).get('id')
+    if engine_changed and current_engine not in declared_engines:
+        failures.append(f'引擎变更未声明：{current_engine}')
+    if not engine_changed and declared_engines:
+        failures.append('契约声明了引擎变更，但实际引擎相同')
+    if engine_changed and current_engine in engine_declarations:
+        current_sources = set((current_profile.get('engine') or {}).get('source_files') or ())
+        if not current_sources <= set(engine_declarations[current_engine].paths):
+            failures.append(f'引擎源码未完整纳入变更范围：{current_engine}')
+
+    base_files = baseline_manifest.get('source_files_sha256')
+    current_files = current_manifest.get('source_files_sha256')
+    if not isinstance(base_files, dict) or not isinstance(current_files, dict):
+        failures.append('结构化实验缺少逐文件源码指纹')
+        changed_files = set()
+    else:
+        for label, manifest, file_hashes in (('基线', baseline_manifest, base_files),
+                                             ('候选', current_manifest, current_files)):
+            if manifest.get('source_tree_sha256') != fingerprint(file_hashes):
+                failures.append(f'{label}源码树指纹与逐文件指纹不一致')
+            expected_kernel = fingerprint({name: file_hashes.get(name) for name in sorted(KERNEL_FILES)})
+            if manifest.get('kernel_source_sha256') != expected_kernel:
+                failures.append(f'{label} Stable Kernel 指纹不一致')
+        changed_files = {name for name in set(base_files) | set(current_files)
+                         if base_files.get(name) != current_files.get(name)}
+        allowed_files = {path for item in declarations for path in item.paths}
+        unapproved = changed_files - allowed_files
+        if unapproved:
+            failures.append('存在未声明的源码变更：' + '、'.join(sorted(unapproved)))
+        changed_kernel = changed_files & KERNEL_FILES
+        runtime_files = {path for item in declarations if item.kind == 'runtime' for path in item.paths}
+        if changed_kernel and (not spec.compatibility_review or not changed_kernel <= runtime_files):
+            failures.append('Stable Kernel 变更缺少独立兼容性审查：' + '、'.join(sorted(changed_kernel)))
+
+    changed_prompts = {name for name in set(baseline_manifest.get('prompt_source_sha256', {})) |
+                       set(current_manifest.get('prompt_source_sha256', {}))
+                       if baseline_manifest.get('prompt_source_sha256', {}).get(name) !=
+                       current_manifest.get('prompt_source_sha256', {}).get(name)}
+    prompt_files = {path for item in declarations if item.kind == 'prompt' for path in item.paths}
+    if changed_prompts - prompt_files:
+        failures.append('Prompt 变更未按文件声明：' + '、'.join(sorted(changed_prompts - prompt_files)))
+
+    primary_names = {rule.name for rule in spec.primary_metrics}
+    for rule in (*spec.primary_metrics, *spec.guard_metrics):
+        current = _metric_value(report.get('metrics', {}), rule.name)
+        previous = _metric_value(baseline.get('metrics', {}), rule.name)
+        if current is None or previous is None:
+            failures.append(f'实验指标 {rule.name} 缺少可比较数值')
+            continue
+        improvement = current - previous if rule.objective == 'maximize' else previous - current
+        if improvement < -rule.max_regression:
+            failures.append(f'实验指标 {rule.name} 退化 {abs(improvement):g}，超过允许值 {rule.max_regression:g}')
+        if improvement < rule.min_improvement:
+            label = '主指标' if rule.name in primary_names else '保护指标'
+            failures.append(f'{label} {rule.name} 改善 {improvement:g}，未达到 {rule.min_improvement:g}')
     return failures
 
 
@@ -270,21 +436,30 @@ def main(argv=None):
     parser.add_argument('--split', choices=['all', 'dev', 'test'], default='all')
     parser.add_argument('--execution-mode', choices=['auto', 'adaptive'], default='auto')
     parser.add_argument('--harness-profile', help='使用已注册的 Harness Profile，例如 baseline-v1')
-    parser.add_argument('--intervention', action='append', default=[], help='声明候选相对基线改变的机制，可重复传入')
+    parser.add_argument('--experiment-spec', type=Path, help='机器可校验的 JSON 实验契约')
     parser.add_argument('--output', type=Path)
     parser.add_argument('--baseline', type=Path)
     parser.add_argument('--gate', action='store_true')
     args = parser.parse_args(argv)
     dataset = load_dataset(args.dataset)
+    experiment_spec = ExperimentSpec.from_path(args.experiment_spec) if args.experiment_spec else None
     if args.dry_run:
         if dataset.get('suite') == 'adaptive' and args.execution_mode != 'adaptive':
             parser.error('自主专项任务必须使用 adaptive')
+        if experiment_spec and (args.split != experiment_spec.evaluation_split or
+                                args.harness_profile != experiment_spec.candidate_profile or
+                                _repo_relative(args.dataset) != experiment_spec.dataset or
+                                dataset.get('suite', 'support') != experiment_spec.suite or
+                                args.repeats != experiment_spec.repeats):
+            parser.error('实验 dry-run 的候选 Profile、任务集、suite、重复次数和评测分组必须与契约一致')
         report = {'status': 'VALIDATED', 'suite': dataset.get('suite', 'support'), 'execution_mode': args.execution_mode,
+                  'experiment_id': experiment_spec.experiment_id if experiment_spec else None,
                   'cases': 20, 'repeats': args.repeats, 'planned_samples': len([c for c in dataset['cases'] if args.split == 'all' or c['split'] == args.split]) * args.repeats,
                   'message': '任务集校验通过，未导入应用、未调用模型'}
     else:
         report = evaluate(dataset, repeats=args.repeats, split=args.split, execution_mode=args.execution_mode,
-                          harness_profile=args.harness_profile, interventions=args.intervention)
+                          harness_profile=args.harness_profile, experiment_spec=experiment_spec,
+                          dataset_path=args.dataset)
     failures = evaluate_gate(report, json.loads(args.baseline.read_text()) if args.baseline else None) if args.gate else []
     if args.gate:
         report['gate'] = {'passed': not failures, 'failures': failures}

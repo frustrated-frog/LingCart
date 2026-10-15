@@ -5,7 +5,7 @@ import pytest
 from src.errors import AgentError
 from src.harness.contracts import RunRequest
 from src.harness.profile import EngineRef, HarnessProfile, ResearchOrigin
-from src.harness.registry import HarnessRegistry, HarnessRunner, get_registry
+from src.harness.registry import HarnessRegistry, HarnessRunner, get_registry, resolve_claim_runner
 from src.runtime import BudgetLimits, RunRuntime, runtime_scope
 
 
@@ -84,4 +84,16 @@ def test_one_run_cannot_switch_profiles():
         with pytest.raises(AgentError) as error:
             HarnessRunner(profile("second-v1"), FakeEngine())("第二步")
     assert error.value.code == "HARNESS_PROFILE_CONFLICT"
+
+
+def test_resume_rejects_a_profile_whose_bound_implementation_changed():
+    runner = get_registry().resolve("adaptive-v1")
+    saved = runner.provenance()
+    saved["execution_sha256"] = "0" * 64
+    claim = {"snapshot": {"harness": saved}, "events": []}
+
+    with pytest.raises(AgentError) as error:
+        resolve_claim_runner(claim)
+
+    assert error.value.code == "HARNESS_IMPLEMENTATION_MISMATCH"
 
