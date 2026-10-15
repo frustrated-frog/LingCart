@@ -125,6 +125,8 @@ class RunRuntime:
         from src.context_engine import LifecycleHooks
         self.hooks = LifecycleHooks()
         self.context_engine = None
+        self.harness_profile = None
+        self.mechanisms = {}
         saved_hook_error = self.snapshot.get('hook_error')
         self.hook_error = AgentError(saved_hook_error['code'], saved_hook_error['message'], retryable=False) if saved_hook_error else None
 

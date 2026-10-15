@@ -27,7 +27,7 @@ from src.durable import run_conversation, resume_run
 from src.errors import AgentError
 from src.llm import get_model_status
 from src.persistence import RunStore
-from src.orchestrator import run_orchestrator
+from src.harness import get_registry, get_runner
 from src.trace_projector import project_trace
 
 configure_logging()
@@ -50,6 +50,8 @@ class ChatRequest(BaseModel):
     session_id: str | None = Field(None, max_length=64, description="Omit to start a new conversation")
     request_id: str | None = Field(None, min_length=1, max_length=64, description="Reuse when retrying the same request")
     action_id: str | None = Field(None, min_length=1, max_length=64, description="Current pending action shown to the user")
+    harness_profile: str | None = Field(None, pattern=r"^[a-z][a-z0-9-]*$",
+                                        description="Versioned Harness Profile; defaults to baseline-v1")
 
 
 class ToolCall(BaseModel):
@@ -77,6 +79,7 @@ class ChatResponse(BaseModel):
     events: list[dict] = Field(default_factory=list)
     intake: dict = Field(default_factory=dict)
     budget: dict = Field(default_factory=dict)
+    harness: dict = Field(default_factory=dict)
     plan: dict | None = None
     pending_action: dict | None = None
     error: dict | None = None
@@ -183,7 +186,7 @@ def chat(req: ChatRequest):
     session_id = req.session_id or uuid.uuid4().hex
     try:
         result = run_conversation(req.message, session_id, request_id=req.request_id,
-                                  action_id=req.action_id, runner=run_orchestrator)
+                                  action_id=req.action_id, runner=get_runner(req.harness_profile or "baseline-v1"))
     except AgentError as exc:
         raise HTTPException(status_code=409, detail={"code": exc.code, "message": str(exc), "retryable": exc.retryable}) from exc
     except Exception as exc:
@@ -206,6 +209,7 @@ def _response(session_id, result):
         events=result.get("events") or [],
         intake=result.get("intake") or {},
         budget=result.get("budget") or {},
+        harness=result.get("harness") or {},
         plan=result.get("plan"),
         pending_action=result.get("pending_action"),
         error=result.get("error"),
@@ -245,7 +249,7 @@ def get_run_trace(run_id: str, session_id: str):
 @app.post("/runs/{run_id}/resume", response_model=ChatResponse)
 def resume(run_id: str, req: ResumeRequest):
     try:
-        return _response(req.session_id, resume_run(req.session_id, run_id, runner=run_orchestrator))
+        return _response(req.session_id, resume_run(req.session_id, run_id))
     except AgentError as exc:
         raise HTTPException(status_code=409, detail={"code": exc.code, "message": str(exc), "retryable": exc.retryable}) from exc
 
@@ -271,7 +275,8 @@ def start_run(req: StartRunRequest):
     from src.session_control import SessionController
     try:
         handle = SessionController().start(req.session_id or uuid.uuid4().hex, req.message,
-                    request_id=req.request_id, action_id=req.action_id, execution_mode=req.execution_mode)
+                    request_id=req.request_id, action_id=req.action_id, execution_mode=req.execution_mode,
+                    harness_profile=req.harness_profile)
         return JSONResponse(status_code=200 if handle.get('cached') else 202, content=handle)
     except AgentError as error:
         raise _control_error(error) from error
@@ -316,6 +321,13 @@ def drain_queue(session_id: str):
     """进程重启后显式继续已落库的后续任务，不重放中断的写操作。"""
     from src.session_control import SessionController
     return {'next_run': SessionController().drain(session_id)}
+
+
+@app.get('/harness/profiles')
+def harness_profiles():
+    """列出可运行 Profile；不暴露密钥或模型凭据。"""
+    return {'profiles': [{**profile.canonical_payload(), 'profile_sha256': profile.fingerprint}
+                         for profile in get_registry().profiles()]}
 
 
 @app.post('/runs/{run_id}/resume-async', status_code=202)

@@ -64,6 +64,17 @@ def test_async_adaptive_profile_and_explicit_budget_reach_runtime(database):
     assert observed[-1] == explicit
 
 
+def test_async_controller_derives_mode_and_budget_from_harness_profile(database):
+    handle = SessionController().start('profile-selected', '查询订单1002状态',
+                                       harness_profile='adaptive-objective-context-v1')
+    result = wait_result(handle['run_id'])
+    saved = ControlStore().run(handle['run_id'])
+    assert result['harness']['profile_id'] == 'adaptive-objective-context-v1'
+    assert saved['checkpoint']['execution_mode'] == 'adaptive'
+    assert saved['checkpoint']['harness']['profile_id'] == 'adaptive-objective-context-v1'
+    assert result['budget']['limits']['max_model_calls'] == BudgetLimits.adaptive().max_model_calls
+
+
 def test_cancel_keeps_completed_observation_and_prevents_next_tool(database):
     def runner(message, **kwargs):
         context = current_runtime()

@@ -65,7 +65,8 @@ class ControlStore(RunStore):
             control.revision += 1
             row = RunCommand(command_id=command_id, run_id=run_id, session_id=session_id, kind=kind,
                              payload={'message': message, 'revision': control.revision, 'expected_revision': expected_revision,
-                                      'execution_mode': (session.get(Checkpoint, run_id).payload or {}).get('execution_mode', 'auto')},
+                                      'execution_mode': (session.get(Checkpoint, run_id).payload or {}).get('execution_mode', 'auto'),
+                                      'harness_profile': ((session.get(Checkpoint, run_id).payload or {}).get('harness') or {}).get('profile_id')},
                              status='QUEUED', created_at=utcnow())
             session.add(row)
             if kind == 'CANCEL':
@@ -139,13 +140,27 @@ class SessionController:
     def __init__(self, store=None):
         self.store = store or ControlStore()
 
-    def start(self, session_id, message, *, request_id=None, action_id=None, limits=None, runner=None, resume_id=None, execution_mode='auto'):
+    def start(self, session_id, message, *, request_id=None, action_id=None, limits=None, runner=None,
+              resume_id=None, execution_mode='auto', harness_profile=None):
         if execution_mode not in {'auto', 'adaptive'}:
             raise AgentError('INVALID_EXECUTION_MODE', '不支持该执行方式', retryable=False)
+        from src.harness import get_runner, resolve_claim_runner, unwrap_harness_runner
+        if harness_profile:
+            selected = get_runner(harness_profile)
+            current = unwrap_harness_runner(runner)
+            if current and current.profile.profile_id != harness_profile:
+                raise AgentError('HARNESS_PROFILE_CONFLICT', 'Runner 与请求的 Harness Profile 不一致', retryable=False)
+            if runner is None:
+                runner = selected
         if runner is not None:
             from src.adaptive import run_adaptive
-            if runner is run_adaptive:
+            runner_mode = getattr(runner, 'execution_mode', None)
+            if runner_mode == 'auto' and execution_mode == 'adaptive':
+                raise AgentError('HARNESS_MODE_CONFLICT', 'Harness Profile 与请求的执行模式不一致', retryable=False)
+            if runner is run_adaptive or runner_mode == 'adaptive':
                 execution_mode = 'adaptive'
+        elif resume_id is None:
+            runner = get_runner('adaptive-v1' if execution_mode == 'adaptive' else 'baseline-v1')
         if limits is None and execution_mode == 'adaptive':
             limits = BudgetLimits.adaptive()
         if not _slots.acquire(blocking=False):
@@ -159,9 +174,13 @@ class SessionController:
                         'result': claim['cached'], 'cached': True}
             if not resume_id:
                 claim['snapshot']['execution_mode'] = execution_mode
+                selected = unwrap_harness_runner(runner)
+                if selected:
+                    claim['snapshot']['harness_profile_id'] = selected.profile.profile_id
                 self.store.save_checkpoint(claim['run_id'], claim['token'], claim['snapshot'])
             else:
                 self.store.reopen_controls(claim['run_id'])
+                runner = resolve_claim_runner(claim, runner)
             execution_mode = claim['snapshot'].get('execution_mode', 'auto')
             if runner is None and execution_mode == 'adaptive':
                 from src.adaptive import run_adaptive
@@ -191,7 +210,8 @@ class SessionController:
                 return last_handle
             try:
                 handle = self.start(session_id, command['payload']['message'], request_id=command['command_id'], runner=runner,
-                                    execution_mode=command['payload'].get('execution_mode', 'auto'))
+                                    execution_mode=command['payload'].get('execution_mode', 'auto'),
+                                    harness_profile=command['payload'].get('harness_profile'))
             except AgentError as error:
                 # 其它运行占用会话时保留排队；只有同一command已被claim才可确认。
                 if error.code == 'RUN_IN_PROGRESS':

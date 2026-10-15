@@ -11,14 +11,14 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 class EngineRef(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
 
-    id: Literal["orchestrator", "adaptive"]
+    id: str = Field(pattern=r"^[a-z][a-z0-9._-]*$", min_length=1, max_length=80)
     version: str = Field(min_length=1, max_length=40)
 
 
 class MechanismRef(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
 
-    slot: Literal["planning", "context", "memory", "verification", "tool_protocol"]
+    slot: str = Field(pattern=r"^[a-z][a-z0-9._-]*$", min_length=1, max_length=80)
     id: str = Field(pattern=r"^[a-z][a-z0-9._-]*$", min_length=1, max_length=80)
     version: str = Field(min_length=1, max_length=40)
 

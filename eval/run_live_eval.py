@@ -107,7 +107,7 @@ def evaluate(dataset, *, repeats=3, split='all', execution_mode='auto', harness_
         runner = get_runner(profile_id)
         if runner.execution_mode != execution_mode:
             raise ValueError(f'Harness Profile {profile_id} 的执行模式不是 {execution_mode}')
-        report['manifest']['harness_profile'] = runner.profile.provenance()
+        report['manifest']['harness_profile'] = runner.provenance()
     else:
         report['manifest']['harness_profile'] = getattr(getattr(runner, 'profile', None), 'provenance', lambda: {
             'profile_id': 'injected-test-runner', 'profile_version': 'unversioned', 'profile_sha256': None})()
@@ -150,6 +150,8 @@ def evaluate(dataset, *, repeats=3, split='all', execution_mode='auto', harness_
                                 if turn_index == 0 and fixed_history:
                                     kwargs['history'] = fixed_history
                                 return runner(message, **kwargs)
+                            sample_runner.harness_runner = getattr(runner, 'harness_runner', runner)
+                            sample_runner.execution_mode = getattr(runner, 'execution_mode', execution_mode)
                             from contextlib import nullcontext
                             from eval.adaptive_checks import scenario
                             with (scenario(case, session_id) if suite == 'adaptive' else nullcontext({})) as environment:

@@ -43,6 +43,55 @@ def test_profile_runner_provenance_is_persisted_with_the_run(database):
     assert stored["harness"] == result["harness"]
 
 
+def test_adaptive_profile_is_restored_without_external_runner(database, monkeypatch):
+    from src.harness import get_registry
+    from src.harness.contracts import RunRequest
+    from src.runtime import BudgetLimits, current_runtime
+
+    class Crash(BaseException):
+        pass
+
+    registry = get_registry()
+    original = registry._engines[("adaptive", "1")]
+
+    class RestartableAdaptive:
+        engine_id = "adaptive"
+        engine_version = "1"
+        execution_mode = "adaptive"
+
+        def __init__(self):
+            self.calls = 0
+            self.observed = []
+
+        def provenance(self):
+            return original.provenance()
+
+        def execute(self, request: RunRequest):
+            self.calls += 1
+            context = current_runtime()
+            self.observed.append((context.limits, context.mechanisms["context"].mechanism_id))
+            if self.calls == 1:
+                raise Crash()
+            return {"reply": "已按原 Profile 恢复", "trace": [], "agent": "shopping", "route": "ADAPTIVE",
+                    "status": "SUCCEEDED", "terminal_reason": "COMPLETED", "pending_action": None,
+                    "usage": {}, "events": context.events}
+
+    engine = RestartableAdaptive()
+    monkeypatch.setitem(registry._engines, ("adaptive", "1"), engine)
+    runner = registry.resolve("adaptive-v1")
+    with pytest.raises(Crash):
+        run_conversation("推荐预算500元的耳机", "profile-resume", runner=runner)
+    active = RunStore().conversation("profile-resume")["active_run_id"]
+
+    result = resume_run("profile-resume", active)
+
+    assert engine.calls == 2
+    assert all(limits == BudgetLimits.adaptive() for limits, _ in engine.observed)
+    assert [mechanism for _, mechanism in engine.observed] == ["evidence-reference-context"] * 2
+    assert result["harness"]["profile_id"] == "adaptive-v1"
+    assert result["events"][0]["type"] == "harness_profile_selected"
+
+
 def test_completed_run_keeps_a_versioned_terminal_checkpoint(database):
     result = run_conversation("查询订单 1002 的物流", "versioned")
 

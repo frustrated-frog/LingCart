@@ -35,10 +35,28 @@ def profile(profile_id="test-v1"):
 
 def test_built_in_profiles_are_versioned_and_reproducible():
     profiles = {item.profile_id: item for item in get_registry().profiles()}
-    assert set(profiles) == {"adaptive-v1", "baseline-v1"}
+    assert {"adaptive-v1", "baseline-v1"} <= set(profiles)
     assert profiles["adaptive-v1"].engine.id == "adaptive"
     assert profiles["baseline-v1"].engine.id == "orchestrator"
     assert all(len(item.fingerprint) == 64 for item in profiles.values())
+
+
+def test_two_profiles_bind_different_context_implementations_to_same_engine():
+    from src.task_plan import TaskPlan
+
+    baseline = get_registry().resolve("adaptive-v1")
+    candidate = get_registry().resolve("adaptive-objective-context-v1")
+    assert baseline.engine is candidate.engine
+    baseline_context = baseline.build_context("推荐耳机")
+    candidate_context = candidate.build_context("推荐耳机")
+    state = {"request": "推荐耳机", "goal": None, "goal_revision": 0, "next_steps": None,
+             "working_memory": None, "objective_ledger": []}
+    left, left_manifest = baseline_context.decision_messages("系统", dict(state), TaskPlan([], []), [], max_chars=2000)
+    right, right_manifest = candidate_context.decision_messages("系统", dict(state), TaskPlan([], []), [], max_chars=2000)
+    assert left_manifest["selection_strategy"] == "recent-first"
+    assert right_manifest["selection_strategy"] == "objective-first"
+    assert left[1].content != right[1].content
+    assert baseline.provenance()["execution_sha256"] != candidate.provenance()["execution_sha256"]
 
 
 def test_registry_rejects_unknown_profiles_and_engine_versions():

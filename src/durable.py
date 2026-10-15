@@ -44,6 +44,9 @@ def load_conversation(session_id, store=None):
 
 def run_conversation(message, session_id, *, request_id=None, action_id=None, limits=None, resume_id=None,
                      store=None, runner=None):
+    if runner is None and resume_id is None:
+        from src.harness import get_runner
+        runner = get_runner("baseline-v1")
     if limits is None and runner is not None:
         from src.adaptive import run_adaptive
         if runner is run_adaptive or getattr(runner, "execution_mode", None) == "adaptive":
@@ -62,6 +65,9 @@ def run_conversation(message, session_id, *, request_id=None, action_id=None, li
 
 def execute_claim(claim, *, store=None, runner=None):
     store = store or RunStore()
+    from src.harness import resolve_claim_runner, unwrap_harness_runner
+    runner = resolve_claim_runner(claim, runner)
+    harness_runner = unwrap_harness_runner(runner)
     snapshot = claim["snapshot"]
     state = dict(snapshot.get("conversation") or {})
     history = [(HumanMessage if item["role"] == "user" else AIMessage)(content=item["content"])
@@ -73,6 +79,8 @@ def execute_claim(claim, *, store=None, runner=None):
     context.defer_terminal = True
     try:
         with runtime_scope(context):
+            if harness_runner:
+                harness_runner.bind(context)
             from src.recovery import recover_evidence
             recover_evidence(context)
             kwargs = {"history": history}
@@ -86,15 +94,21 @@ def execute_claim(claim, *, store=None, runner=None):
                     context.require()
                     steering = context.snapshot.get("steering", [])
                     effective = claim["request"] + ("\n运行中补充要求：\n" + "\n".join(steering) if steering else "")
-                    from src.context_engine import ContextEngine
                     from src.preferences import PreferenceStore
                     preferences = context.snapshot.get('preferences')
                     if preferences is None:
                         preferences = PreferenceStore().for_session(claim['session_id'])
                         context.checkpoint(preferences=preferences)
-                    context.context_engine = ContextEngine(effective, preferences=preferences,
-                        observations=context.snapshot.get('context', {}).get('observations', []),
-                        revision=context.snapshot.get('goal_revision', 0))
+                    context_factory = harness_runner.build_context if harness_runner else None
+                    if context_factory:
+                        context.context_engine = context_factory(effective, preferences=preferences,
+                            observations=context.snapshot.get('context', {}).get('observations', []),
+                            revision=context.snapshot.get('goal_revision', 0))
+                    else:
+                        from src.context_engine import ContextEngine
+                        context.context_engine = ContextEngine(effective, preferences=preferences,
+                            observations=context.snapshot.get('context', {}).get('observations', []),
+                            revision=context.snapshot.get('goal_revision', 0))
                     from src.adaptive import run_adaptive
                     # Autonomous mode receives the actual request plus separate
                     # preference data. Rules must not inject a synthetic hard budget.

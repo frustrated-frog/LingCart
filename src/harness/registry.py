@@ -1,11 +1,15 @@
 """Built-in engine registry and profile-backed runner selection."""
 from __future__ import annotations
 
+import hashlib
+import json
 from pathlib import Path
+import subprocess
 import uuid
 
 from src.errors import AgentError
 from src.harness.contracts import AgentEngine, RunRequest
+from src.harness.mechanisms import HarnessMechanism, built_in_mechanisms, source_fingerprint
 from src.harness.profile import HarnessProfile
 from src.runtime import BudgetLimits, RunRuntime, current_runtime, runtime_scope
 
@@ -21,6 +25,20 @@ class FunctionEngine:
         self.engine_id = engine_id
         self.engine_version = engine_version
         self.execution_mode = execution_mode
+
+    @property
+    def source_files(self) -> tuple[str, ...]:
+        target = "src/adaptive.py" if self.engine_id == "adaptive" else "src/orchestrator.py"
+        return ("src/harness/registry.py", target)
+
+    def provenance(self) -> dict:
+        return {
+            "id": self.engine_id,
+            "version": self.engine_version,
+            "execution_mode": self.execution_mode,
+            "implementation_sha256": source_fingerprint(self.source_files),
+            "source_files": list(self.source_files),
+        }
 
     def execute(self, request: RunRequest) -> dict:
         if self.engine_id == "adaptive":
@@ -44,10 +62,66 @@ class FunctionEngine:
 class HarnessRunner:
     """Callable compatible with durable.run_conversation and evaluation runners."""
 
-    def __init__(self, profile: HarnessProfile, engine: AgentEngine):
+    def __init__(self, profile: HarnessProfile, engine: AgentEngine, mechanisms: tuple[HarnessMechanism, ...] = ()):
         self.profile = profile
         self.engine = engine
         self.execution_mode = engine.execution_mode
+        self.mechanisms = {mechanism.slot: mechanism for mechanism in mechanisms}
+        self._provenance = self._build_provenance()
+
+    def _build_provenance(self) -> dict:
+        engine = self.engine.provenance() if hasattr(self.engine, "provenance") else {
+            "id": self.engine.engine_id, "version": self.engine.engine_version,
+            "execution_mode": self.engine.execution_mode,
+        }
+        mechanisms = []
+        for mechanism in self.mechanisms.values():
+            if hasattr(mechanism, "provenance"):
+                mechanisms.append(mechanism.provenance())
+            else:
+                mechanisms.append({"slot": mechanism.slot, "id": mechanism.mechanism_id,
+                                   "version": mechanism.mechanism_version})
+        mechanisms.sort(key=lambda item: item["slot"])
+        try:
+            revision = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
+        except (OSError, subprocess.CalledProcessError):
+            revision = None
+        payload = {
+            **self.profile.provenance(),
+            "engine": engine,
+            "mechanisms": mechanisms,
+            "source_revision": revision,
+        }
+        encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        payload["execution_sha256"] = hashlib.sha256(encoded.encode()).hexdigest()
+        return payload
+
+    def provenance(self) -> dict:
+        return json.loads(json.dumps(self._provenance, ensure_ascii=False))
+
+    def bind(self, context) -> None:
+        selected = [event for event in context.events if event.get("type") == "harness_profile_selected"]
+        if selected:
+            saved = selected[-1]
+            if saved.get("profile_id") != self.profile.profile_id or saved.get("profile_sha256") != self.profile.fingerprint:
+                raise AgentError("HARNESS_PROFILE_CONFLICT", "同一次运行不能切换 Harness Profile", retryable=False)
+            if saved.get("execution_sha256") != self._provenance["execution_sha256"]:
+                raise AgentError("HARNESS_IMPLEMENTATION_MISMATCH", "当前机制实现与任务开始时的版本不一致", retryable=False)
+        else:
+            context.snapshot["harness"] = self.provenance()
+            context.record("harness_profile_selected", **self.provenance())
+        context.snapshot["harness"] = self.provenance()
+        context.harness_profile = self.provenance()
+        for mechanism in self.mechanisms.values():
+            mechanism.install(context)
+
+    def build_context(self, goal, *, preferences=None, observations=None, revision=0):
+        mechanism = self.mechanisms.get("context")
+        if mechanism is not None and hasattr(mechanism, "build_context"):
+            return mechanism.build_context(goal, preferences=preferences, observations=observations, revision=revision)
+        from src.context_engine import ContextEngine
+
+        return ContextEngine(goal, preferences=preferences, observations=observations, revision=revision)
 
     def __call__(self, message, history=None, pending_action=None, *, limits=None):
         context = current_runtime()
@@ -56,14 +130,9 @@ class HarnessRunner:
             context = RunRuntime(uuid.uuid4().hex, limits or default_limits)
             with runtime_scope(context):
                 return self(message, history, pending_action)
-
-        selected = [event for event in context.events if event.get("type") == "harness_profile_selected"]
-        if selected and selected[-1].get("profile_sha256") != self.profile.fingerprint:
-            raise AgentError("HARNESS_PROFILE_CONFLICT", "同一次运行不能切换 Harness Profile", retryable=False)
-        if not selected:
-            context.record("harness_profile_selected", **self.profile.provenance())
+        self.bind(context)
         result = dict(self.engine.execute(RunRequest(message, history, pending_action, limits)))
-        result["harness"] = self.profile.provenance()
+        result["harness"] = self.provenance()
         result["events"] = list(context.events)
         return result
 
@@ -73,6 +142,7 @@ class HarnessRegistry:
 
     def __init__(self):
         self._engines: dict[tuple[str, str], AgentEngine] = {}
+        self._mechanisms: dict[tuple[str, str, str], HarnessMechanism] = {}
         self._profiles: dict[str, HarnessProfile] = {}
 
     def register_engine(self, engine: AgentEngine):
@@ -81,12 +151,24 @@ class HarnessRegistry:
             raise ValueError(f"引擎已注册：{engine.engine_id}@{engine.engine_version}")
         self._engines[key] = engine
 
+    def register_mechanism(self, mechanism: HarnessMechanism):
+        key = (mechanism.slot, mechanism.mechanism_id, mechanism.mechanism_version)
+        if key in self._mechanisms:
+            raise ValueError(f"机制已注册：{mechanism.slot}/{mechanism.mechanism_id}@{mechanism.mechanism_version}")
+        self._mechanisms[key] = mechanism
+
     def register_profile(self, profile: HarnessProfile):
         if profile.profile_id in self._profiles:
             raise ValueError(f"Profile 已注册：{profile.profile_id}")
         key = (profile.engine.id, profile.engine.version)
         if key not in self._engines:
             raise ValueError(f"Profile 引用了未注册引擎：{profile.engine.id}@{profile.engine.version}")
+        for reference in profile.mechanisms:
+            mechanism = self._mechanisms.get((reference.slot, reference.id, reference.version))
+            if mechanism is None:
+                raise ValueError(f"Profile 引用了未注册机制：{reference.slot}/{reference.id}@{reference.version}")
+            if profile.engine.id not in mechanism.compatible_engines:
+                raise ValueError(f"机制 {reference.id} 不兼容引擎 {profile.engine.id}")
         self._profiles[profile.profile_id] = profile
 
     def load_profiles(self, directory: Path = PROFILE_DIR):
@@ -103,13 +185,16 @@ class HarnessRegistry:
         if profile is None:
             available = "、".join(sorted(self._profiles)) or "无"
             raise AgentError("HARNESS_PROFILE_UNKNOWN", f"未知 Harness Profile：{profile_id}；可用项：{available}", retryable=False)
-        return HarnessRunner(profile, self._engines[(profile.engine.id, profile.engine.version)])
+        mechanisms = tuple(self._mechanisms[(item.slot, item.id, item.version)] for item in profile.mechanisms)
+        return HarnessRunner(profile, self._engines[(profile.engine.id, profile.engine.version)], mechanisms)
 
 
 def build_registry(profile_dir: Path = PROFILE_DIR) -> HarnessRegistry:
     registry = HarnessRegistry()
     registry.register_engine(FunctionEngine("orchestrator", "1", "auto"))
     registry.register_engine(FunctionEngine("adaptive", "1", "adaptive"))
+    for mechanism in built_in_mechanisms():
+        registry.register_mechanism(mechanism)
     registry.load_profiles(profile_dir)
     return registry
 
@@ -126,4 +211,35 @@ def get_registry() -> HarnessRegistry:
 
 def get_runner(profile_id: str) -> HarnessRunner:
     return get_registry().resolve(profile_id)
+
+
+def unwrap_harness_runner(runner) -> HarnessRunner | None:
+    candidate = getattr(runner, "harness_runner", runner)
+    return candidate if isinstance(candidate, HarnessRunner) else None
+
+
+def persisted_harness(claim: dict) -> dict | None:
+    saved = claim.get("snapshot", {}).get("harness")
+    if saved:
+        return saved
+    return next((event for event in reversed(claim.get("events", []))
+                 if event.get("type") == "harness_profile_selected"), None)
+
+
+def resolve_claim_runner(claim: dict, runner=None):
+    """Restore the original Profile and reject execution with changed code."""
+
+    saved = persisted_harness(claim)
+    selected = unwrap_harness_runner(runner)
+    if saved and selected is None:
+        if runner is not None:
+            raise AgentError("HARNESS_PROFILE_REQUIRED", "该任务必须使用开始时的 Harness Profile 恢复", retryable=False)
+        runner = selected = get_runner(saved["profile_id"])
+    if saved and selected is not None:
+        current = selected.provenance()
+        if current["profile_id"] != saved.get("profile_id") or current["profile_sha256"] != saved.get("profile_sha256"):
+            raise AgentError("HARNESS_PROFILE_CONFLICT", "恢复 Runner 与任务原 Profile 不一致", retryable=False)
+        if current["execution_sha256"] != saved.get("execution_sha256"):
+            raise AgentError("HARNESS_IMPLEMENTATION_MISMATCH", "当前源码无法恢复任务开始时的机制实现", retryable=False)
+    return runner
 

@@ -38,6 +38,16 @@ def test_health():
     assert response.json() == {"status": "ok"}
 
 
+def test_harness_profiles_are_discoverable_and_api_can_select_one():
+    profiles = client.get('/harness/profiles')
+    assert profiles.status_code == 200
+    assert {'baseline-v1', 'adaptive-v1', 'adaptive-objective-context-v1'} <= {
+        item['profile_id'] for item in profiles.json()['profiles']}
+    result = client.post('/chat', json={'message': '查询订单1002状态',
+                                        'harness_profile': 'adaptive-objective-context-v1'}).json()
+    assert result['harness']['profile_id'] == 'adaptive-objective-context-v1'
+
+
 def test_model_status_is_sanitized_and_does_not_probe_provider(monkeypatch):
     calls = {"count": 0}
 
@@ -96,7 +106,7 @@ def test_readiness_returns_503_when_model_is_not_configured(monkeypatch):
 
 
 def test_chat_returns_agent_reply_and_trace(monkeypatch):
-    monkeypatch.setattr(api, "run_orchestrator", lambda *_a, **_k: FAKE_RESULT)
+    monkeypatch.setattr(api, "get_runner", lambda _profile: lambda *_a, **_k: FAKE_RESULT)
 
     response = client.post("/chat", json={"message": "where is order 1001?"})
 
@@ -110,7 +120,7 @@ def test_chat_returns_agent_reply_and_trace(monkeypatch):
 
 
 def test_chat_generates_new_session_id_when_omitted(monkeypatch):
-    monkeypatch.setattr(api, "run_orchestrator", lambda *_a, **_k: FAKE_RESULT)
+    monkeypatch.setattr(api, "get_runner", lambda _profile: lambda *_a, **_k: FAKE_RESULT)
 
     r1 = client.post("/chat", json={"message": "hello"})
     r2 = client.post("/chat", json={"message": "hello again"})
@@ -125,7 +135,7 @@ def test_chat_reuses_provided_session_id_and_carries_history(monkeypatch):
         captured_history.append(list(history or []))
         return FAKE_RESULT
 
-    monkeypatch.setattr(api, "run_orchestrator", fake_orchestrator)
+    monkeypatch.setattr(api, "get_runner", lambda _profile: fake_orchestrator)
 
     r1 = client.post("/chat", json={"message": "where is order 1001?", "session_id": "abc123"})
     assert r1.json()["session_id"] == "abc123"
@@ -176,15 +186,13 @@ def test_api_stale_action_cannot_confirm_new_pending_action():
 
 
 def test_api_interruption_returns_handle_and_resumes_without_losing_the_request(monkeypatch):
-    original = api.run_orchestrator
     def interrupted(*args, **kwargs):
         raise RuntimeError("injected process interruption")
-    monkeypatch.setattr(api, "run_orchestrator", interrupted)
+    monkeypatch.setattr(api, "get_runner", lambda _profile: interrupted)
     failed = client.post("/chat", json={"message": "查询订单 1002 的状态", "request_id": "restart"})
     assert failed.status_code == 502
     handle = failed.json()["detail"]
     assert handle["session_id"] and handle["run_id"]
-    monkeypatch.setattr(api, "run_orchestrator", original)
     resumed = client.post(f"/runs/{handle['run_id']}/resume", json={"session_id": handle["session_id"]})
     assert resumed.status_code == 200
     assert resumed.json()["status"] == "SUCCEEDED"

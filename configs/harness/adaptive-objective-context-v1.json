@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "profile_id": "adaptive-objective-context-v1",
+  "version": "1.0.0",
+  "display_name": "目标证据优先上下文候选",
+  "description": "与 adaptive-v1 使用同一引擎，仅将上下文选择顺序替换为已验证目标证据优先。",
+  "engine": {
+    "id": "adaptive",
+    "version": "1"
+  },
+  "mechanisms": [
+    {"slot": "planning", "id": "bounded-model-loop", "version": "1"},
+    {"slot": "context", "id": "objective-first-context", "version": "1"},
+    {"slot": "memory", "id": "objective-ledger", "version": "1"},
+    {"slot": "verification", "id": "independent-request-audit", "version": "1"},
+    {"slot": "tool_protocol", "id": "native-strict-tools", "version": "1"}
+  ],
+  "capabilities": [
+    "model_directed_planning",
+    "bounded_replanning",
+    "objective_first_context",
+    "goal_verification",
+    "durable_resume",
+    "runtime_steering"
+  ],
+  "research": {
+    "status": "candidate",
+    "source_type": "native",
+    "paper_id": null,
+    "hypothesis": "在复合任务证据较多时，优先放入已验证目标证据可以减少上下文稀释，同时保持工具与安全边界不变。"
+  }
+}

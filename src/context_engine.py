@@ -50,13 +50,16 @@ class LifecycleHooks:
 
 
 class ContextEngine:
-    def __init__(self, goal, *, preferences=None, observations=None, revision=0):
+    def __init__(self, goal, *, preferences=None, observations=None, revision=0,
+                 selection_strategy='recent-first', mechanism_id='evidence-reference-context'):
         self.goal, self.preferences = goal, list(preferences or [])
         self.observations, self.revision = list(observations or []), revision
+        self.selection_strategy, self.mechanism_id = selection_strategy, mechanism_id
 
     def payload(self):
         from src.intake import analyze_request
         return dict(goal=self.goal, goal_revision=self.revision, preferences=self.preferences,
+                    context_mechanism=self.mechanism_id, selection_strategy=self.selection_strategy,
                     constraints=analyze_request(self.goal).entities,
                     observations=self.observations,
                     references=[o.get('reference') for o in self.observations if o.get('reference')],
@@ -104,6 +107,7 @@ class ContextEngine:
             observations=[overview(s) for s in plan.steps],
             history=[{'role': getattr(m, 'type', 'unknown'), 'content': as_text(m.content)} for m in history or []],
             context_manifest={'archived_refs': [], 'policy': 'FULL_RECORDS_OR_REFERENCES',
+                              'mechanism_id': self.mechanism_id, 'selection_strategy': self.selection_strategy,
                               'history_total': len(history or []), 'omitted_history_indices': []})
         if state.get('constraint_bindings') and not (state.get('feedback') or {}).get('audit_phase'):
             from src.constraint_bindings import effective_goal
@@ -137,7 +141,8 @@ class ContextEngine:
                          for ref in row.get('evidence_refs', [])}
         # 最新观察和待交付结果的证据先于旧历史，其余观察放得下才完整加入。
         latest = [len(plan.steps) - 1] if plan.steps else []
-        priority = latest + [i for i in reversed(range(len(plan.steps) - 1)) if plan.steps[i].step_id in required_refs]
+        required = [i for i in reversed(range(len(plan.steps))) if plan.steps[i].step_id in required_refs]
+        priority = required + [i for i in latest if i not in required] if self.selection_strategy == 'objective-first' else latest + [i for i in required if i not in latest]
         order = priority + [i for i in reversed(range(len(plan.steps))) if i not in priority]
         for index in order:
             summary = payload['observations'][index]
