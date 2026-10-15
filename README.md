@@ -11,12 +11,13 @@ bounded tool execution, typed failures, approval boundaries, and observable runs
 
 ## 选序消费工作空间
 
-The Streamlit frontend uses persistent sidebar navigation with five connected pages:
+Streamlit 界面提供六个通过侧栏连接的页面：
 
 - **工作台**: start or continue a conversation, query active orders, and explore shopping scenarios.
 - **商品发现**: search 60 fictional demo products across headphones, keyboards, and USB-C hubs; filter by budget and stock; compare two or three products.
 - **订单与售后**: browse the existing seed orders, inspect stored shipment events, and pass an order into the assistant. Payment/refund writes require a separate confirmation.
 - **任务记录**: view the latest 100 actual run snapshots saved in SQLite, including results and historical statuses. Interrupted tasks retain checkpoints and can be resumed.
+- **我的偏好**：明确确认保存预算、品类和特征，查看版本、更新或忘记；新对话沿用当前偏好档案，当前需求的明确条件优先。
 - **Agent Lab**: inspect actual events, tool parameters/results, task plans, dependencies, verified outcomes, budgets, token usage, latency, and terminal reasons for a selected run.
 
 Product discovery and comparison also work through `/chat`, for example
@@ -30,6 +31,10 @@ database records rather than embedding sample results in the frontend.
 New tables are added automatically without resetting existing orders, payments,
 refunds, or modified product stock. Starting a new conversation leaves archived runs intact.
 Conversation messages and pending approvals are saved in SQLite. The browser URL carries the conversation ID so refreshing or restarting the service restores the same context. Interrupted tasks can resume from the workbench. See [runtime and recovery](docs/agent-runtime.md) for consistency guarantees and limits.
+
+工作台可启用“允许助手按执行结果调整选购步骤”：按真实目录搜索、对比、核验商品，价格或库存不再满足条件时最多重规划两次。运行中支持补充要求、取消后续步骤和排队追问。异步 API 使用 `POST /runs`，持久事件通过 SSE 支持断线续传；已提交业务操作在取消和恢复后仍保留证据。
+
+详见 [自主计划](docs/adaptive-planning.md) 与 [会话控制、上下文及偏好](docs/session-control-memory.md)。真实评测入口 `eval/run_live_eval.py` 包含固定 20 项任务、开发/测试各十项、默认三次重复；未配置模型时返回 `NOT_RUN`。当前仅完成离线验证，未调用真实模型。
 
 ## Live demo
 

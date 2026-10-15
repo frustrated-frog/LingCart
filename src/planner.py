@@ -66,7 +66,7 @@ def create_model_plan(request, history):
                 if len(ids) == 1:
                     allowed_orders.update(ids)
                 break
-    allowed_products = {value.upper() for value in re.findall(r"\bP\d{4}S?\b", request, re.IGNORECASE)}
+    allowed_products = {value.upper() for value in re.findall(r"(?<![A-Za-z0-9])P\d{4}S?(?![A-Za-z0-9])", request, re.IGNORECASE)}
     if any(goal.intent in ORDER_INTENTS and goal.order_id is None for goal in draft.goals):
         intake = TaskIntake(request, tuple(goal.intent for goal in draft.goals), missing_slots=("order_id",),
                             execution_mode=CLARIFICATION_REQUIRED, reason="复合任务缺少订单号")

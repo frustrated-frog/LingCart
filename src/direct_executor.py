@@ -89,6 +89,14 @@ def execute_approved_action(pending_action: dict, user_message: str, run_id: str
     """Execute one explicitly confirmed side effect inside the current session."""
 
     action_type = pending_action.get("type")
+    if action_type == "PROCESS_PAYMENT":
+        # 用户在明确确认中选择的方式成为本次授权参数，执行器不自行放宽匹配。
+        method = _payment_method(user_message)
+        if method:
+            pending_action = {**pending_action, "method": method}
+            if pending_action.get("tool") == "process_payment" and isinstance(pending_action.get("args"), dict):
+                pending_action["args"] = {**pending_action["args"], "method": method}
+                pending_action["action_fingerprint"] = ToolExecutor.fingerprint("process_payment", pending_action["args"])
     order_id = pending_action.get("order_id")
     intake = TaskIntake(
         request=user_message,

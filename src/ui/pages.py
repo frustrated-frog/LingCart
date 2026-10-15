@@ -9,6 +9,9 @@ from src.durable import load_conversation, run_conversation, resume_run
 from src.errors import AgentError
 from src.ui.components import AGENTS, STATUSES, business_results, comparison_table, esc, local_time, order_summary, page_header, product_summary, render_run, status_badge, timeline
 from src.workspace import list_orders, list_runs
+from src.persistence import RunStore
+from src.session_control import ControlStore, SessionController
+from src.intake import analyze_request, LLM_REQUIRED
 
 
 def init_state():
@@ -54,8 +57,17 @@ def execute_message(prompt):
     pending = st.session_state.memory.pending_action
     with st.spinner("正在处理你的需求…"):
         try:
-            run_conversation(prompt, st.session_state.conversation_id,
-                             action_id=(pending or {}).get("action_id"))
+            from src.preferences import PreferenceStore
+            profile_id = st.session_state.get('profile_id') or st.query_params.get('profile')
+            if profile_id:
+                PreferenceStore().bind(st.session_state.conversation_id, profile_id)
+            adaptive = st.session_state.get('adaptive_mode', False) and not pending
+            if adaptive or analyze_request(prompt).execution_mode == LLM_REQUIRED:
+                SessionController().start(st.session_state.conversation_id, prompt,
+                    action_id=(pending or {}).get('action_id'), execution_mode='adaptive' if adaptive else 'auto')
+            else:
+                run_conversation(prompt, st.session_state.conversation_id,
+                                 action_id=(pending or {}).get("action_id"))
             st.session_state.archive_error = None
         except Exception as exc:
             st.session_state.archive_error = f"任务中断：{exc}。请恢复当前任务后继续。"
@@ -92,18 +104,10 @@ def home_page():
         execute_message(queued)
         st.rerun()
     page_header("工作台", "从选购到售后，让每一个消费需求都有下一步。")
+    st.checkbox('允许助手按执行结果调整选购步骤', key='adaptive_mode',
+                help='在预算和需求内搜索、比较并核验商品；无匹配时向你澄清。')
     if st.session_state.get("active_run_id"):
-        st.warning("上一项任务尚未结束，可以从已保存的执行步骤继续。")
-        if st.button("恢复任务", key="resume_run", type="primary"):
-            try:
-                resume_run(st.session_state.conversation_id, st.session_state.active_run_id)
-                st.session_state.archive_error = None
-            except AgentError as exc:
-                st.session_state.archive_error = str(exc)
-            restore_conversation()
-            st.rerun()
-        if st.session_state.archive_error:
-            st.error(st.session_state.archive_error)
+        active_run_panel()
         return
     left, right = st.columns([1.65, 1], gap="large")
     with left:
@@ -335,3 +339,106 @@ def lab_page():
         render_run(run["result"], detailed=True)
     with st.expander("任务理解结果"):
         st.json(run["result"].get("intake", {}))
+    saved = RunStore().run(chosen)
+    if saved:
+        with st.expander('结构化上下文与证据引用'):
+            st.json(saved['checkpoint'].get('context', {}))
+        with st.expander('运行控制与计划版本'):
+            st.json(ControlStore().commands(saved['session_id'], chosen))
+            st.json(saved['checkpoint'].get('adaptive', {}).get('journal', []))
+
+
+@st.fragment(run_every='1s')
+def active_run_panel():
+    run_id, session_id = st.session_state.active_run_id, st.session_state.conversation_id
+    run = RunStore().run(run_id)
+    if run is None or run['session_id'] != session_id:
+        st.error('没有找到当前会话的任务。')
+        return
+    if run['result'] is not None:
+        restore_conversation()
+        st.rerun()
+    st.info('助手正在处理，可以补充要求、排队追问或停止后续步骤。')
+    st.write(run['request'])
+    with st.expander('正在执行的步骤', expanded=True):
+        render_run({'run_id': run_id, 'events': run['events'], 'trace': [], 'status': run['status']})
+    controls = ControlStore()
+    revision = controls.revision(run_id)
+    st.caption(f'当前需求版本：{revision}')
+    if run['status'] == 'INTERRUPTED':
+        if st.button('恢复任务', key='resume_run', type='primary'):
+            try:
+                SessionController().start(session_id, '', resume_id=run_id)
+                st.rerun()
+            except AgentError as error:
+                st.error(str(error))
+    with st.form('running_instruction', clear_on_submit=True):
+        message = st.text_input('补充需求', placeholder='例如：预算改成 300 元，优先有货')
+        kind = st.radio('执行时机', ['STEER', 'FOLLOW_UP'], horizontal=True,
+                        format_func=lambda v: {'STEER': '调整当前任务', 'FOLLOW_UP': '当前任务完成后追问'}[v])
+        submitted = st.form_submit_button('发送补充要求', type='primary')
+    if submitted and message.strip():
+        try:
+            controls.enqueue(session_id, run_id, kind, message=message.strip(), expected_revision=revision)
+            st.rerun()
+        except AgentError as error:
+            st.error(str(error))
+    if st.button('停止后续步骤', key='cancel_running'):
+        try:
+            controls.enqueue(session_id, run_id, 'CANCEL')
+            if run['status'] == 'INTERRUPTED':
+                SessionController().start(session_id, '', resume_id=run_id)
+            st.rerun()
+        except AgentError as error:
+            st.error(str(error))
+    for command in controls.commands(session_id, run_id):
+        label = {'STEER': '调整需求', 'FOLLOW_UP': '后续追问', 'CANCEL': '停止任务'}[command['kind']]
+        status = {'QUEUED': '等待执行', 'APPLIED': '已应用', 'CANCELLED': '已取消'}.get(command['status'], command['status'])
+        st.caption(f"{label} · {status} · {command['payload'].get('message', '')}")
+
+
+def preferences_page():
+    from src.preferences import PreferenceStore
+    page_header('我的偏好', '由你明确保存，可跨对话使用；当前需求中的条件优先。')
+    store = PreferenceStore()
+    profile_id = st.session_state.get('profile_id') or st.query_params.get('profile')
+    if not profile_id:
+        if st.button('创建我的偏好档案', type='primary'):
+            st.session_state.profile_id = store.create()
+            st.query_params['profile'] = st.session_state.profile_id
+            st.rerun()
+        st.caption('保存的预算可用于没有指定预算的选购请求；价格、库存和订单状态每次查询。')
+        return
+    try:
+        store.bind(st.session_state.conversation_id, profile_id)
+        rows = store.list(profile_id)
+    except AgentError as error:
+        st.error(str(error))
+        return
+    st.session_state.profile_id = profile_id
+    st.query_params['profile'] = profile_id
+    with st.form('remember_preference', clear_on_submit=False):
+        key = st.selectbox('偏好类型', ['max_price', 'category', 'features'],
+                           format_func=lambda k: {'max_price': '默认预算', 'category': '常用品类', 'features': '选购特征'}[k])
+        value = st.text_input('偏好内容', placeholder='例如：500；耳机；降噪,便携')
+        confirmed = st.checkbox('确认保存为跨对话偏好')
+        saved = st.form_submit_button('保存偏好', type='primary')
+    st.caption('选购特征可填：降噪、静音、三模、便携、4K、蓝牙、头戴式、入耳式等；多项用逗号分隔。')
+    if saved:
+        try:
+            parsed = float(value) if key == 'max_price' else ([v.strip() for v in value.replace('，', ',').split(',') if v.strip()] if key == 'features' else value.strip())
+            store.remember(profile_id, key, parsed, confirmed=confirmed)
+            st.rerun()
+        except (ValueError, AgentError) as error:
+            st.error(str(error))
+    if not rows:
+        st.info('还没有保存偏好。')
+    for row in rows:
+        with st.container(border=True):
+            st.write({'max_price': '默认预算', 'category': '常用品类', 'features': '选购特征'}[row['key']])
+            st.write(row['value']['value'])
+            st.caption(f"你明确保存 · 版本 {row['version']} · {local_time(row['updated_at'])}")
+            if st.button('忘记这项偏好', key=f"forget_{row['key']}"):
+                store.forget(profile_id, row['key'])
+                st.rerun()
+    st.caption('档案随当前页面链接保留。新建对话会沿用；请仅向可信的人分享包含档案编号的链接。')

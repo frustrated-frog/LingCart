@@ -55,3 +55,34 @@ def test_order_page_request_refreshes_pending_action_in_sidebar():
     assert app.session_state["memory"].pending_action["order_id"] == 1003
     assert next(button for button in app.button if button.label == "新建对话").disabled
     assert tools.get_payment_status(1003)["status"] == "pending"
+
+
+def test_preferences_page_saves_and_forgets_confirmed_budget():
+    app = AppTest.from_string('from src.ui.pages import init_state, preferences_page\ninit_state()\npreferences_page()').run(timeout=15)
+    next(b for b in app.button if b.label == '创建我的偏好档案').click().run(timeout=15)
+    app.text_input[0].set_value('300')
+    app.checkbox[0].check()
+    next(b for b in app.button if b.label == '保存偏好').click().run(timeout=15)
+    assert not app.exception
+    from src.preferences import PreferenceStore
+    profile = app.session_state['profile_id']
+    assert PreferenceStore().list(profile)[0]['value']['value'] == 300
+    app.button(key='forget_max_price').click().run(timeout=15)
+    assert not app.exception
+    assert PreferenceStore().list(profile) == []
+
+
+def test_active_run_panel_accepts_steering_command():
+    from src.session_control import ControlStore
+    claim = ControlStore().claim('active-ui', 'one', '推荐耳机', {})
+    app = AppTest.from_string('from src.ui.pages import init_state, home_page\ninit_state()\nhome_page()')
+    app.session_state['conversation_id'] = 'active-ui'
+    app.session_state['active_run_id'] = claim['run_id']
+    app.run(timeout=15)
+    assert not app.exception
+    app.text_input[0].set_value('预算改成300元')
+    next(b for b in app.button if b.label == '发送补充要求').click().run(timeout=15)
+    assert not app.exception
+    commands = ControlStore().commands('active-ui', claim['run_id'])
+    assert commands[0]['kind'] == 'STEER'
+    assert commands[0]['payload']['revision'] == 1

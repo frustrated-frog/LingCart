@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "name": "baseline-v2",
+  "description": "运行时正确性收紧后的固定离线基线；循环无进展只允许 PARTIAL，旧版基线保留。",
+  "dataset_sha256": "cc504b7e78243582d943730bf4f16ad65a281d431a62a071fe331fb5294e374a",
+  "expected": {
+    "cases_passed": 60,
+    "cases_total": 60,
+    "turns_passed": 71,
+    "turns_total": 71
+  },
+  "maximums": {
+    "model_invocations": 12,
+    "tool_calls": 73,
+    "physical_tool_calls": 74
+  }
+}

@@ -47,7 +47,21 @@ def restore_runtime_snapshot(payload: dict | None, run_id: str) -> dict:
     snapshot = dict(payload)
     schema_version = snapshot.get("schema_version")
     if schema_version is None:
-        # V1 used phase/sequence but had no explicit protocol version.
+        # 只接受原始 V1 的已知字段与类型，不能通过删版本绕过 V2 校验。
+        legacy_fields = {"conversation", "history", "phase", "budget", "models", "sequence", "plan", "plan_definition"}
+        valid_legacy = (
+            bool(snapshot) and set(snapshot) <= legacy_fields
+            and isinstance(snapshot.get("conversation"), dict)
+            and isinstance(snapshot.get("history"), list)
+            and isinstance(snapshot.get("phase", "INTAKE"), str)
+            and isinstance(snapshot.get("budget", {}), dict)
+            and isinstance(snapshot.get("models", {}), dict)
+            and isinstance(snapshot.get("sequence", 0), int)
+            and not isinstance(snapshot.get("sequence", 0), bool)
+            and snapshot.get("sequence", 0) >= 0
+        )
+        if not valid_legacy:
+            raise AgentError("CHECKPOINT_CORRUPT", "无版本检查点不符合旧版格式，拒绝迁移", retryable=False)
         snapshot.update(
             schema_version=CURRENT_RUNTIME_SCHEMA_VERSION,
             state_version=max(1, int(snapshot.get("sequence", 0)) + 1),

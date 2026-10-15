@@ -1,6 +1,7 @@
 from langchain_core.tools import tool
 
 from src.agents import base
+from src.runtime import ToolSpec
 
 
 class FakeToolCallMessage:
@@ -52,7 +53,7 @@ def test_run_tool_agent_returns_normal_reply(monkeypatch):
     ]
     monkeypatch.setattr(base, "get_llm", lambda **_kwargs: FakeLLM(responses))
 
-    result = base.run_tool_agent("test", "system prompt", [echo_tool], "hello")
+    result = base.run_tool_agent("test", "system prompt", [ToolSpec(echo_tool)], "hello")
 
     assert result["reply"] == "Here is your answer."
     assert len(result["trace"]) == 1
@@ -67,7 +68,7 @@ def test_run_tool_agent_falls_back_when_model_never_answers(monkeypatch):
     )
     monkeypatch.setattr(base, "get_llm", lambda **_kwargs: FakeLLM([stuck_response] * 10))
 
-    result = base.run_tool_agent("test", "system prompt", [echo_tool], "hello")
+    result = base.run_tool_agent("test", "system prompt", [ToolSpec(echo_tool)], "hello")
 
     assert result["reply"] == "echoed:x"  # falls back to the tool result, never blank
     assert len(result["trace"]) == 2  # one warning/reuse, then the no-progress loop is blocked
@@ -85,12 +86,14 @@ def test_run_tool_agent_stops_on_repeated_identical_call(monkeypatch):
     ]
     monkeypatch.setattr(base, "get_llm", lambda **_kwargs: FakeLLM(responses))
 
-    result = base.run_tool_agent("test", "system prompt", [echo_tool], "hello")
+    result = base.run_tool_agent("test", "system prompt", [ToolSpec(echo_tool)], "hello")
 
     assert len(result["trace"]) == 2
     assert result["trace"][1]["status"] == "REUSED"
     assert result["reply"] == "echoed:a"
     assert result["terminal_reason"] == "REPEATED_TOOL_CALL"
+    assert result["status"] == "PARTIAL"
+    assert result["error"]["code"] == "REPEATED_TOOL_CALL"
 
 
 def test_runtime_closes_every_tool_call_when_a_batch_is_stopped(monkeypatch):
@@ -104,7 +107,7 @@ def test_runtime_closes_every_tool_call_when_a_batch_is_stopped(monkeypatch):
     ]
     monkeypatch.setattr(base, "get_llm", lambda **_kwargs: FakeLLM(responses))
 
-    result = base.run_tool_agent("test", "system prompt", [echo_tool], "hello")
+    result = base.run_tool_agent("test", "system prompt", [ToolSpec(echo_tool)], "hello")
 
     tool_messages = [message for message in result["messages"] if getattr(message, "type", None) == "tool"]
     assert [message.tool_call_id for message in tool_messages] == ["first", "duplicate", "blocked", "remaining"]
@@ -124,7 +127,7 @@ def test_run_tool_agent_rejects_unknown_tool_without_key_error(monkeypatch):
     ]
     monkeypatch.setattr(base, "get_llm", lambda **_kwargs: FakeLLM(responses))
 
-    result = base.run_tool_agent("test", "system prompt", [echo_tool], "hello")
+    result = base.run_tool_agent("test", "system prompt", [ToolSpec(echo_tool)], "hello")
 
     assert result["status"] == "FAILED"
     assert result["error"]["code"] == "UNKNOWN_TOOL"
@@ -138,7 +141,7 @@ def test_run_tool_agent_records_invalid_tool_arguments(monkeypatch):
     ]
     monkeypatch.setattr(base, "get_llm", lambda **_kwargs: FakeLLM(responses))
 
-    result = base.run_tool_agent("test", "system prompt", [echo_tool], "hello")
+    result = base.run_tool_agent("test", "system prompt", [ToolSpec(echo_tool)], "hello")
 
     assert result["status"] == "FAILED"
     assert result["error"]["code"] == "INVALID_TOOL_ARGUMENTS"
@@ -151,7 +154,7 @@ def test_run_tool_agent_records_tool_exception(monkeypatch):
     ]
     monkeypatch.setattr(base, "get_llm", lambda **_kwargs: FakeLLM(responses))
 
-    result = base.run_tool_agent("test", "system prompt", [failing_tool], "hello")
+    result = base.run_tool_agent("test", "system prompt", [ToolSpec(failing_tool)], "hello")
 
     assert result["status"] == "FAILED"
     assert result["error"]["code"] == "TOOL_ERROR"
@@ -162,7 +165,7 @@ def test_model_failure_after_tool_does_not_replay_tool(monkeypatch):
     first = FakeToolCallMessage(tool_calls=[{"name": "echo_tool", "args": {"value": "safe"}, "id": "1"}])
     monkeypatch.setattr(base, "get_llm", lambda **_kwargs: FailingAfterToolLLM([first]))
 
-    result = base.run_tool_agent("test", "system prompt", [echo_tool], "hello")
+    result = base.run_tool_agent("test", "system prompt", [ToolSpec(echo_tool)], "hello")
 
     assert len(result["trace"]) == 1
     assert result["reply"] == "echoed:safe"

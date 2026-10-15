@@ -149,12 +149,14 @@ def test_crash_inside_business_transaction_rolls_back_both_write_and_ledger(data
     schema = tool_spec("process_payment", original).schema
     first = run_conversation("帮我支付订单 1003", "rollback")
     monkeypatch.setitem(direct._APPROVED_TOOLS, "process_payment", ToolSpec(crashing_payment, schema, True, True))
+    monkeypatch.setattr(tools, "process_payment", crashing_payment)
     with pytest.raises(CrashAfterWrite):
         run_conversation("确认", "rollback")
     assert tools.get_payment_status(1003)["status"] == "pending"
     with tools._session() as session:
         assert not session.scalars(select(ToolLedger).where(ToolLedger.tool_name == "process_payment")).all()
     monkeypatch.setitem(direct._APPROVED_TOOLS, "process_payment", original)
+    monkeypatch.setattr(tools, "process_payment", original)
     result = resume_run("rollback", RunStore().conversation("rollback")["active_run_id"])
     assert result["status"] == "SUCCEEDED"
     assert tools.get_payment_status(1003)["status"] == "paid"
@@ -227,7 +229,8 @@ def test_external_write_with_uncertain_outcome_is_not_replayed(database):
     def external_payment(order_id: int, method: str):
         calls.append(order_id)
         raise TimeoutError("external outcome unknown")
-    context = RunRuntime(claim["run_id"], store=store, token=claim["token"], snapshot=claim["snapshot"], approval=first["pending_action"])
+    approval = {**first['pending_action'], 'tool': 'process_payment', 'args': {'order_id': 1003, 'method': 'card'}}
+    context = RunRuntime(claim["run_id"], store=store, token=claim["token"], snapshot=claim["snapshot"], approval=approval)
     spec = ToolSpec(external_payment, tool_spec("process_payment", tools.process_payment).schema, True, False)
     with runtime_scope(context):
         executor = ToolExecutor({"process_payment": spec}, TraceRecorder(context.run_id))
@@ -257,3 +260,31 @@ def test_structured_intake_clarification_survives_service_restart(database, monk
     second = run_conversation("1002", "model-slots")
     assert second["status"] == "SUCCEEDED"
     assert {entry["tool"] for entry in second["trace"]} == {"get_order_status", "answer_faq"}
+
+
+def test_ledger_recovery_closes_original_execution_evidence(database):
+    from src.trace_projector import project_trace
+    first = run_conversation('帮我支付订单1003', 'audit-recovery')
+    with pytest.raises(CrashAfterWrite):
+        run_conversation('确认使用 card 支付', 'audit-recovery', action_id=first['pending_action']['action_id'], store=CrashingStore())
+    active = RunStore().conversation('audit-recovery')['active_run_id']
+    result = resume_run('audit-recovery', active)
+    assert result['status'] == 'SUCCEEDED'
+    assert project_trace(result['events'])['integrity']['complete'] is True
+    reused = next(e for e in result['events'] if e['type'] == 'tool_result' and e['tool'] == 'process_payment')
+    assert reused['source_ledger'] and reused['execution_id']
+
+
+def test_cancel_after_committed_write_recovers_real_outcome(database):
+    from src.session_control import ControlStore
+    from src.trace_projector import project_trace
+    first = run_conversation('帮我支付订单1003', 'cancel-recovery')
+    with pytest.raises(CrashAfterWrite):
+        run_conversation('确认使用 card 支付', 'cancel-recovery', action_id=first['pending_action']['action_id'], store=CrashingStore())
+    active = RunStore().conversation('cancel-recovery')['active_run_id']
+    ControlStore().enqueue('cancel-recovery', active, 'CANCEL')
+    result = resume_run('cancel-recovery', active)
+    assert result['status'] == 'CANCELLED'
+    assert tools.get_payment_status(1003)['status'] == 'paid'
+    assert any(t['tool'] == 'process_payment' and t['result']['success'] for t in result['trace'])
+    assert project_trace(result['events'])['integrity']['complete'] is True

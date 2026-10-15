@@ -7,7 +7,8 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, Tool
 from src.errors import AgentError, classify_exception
 from src.llm import extract_usage, get_llm
 from src.loop_guard import LoopAction, ProgressAwareLoopGuard
-from src.runtime import ApprovalRequired, BudgetLimits, RunRuntime, ToolExecutor, TraceRecorder, current_runtime, runtime_scope
+from src.session_control import ControlSignal
+from src.runtime import ApprovalRequired, BudgetLimits, RunRuntime, ToolExecutor, ToolSpec, TraceRecorder, current_runtime, runtime_scope
 
 _EMPTY_USAGE = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
 
@@ -45,6 +46,7 @@ def _append_protocol_result(messages, recorder, call, call_id, status, result, *
         agent=agent_name,
         tool=call.get("name", ""),
         tool_call_id=call_id,
+        protocol_id=call.get("_protocol_id"),
         status=status,
         reason=reason,
         action_fingerprint=ToolExecutor.fingerprint(call.get("name", ""), call.get("args")),
@@ -79,11 +81,12 @@ def run_tool_agent(agent_name, system_prompt, agent_tools, user_message, history
 
 def _run_loop(agent_name, system_prompt, agent_tools, user_message, history, max_rounds, max_tool_calls, run_id):
     context = current_runtime()
+    event_start = len(context.events)
     recorder = TraceRecorder(run_id)
     executor = ToolExecutor({tool.name: tool for tool in agent_tools}, recorder, max_calls=max_tool_calls)
     decision_model = get_llm(purpose="agent")
     final_model = get_llm(purpose="final_response")
-    bound_model = decision_model.bind_tools(agent_tools)
+    bound_model = decision_model.bind_tools([item.function if isinstance(item, ToolSpec) else item for item in agent_tools])
     messages = [SystemMessage(content=system_prompt), *(history or []), HumanMessage(content=user_message)]
     trace, errors, loop_guard = [], [], ProgressAwareLoopGuard()
     usage = dict(_EMPTY_USAGE)
@@ -106,7 +109,8 @@ def _run_loop(agent_name, system_prompt, agent_tools, user_message, history, max
             break
         usage = sum_usage(usage, extract_usage(response))
         # Cache-compatible AIMessage history even for deterministic test doubles.
-        calls = getattr(response, "tool_calls", [])
+        calls = [dict(call, id=call.get("id") or f"call-{rounds}-{index + 1}")
+                 for index, call in enumerate(getattr(response, "tool_calls", []))]
         try:
             message = AIMessage(content=response.content, tool_calls=calls)
         except (ValueError, TypeError):
@@ -114,6 +118,18 @@ def _run_loop(agent_name, system_prompt, agent_tools, user_message, history, max
             reason, status, reply = "MODEL_FORMAT_ERROR", "PARTIAL" if trace else "FAILED", ""
             break
         messages.append(message)
+        calls = [dict(call, _protocol_id=uuid.uuid4().hex) for call in calls]
+        for call in calls:
+            spec = executor.registry.get(call.get("name"))
+            if spec and spec.schema and isinstance(call.get("args"), dict) and not set(call['args']) - set(spec.schema.model_fields):
+                try:
+                    call["args"] = spec.schema.model_validate(call["args"], strict=True).model_dump()
+                except ValueError:
+                    pass  # 执行器负责记录无效参数错误。
+        for call in calls:
+            recorder.record("tool_requested", agent=agent_name, tool=call.get("name", ""),
+                            tool_call_id=call["id"], protocol_id=call["_protocol_id"],
+                            action_fingerprint=ToolExecutor.fingerprint(call.get("name", ""), call.get("args")))
         reply = as_text(response.content).strip()
         if not calls:
             break
@@ -134,6 +150,9 @@ def _run_loop(agent_name, system_prompt, agent_tools, user_message, history, max
             loop_decision = loop_guard.before_call(fingerprint)
             if loop_decision.action == LoopAction.BLOCK:
                 reason = "REPEATED_TOOL_CALL"
+                # 已取得部分观察并不表示当前用户目标已经完成。
+                status = "PARTIAL" if any(t["status"] in {"SUCCEEDED", "REUSED", "BUSINESS_REJECTED"} for t in trace) else "FAILED"
+                errors.append({"code": reason, "message": "工具调用未产生新进展，当前目标尚未验证完成", "retryable": False})
                 recorder.record(
                     "loop_blocked", agent=agent_name, tool=name, code=reason,
                     message="工具调用未产生新进展，已停止循环", retryable=False,
@@ -167,6 +186,10 @@ def _run_loop(agent_name, system_prompt, agent_tools, user_message, history, max
                 loop_guard.after_result(fingerprint, result)
                 trace.append(dict(run_id=run_id, agent=agent_name, tool=name, args=args,
                                   result=result, status=event["status"], duration_ms=event["duration_ms"]))
+            except ControlSignal as signal:
+                _cancel_remaining_calls(messages, recorder, calls, call_index, agent_name=agent_name,
+                                        round_index=rounds, reason="USER_" + signal.kind)
+                raise
             except ApprovalRequired as approval:
                 for event in recorder.events[prior_event_count:]:
                     if event["type"] == "tool_result":
@@ -174,7 +197,7 @@ def _run_loop(agent_name, system_prompt, agent_tools, user_message, history, max
                                           result=event["result"], status=event["status"], duration_ms=event["duration_ms"]))
                 pending = approval.pending
                 status, reason = "WAITING_APPROVAL", "APPROVAL_REQUIRED"
-                reply = f"订单 {pending['order_id']} 的操作需要你明确确认，尚未修改支付或退款状态。"
+                reply = f"订单 {pending['order_id']} 的操作需要你明确确认，尚未修改支付或退款状态。" if "order_id" in pending else "该操作需要你明确确认后才能执行。"
                 _append_protocol_result(
                     messages, recorder, call, call_id, "WAITING_APPROVAL",
                     {"status": "WAITING_APPROVAL", "requires_approval": True},
@@ -192,7 +215,7 @@ def _run_loop(agent_name, system_prompt, agent_tools, user_message, history, max
                 result = {"error": str(error), "code": error.code}
                 loop_guard.after_result(fingerprint, result)
                 trace.append(dict(run_id=run_id, agent=agent_name, tool=name, args=args if isinstance(args, dict) else {}, result=result, status="FAILED", duration_ms=None))
-                if "BUDGET" in error.code or error.code == "UNCERTAIN_TOOL_OUTCOME":
+                if "BUDGET" in error.code or error.code in {"UNCERTAIN_TOOL_OUTCOME", "TOOL_REPLAY_FORBIDDEN"}:
                     reason, status, stop = error.code, "PARTIAL" if any(t["status"] == "SUCCEEDED" for t in trace) else "FAILED", True
                     reply = ""
                     _append_protocol_result(
@@ -220,6 +243,6 @@ def _run_loop(agent_name, system_prompt, agent_tools, user_message, history, max
     if not reply:
         reply = _serialize_tool_result(successes[-1]["result"]) if successes else "任务没有产生可验证的结果。"
     recorder.record("terminal", status=status, reason=reason, error=errors[-1] if errors else None)
-    return dict(run_id=run_id, reply=reply, trace=trace, events=recorder.events, messages=messages,
+    return dict(run_id=run_id, reply=reply, trace=trace, events=list(context.events[event_start:]), messages=messages,
                 agent=agent_name, usage=usage, status=status, terminal_reason=reason,
                 error=errors[-1] if errors else None, pending_action=pending)

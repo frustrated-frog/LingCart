@@ -14,11 +14,12 @@ STATUSES = {"placed": "已下单", "shipped": "运输中", "delivered": "已送�
             "requested": "退款申请中", "approved": "退款已批准", "completed": "退款完成",
             "SUCCEEDED": "已完成", "FAILED": "执行失败", "ESCALATED": "已转人工", "WAITING_APPROVAL": "等待确认",
             "WAITING_CLARIFICATION": "需要补充信息", "CANCELLED": "已取消", "PARTIAL": "部分完成",
-            "INTERRUPTED": "等待恢复", "RUNNING": "执行中", "REUSED": "复用已保存结果", "SKIPPED": "已跳过", "REJECTED": "无需执行"}
+            "INTERRUPTED": "等待恢复", "RUNNING": "执行中", "REUSED": "复用已保存结果", "SKIPPED": "已跳过", "REJECTED": "无需执行",
+            "NOT_NEEDED": "无需对比", "BUSINESS_ERROR": "业务查询失败", "BUSINESS_REJECTED": "业务条件不满足"}
 TOOLS = {"get_order_status": "查询订单状态", "get_order_details": "读取订单详情", "track_shipment": "查询物流进度",
          "check_refund_eligibility": "核验退款资格", "initiate_refund": "发起退款申请", "get_payment_status": "查询支付状态",
          "process_payment": "处理支付", "answer_faq": "查询服务规则", "escalate_to_human": "转交人工客服",
-         "search_products": "搜索商品目录", "compare_products": "对比商品参数"}
+         "search_products": "搜索商品目录", "compare_products": "对比商品参数", "select_product": "核验并选择商品"}
 AGENTS = {"order": "订单助手", "refund": "售后助手", "payment": "支付助手", "faq": "规则助手",
           "shopping": "选购助手", "intake": "任务识别", "runtime": "运行系统", "escalate": "人工客服", "orchestrator": "协作助手"}
 
@@ -114,7 +115,7 @@ def render_run(result: dict, detailed: bool = False) -> None:
         elif kind == "tool_call":
             items.append((TOOLS.get(event.get("tool"), event.get("tool", "工具调用")), "已发起调用"))
         elif kind == "tool_result":
-            items.append(("工具返回", event.get("status", "已返回")))
+            items.append(("工具返回", STATUSES.get(event.get("status"), event.get("status", "已返回"))))
         elif kind == "model_call":
             items.append(("模型调用", f"{event.get('duration_ms', 0):.0f}ms"))
         elif kind == "error":
@@ -125,6 +126,15 @@ def render_run(result: dict, detailed: bool = False) -> None:
             items.append(("收到操作确认", event.get("decision", "")))
         elif kind == "verification":
             items.append(("核验任务结果", "全部目标已完成" if event.get("all_goals_satisfied") else "仍有待完成或待确认的步骤"))
+        elif kind == 'control_applied':
+            items.append(({'STEER': '已更新当前需求', 'CANCEL': '已收到停止要求'}.get(event.get('kind'), '已应用控制指令'),
+                          f"需求版本 {event.get('goal_revision', 0)}"))
+        elif kind == 'plan_replanned':
+            items.append(('调整后续计划', (event.get('patch') or {}).get('reason', '根据最新结果调整')))
+        elif kind == 'verification_failed':
+            items.append(('当前候选未通过核验', event.get('reason', '将检查后续步骤')))
+        elif kind == 'hook_failed':
+            items.append(('领域规则未通过', event.get('code', '扩展执行失败')))
     if items:
         timeline(items)
     if detailed:

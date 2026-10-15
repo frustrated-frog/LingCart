@@ -189,3 +189,22 @@ def test_api_interruption_returns_handle_and_resumes_without_losing_the_request(
     assert resumed.status_code == 200
     assert resumed.json()["status"] == "SUCCEEDED"
     assert resumed.json()["run_id"] == handle["run_id"]
+
+
+def test_events_reconnect_uses_persisted_sequence():
+    run = client.post('/chat', json={'message': '查询订单1002物流', 'session_id': 'stream'}).json()
+    response = client.get(f"/runs/{run['run_id']}/events", params={'session_id': 'stream'}, headers={'Last-Event-ID': '1'})
+    assert response.status_code == 200
+    assert 'id: 1\n' not in response.text
+    assert 'event: terminal' in response.text
+    assert client.get(f"/runs/{run['run_id']}/events", params={'session_id': 'other'}).status_code == 404
+
+
+def test_preferences_require_explicit_save_and_are_scoped():
+    profile = client.post('/profiles').json()['profile_id']
+    other = client.post('/profiles').json()['profile_id']
+    assert client.put(f'/profiles/{profile}/preferences', json={'key': 'max_price', 'value': 300}).status_code == 409
+    assert client.put(f'/profiles/{profile}/preferences', json={'key': 'max_price', 'value': 300, 'confirmed': True}).status_code == 200
+    assert client.get(f'/profiles/{other}/preferences').json()['preferences'] == []
+    assert client.post(f'/profiles/{profile}/bindings', json={'session_id': 'profile-session'}).status_code == 200
+    assert client.delete(f'/profiles/{profile}/preferences/max_price').json()['forgotten']

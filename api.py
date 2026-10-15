@@ -248,3 +248,164 @@ def resume(run_id: str, req: ResumeRequest):
         return _response(req.session_id, resume_run(req.session_id, run_id, runner=run_orchestrator))
     except AgentError as exc:
         raise HTTPException(status_code=409, detail={"code": exc.code, "message": str(exc), "retryable": exc.retryable}) from exc
+
+
+class StartRunRequest(ChatRequest):
+    execution_mode: str = Field('auto', pattern='^(auto|adaptive)$')
+
+
+class ControlRequest(BaseModel):
+    session_id: str = Field(..., min_length=1, max_length=64)
+    message: str = Field('', max_length=12000)
+    command_id: str | None = Field(None, min_length=1, max_length=64)
+    expected_revision: int | None = Field(None, ge=0)
+
+
+def _control_error(error):
+    return HTTPException(404 if error.code == 'RUN_NOT_FOUND' else 409,
+                         detail={'code': error.code, 'message': str(error), 'retryable': error.retryable})
+
+
+@app.post('/runs', status_code=202)
+def start_run(req: StartRunRequest):
+    from src.session_control import SessionController
+    try:
+        handle = SessionController().start(req.session_id or uuid.uuid4().hex, req.message,
+                    request_id=req.request_id, action_id=req.action_id, execution_mode=req.execution_mode)
+        return JSONResponse(status_code=200 if handle.get('cached') else 202, content=handle)
+    except AgentError as error:
+        raise _control_error(error) from error
+
+
+def _enqueue(run_id, req, kind):
+    from src.session_control import ControlStore
+    try:
+        return ControlStore().enqueue(req.session_id, run_id, kind, message=req.message,
+                         command_id=req.command_id, expected_revision=req.expected_revision)
+    except AgentError as error:
+        raise _control_error(error) from error
+
+
+@app.post('/runs/{run_id}/steer', status_code=202)
+def steer_run(run_id: str, req: ControlRequest):
+    return _enqueue(run_id, req, 'STEER')
+
+
+@app.post('/runs/{run_id}/cancel', status_code=202)
+def cancel_run(run_id: str, req: ControlRequest):
+    return _enqueue(run_id, req, 'CANCEL')
+
+
+@app.post('/runs/{run_id}/follow-up', status_code=202)
+def follow_up_run(run_id: str, req: ControlRequest):
+    return _enqueue(run_id, req, 'FOLLOW_UP')
+
+
+@app.get('/runs/{run_id}/commands')
+def run_commands(run_id: str, session_id: str):
+    from src.session_control import ControlStore
+    try:
+        store = ControlStore()
+        return {'revision': store.revision(run_id), 'commands': store.commands(session_id, run_id)}
+    except AgentError as error:
+        raise _control_error(error) from error
+
+
+@app.post('/conversations/{session_id}/drain', status_code=202)
+def drain_queue(session_id: str):
+    """进程重启后显式继续已落库的后续任务，不重放中断的写操作。"""
+    from src.session_control import SessionController
+    return {'next_run': SessionController().drain(session_id)}
+
+
+@app.post('/runs/{run_id}/resume-async', status_code=202)
+def resume_async(run_id: str, req: ResumeRequest):
+    from src.session_control import SessionController
+    try:
+        return SessionController().start(req.session_id, '', resume_id=run_id)
+    except AgentError as error:
+        raise _control_error(error) from error
+
+
+@app.get('/runs/{run_id}/events')
+async def run_events(run_id: str, session_id: str, request: Request, after: int = 0):
+    """SSE 仅传输已落库的实际事件；序号支持断线续传。"""
+    import asyncio
+    import json
+    from fastapi.responses import StreamingResponse
+    get_run(run_id, session_id)
+    try:
+        cursor = max(after, int(request.headers.get('last-event-id', '0')))
+    except ValueError as error:
+        raise HTTPException(400, '事件序号必须为整数') from error
+
+    async def stream():
+        nonlocal cursor
+        while not await request.is_disconnected():
+            run = RunStore().run(run_id)
+            if not run or run['session_id'] != session_id:
+                break
+            for event in run['events']:
+                if event['sequence'] > cursor:
+                    cursor = event['sequence']
+                    yield f"id: {cursor}\nevent: {event['type']}\ndata: {json.dumps(event, ensure_ascii=False)}\n\n"
+            if run['result'] is not None or run['status'] == 'INTERRUPTED':
+                break
+            yield ': heartbeat\n\n'
+            await asyncio.sleep(.25)
+    return StreamingResponse(stream(), media_type='text/event-stream',
+                             headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'})
+
+
+class PreferenceBindingRequest(BaseModel):
+    session_id: str = Field(..., min_length=1, max_length=64)
+
+
+class PreferenceRequest(BaseModel):
+    key: str
+    value: object
+    confirmed: bool = False
+
+
+@app.post('/profiles', status_code=201)
+def create_profile():
+    from src.preferences import PreferenceStore
+    return {'profile_id': PreferenceStore().create()}
+
+
+@app.post('/profiles/{profile_id}/bindings')
+def bind_profile(profile_id: str, req: PreferenceBindingRequest):
+    from src.preferences import PreferenceStore
+    try:
+        PreferenceStore().bind(req.session_id, profile_id)
+        return {'bound': True}
+    except AgentError as error:
+        raise _control_error(error) from error
+
+
+@app.get('/profiles/{profile_id}/preferences')
+def get_preferences(profile_id: str, query: str = ''):
+    from src.preferences import PreferenceStore
+    try:
+        return {'preferences': PreferenceStore().list(profile_id, query)}
+    except AgentError as error:
+        raise _control_error(error) from error
+
+
+@app.put('/profiles/{profile_id}/preferences')
+def save_preference(profile_id: str, req: PreferenceRequest):
+    from src.preferences import PreferenceStore
+    try:
+        return {'preferences': PreferenceStore().remember(profile_id, req.key, req.value, confirmed=req.confirmed)}
+    except AgentError as error:
+        raise _control_error(error) from error
+
+
+@app.delete('/profiles/{profile_id}/preferences/{key}')
+def forget_preference(profile_id: str, key: str):
+    from src.preferences import PreferenceStore
+    try:
+        PreferenceStore().forget(profile_id, key)
+        return {'forgotten': True}
+    except AgentError as error:
+        raise _control_error(error) from error

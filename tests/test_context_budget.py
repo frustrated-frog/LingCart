@@ -39,6 +39,7 @@ def test_compaction_preserves_latest_tool_request_and_result_pair():
     messages = [
         SystemMessage(content="system"),
         HumanMessage(content="old " * 100),
+        HumanMessage(content="当前目标"),
         AIMessage(content="", tool_calls=[{"name": "lookup", "args": {}, "id": "latest"}]),
         ToolMessage(content="result " * 100, tool_call_id="latest"),
     ]
@@ -51,6 +52,7 @@ def test_compaction_preserves_latest_tool_request_and_result_pair():
     )
 
     assert stats["dropped_messages"] == 1
+    assert any(message.content == "当前目标" for message in compacted)
     assert any(getattr(message, "tool_calls", None) for message in compacted)
     assert any(getattr(message, "tool_call_id", None) == "latest" for message in compacted)
     _assert_no_orphan_tool_messages(compacted)

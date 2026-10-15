@@ -2,7 +2,7 @@ import os
 from datetime import date, datetime
 from pathlib import Path
 
-from sqlalchemy import create_engine, Date, DateTime, Float, ForeignKey, Integer, JSON, String, Text, UniqueConstraint, text
+from sqlalchemy import create_engine, Boolean, Date, DateTime, Float, ForeignKey, Integer, JSON, String, Text, UniqueConstraint, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -169,3 +169,23 @@ def init_db(engine) -> None:
 
 def get_session_factory(engine):
     return sessionmaker(bind=engine)
+
+
+class RunCommand(Base):
+    """持久控制队列；command_id 同时承担客户端重试幂等键。"""
+    __tablename__ = 'run_commands'
+    command_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    run_id: Mapped[str] = mapped_column(ForeignKey('agent_runs.run_id'), index=True)
+    session_id: Mapped[str] = mapped_column(ForeignKey('conversations.session_id'), index=True)
+    kind: Mapped[str] = mapped_column(String(24))
+    payload: Mapped[dict] = mapped_column(JSON)
+    status: Mapped[str] = mapped_column(String(24), default='QUEUED')
+    created_at: Mapped[datetime] = mapped_column(DateTime)
+    outcome: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+
+
+class RunControl(Base):
+    __tablename__ = 'run_controls'
+    run_id: Mapped[str] = mapped_column(ForeignKey('agent_runs.run_id'), primary_key=True)
+    revision: Mapped[int] = mapped_column(Integer, default=0)
+    closed: Mapped[bool] = mapped_column(Boolean, default=False)

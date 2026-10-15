@@ -1,7 +1,7 @@
 import pytest
 
 from src.errors import AgentError, ErrorCode
-from src.runtime import ToolExecutor, TraceRecorder
+from src.runtime import ToolExecutor, ToolSpec, TraceRecorder
 
 
 def echo(value: str) -> dict:
@@ -14,7 +14,7 @@ def explode(value: str) -> dict:
 
 def test_tool_executor_records_real_call_and_result():
     recorder = TraceRecorder("run-1")
-    executor = ToolExecutor({"echo": echo}, recorder)
+    executor = ToolExecutor({"echo": ToolSpec(echo)}, recorder)
 
     result, event = executor.execute("echo", {"value": "ok"})
 
@@ -40,7 +40,7 @@ def test_exact_duplicate_reuses_result_without_second_execution():
         return {"value": value}
 
     recorder = TraceRecorder("run-2")
-    executor = ToolExecutor({"counted": counted}, recorder)
+    executor = ToolExecutor({"counted": ToolSpec(counted)}, recorder)
     executor.execute("counted", {"value": "same"})
     result, event = executor.execute("counted", {"value": "same"})
 
@@ -60,7 +60,7 @@ def test_unknown_tool_has_stable_error_code():
 
 def test_invalid_arguments_are_rejected_before_execution():
     recorder = TraceRecorder("run-4")
-    executor = ToolExecutor({"echo": echo}, recorder)
+    executor = ToolExecutor({"echo": ToolSpec(echo)}, recorder)
     with pytest.raises(AgentError) as caught:
         executor.execute("echo", {"wrong": "value"})
     assert caught.value.code == ErrorCode.INVALID_TOOL_ARGUMENTS
@@ -68,7 +68,7 @@ def test_invalid_arguments_are_rejected_before_execution():
 
 def test_tool_exception_is_typed_and_observable():
     recorder = TraceRecorder("run-5")
-    executor = ToolExecutor({"explode": explode}, recorder)
+    executor = ToolExecutor({"explode": ToolSpec(explode)}, recorder)
     with pytest.raises(AgentError) as caught:
         executor.execute("explode", {"value": "x"})
     assert caught.value.code == ErrorCode.TOOL_ERROR
@@ -78,7 +78,7 @@ def test_tool_exception_is_typed_and_observable():
 
 def test_tool_budget_is_enforced():
     recorder = TraceRecorder("run-6")
-    executor = ToolExecutor({"echo": echo}, recorder, max_calls=1)
+    executor = ToolExecutor({"echo": ToolSpec(echo)}, recorder, max_calls=1)
     executor.execute("echo", {"value": "one"})
     with pytest.raises(AgentError) as caught:
         executor.execute("echo", {"value": "two"})
@@ -96,7 +96,7 @@ def test_deadline_is_bounded_and_does_not_start_a_second_write():
     context = RunRuntime("deadline", BudgetLimits(call_timeout=.01, read_attempts=1))
     started = time.monotonic()
     with runtime_scope(context), pytest.raises(AgentError) as error:
-        ToolExecutor({"slow": slow}, TraceRecorder(context.run_id)).execute("slow", {"value": "a"})
+        ToolExecutor({"slow": ToolSpec(slow)}, TraceRecorder(context.run_id)).execute("slow", {"value": "a"})
     assert error.value.code == "TOOL_TIMEOUT"
     assert time.monotonic() - started < .08
     assert calls == ["a"]
@@ -110,7 +110,7 @@ def test_budget_priority_and_strict_argument_types():
     context.started -= 31
     assert context.stop_reason("model", 1) == "TIME_BUDGET_EXHAUSTED"
     with pytest.raises(AgentError) as error:
-        ToolExecutor({"echo": echo}, TraceRecorder("strict")).execute("echo", {"value": 123})
+        ToolExecutor({"echo": ToolSpec(echo)}, TraceRecorder("strict")).execute("echo", {"value": 123})
     assert error.value.code == "INVALID_TOOL_ARGUMENTS"
 
 
@@ -133,7 +133,7 @@ def test_final_model_round_cannot_execute_tools(monkeypatch):
     monkeypatch.setattr(base, "get_llm", lambda **_kwargs: Model())
     context = RunRuntime("final", BudgetLimits(max_model_calls=1))
     with runtime_scope(context):
-        result = base.run_tool_agent("test", "system", [final_tool], "hello", run_id=context.run_id)
+        result = base.run_tool_agent("test", "system", [ToolSpec(final_tool)], "hello", run_id=context.run_id)
     assert result["terminal_reason"] == "FINAL_TOOL_CALL_FORBIDDEN"
     assert calls == []
     tool_messages = [message for message in result["messages"] if getattr(message, "type", None) == "tool"]

@@ -2551,7 +2551,7 @@
           "message": "Please help with my purchase concern.",
           "expect": {
             "statuses": [
-              "SUCCEEDED"
+              "PARTIAL"
             ],
             "tools": [
               {

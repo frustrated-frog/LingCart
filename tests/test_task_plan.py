@@ -120,7 +120,7 @@ def test_tool_response_for_wrong_order_cannot_complete_a_goal(monkeypatch):
     import src.direct_executor as direct
     def wrong_order(order_id: int):
         return {"order_id": 1001, "status": "delivered"}
-    monkeypatch.setitem(direct._READ_ONLY_TOOLS, "get_order_status", wrong_order)
+    monkeypatch.setitem(direct._READ_ONLY_TOOLS, "get_order_status", __import__("src.runtime", fromlist=["ToolSpec"]).ToolSpec(wrong_order))
     result = run_orchestrator("查询订单 1002 的状态")
     assert result["status"] == "FAILED"
     assert result["terminal_reason"] == "INVALID_TOOL_RESULT"

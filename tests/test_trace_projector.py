@@ -12,7 +12,13 @@ def test_trace_projector_builds_one_stable_timeline():
     projected = project_trace(events)
 
     assert projected["run_id"] == "run-1"
-    assert projected["integrity"] == {"sequential": True, "single_run": True, "event_count": 4}
+    assert projected["integrity"]["sequential"] is True
+    assert projected["integrity"]["single_run"] is True
+    assert projected["integrity"]["single_terminal"] is True
+    assert projected["integrity"]["tool_pairs"] is True
+    assert projected["integrity"]["protocol_pairs"] is None
+    assert projected["integrity"]["complete"] is None
+    assert projected["integrity"]["event_count"] == 4
     assert projected["summary"]["tool_calls"] == 1
     assert projected["summary"]["tool_results"] == 1
     assert projected["summary"]["terminal_reason"] == "COMPLETED"

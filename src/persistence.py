@@ -40,6 +40,11 @@ def transaction():
 
 
 class RunStore:
+    def outcomes(self, run_id):
+        with tools._session() as session:
+            return [dict(call_key=r.call_key, tool=r.tool_name, args=r.args, status=r.status, result=r.result)
+                    for r in session.scalars(select(ToolLedger).where(ToolLedger.run_id == run_id))]
+
     def _lease(self, session, run_id, token):
         run = session.get(AgentRun, run_id)
         if run is None or run.lease_token != token or run.status != "RUNNING":
@@ -113,6 +118,17 @@ class RunStore:
                 from src.direct_executor import _payment_method
                 executable = pending.get("type") != "PROCESS_PAYMENT" or _payment_method(run.request) or pending.get("method")
                 if action.status == "OPEN" and executable:
+                    chosen_method = _payment_method(run.request)
+                    if pending.get("type") == "PROCESS_PAYMENT" and chosen_method:
+                        pending = {**pending, "method": chosen_method}
+                        if pending.get("tool") == "process_payment" and isinstance(pending.get("args"), dict):
+                            from src.runtime import ToolExecutor
+                            pending["args"] = {**pending["args"], "method": chosen_method}
+                            pending["action_fingerprint"] = ToolExecutor.fingerprint("process_payment", pending["args"])
+                        action.payload = dict(pending)
+                        snapshot = {**snapshot, "conversation": {**snapshot.get("conversation", {}), "pending_action": pending}}
+                        snapshot = seal_runtime_snapshot(snapshot, run.run_id)
+                        checkpoint.payload = json_value(snapshot)
                     action.status = "APPROVED"
                     action.approved_run_id = run.run_id
                 elif action.status != "OPEN" and action.approved_run_id != run.run_id:
@@ -203,6 +219,15 @@ class RunStore:
     def finish(self, run_id, token, result, state):
         with transaction() as session:
             run = self._lease(session, run_id, token)
+            events = [step.payload for step in session.scalars(select(AgentStep).where(
+                AgentStep.run_id == run_id).order_by(AgentStep.sequence))]
+            terminal = {'run_id': run_id, 'sequence': (events[-1]['sequence'] if events else 0) + 1,
+                        'timestamp': datetime.now(UTC).isoformat(), 'type': 'terminal',
+                        'status': result['status'], 'reason': result.get('terminal_reason'), 'error': result.get('error')}
+            if not any(e.get('type') == 'terminal' for e in events):
+                session.add(AgentStep(run_id=run_id, sequence=terminal['sequence'], payload=json_value(terminal)))
+                events.append(terminal)
+            result['events'] = events
             conversation = session.get(Conversation, run.session_id)
             pending = result.get("pending_action")
             if pending:
@@ -232,6 +257,7 @@ class RunStore:
                 status=result["status"],
                 current_node="TERMINAL",
                 terminal_reason=result.get("terminal_reason"),
+                sequence=events[-1]['sequence'],
             ))
         return result
 
