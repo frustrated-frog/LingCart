@@ -52,6 +52,8 @@ A quote's presence alone does not prove correct interpretation. COVERED means th
 Unspecified optional preferences do not require clarification. Unknown catalog encodings/field=null are discoverable
 through tools, not missing human intent. Do not require search results, selections, completion or final delivery here.
 Equivalent descriptions/redundant faithful conditions alone do not justify rejection.
+Relevant prior HUMAN conditions remain in effect until revised; source quotes may come from human history.
+Do not demand that a follow-up repeat its established category or prior applicable conditions verbatim.
 '''
 
 _BINDINGS_AUDIT_PROMPT = '''PHASE: EXECUTION MAPPING ONLY, NOT COMPLETION.
@@ -86,7 +88,7 @@ def binding(request, goal, revision):
     return hashlib.sha256(json.dumps([request, goal, revision], sort_keys=True, ensure_ascii=False).encode()).hexdigest()
 
 
-def review_request(context, state, plan, history, *, phase):
+def review_request(context, state, plan, history, *, phase, _protocol_retry=0):
     """独立调用无规划对话历史，所有调用计入同一预算，异常不降级为通过。"""
     goal = ShoppingGoal.model_validate(effective_goal(state)).model_dump()
     review_state = {**state, 'goal': goal, 'next_steps': None, 'working_memory': None,
@@ -110,7 +112,7 @@ def review_request(context, state, plan, history, *, phase):
     messages, manifest = engine.decision_messages(prompt, deepcopy(review_state),
         plan if phase == 'completion' else TaskPlan([], []), history, max_chars=context.limits.max_context_chars)
     # 确认偏好是辅助数据，不能把审查原始请求改写为偏好或先前的模型结论。
-    model = get_llm(purpose='final_response')
+    model = get_llm(purpose='goal' if phase == 'goal' else 'final_response')
     if hasattr(model, 'json_mode'):
         model = model.json_mode()
     response = context.model_call(model, messages,
@@ -124,9 +126,9 @@ def review_request(context, state, plan, history, *, phase):
         constraints = set(constraint_refs(goal))
         for requirement in audit.requirements:
             if not any(requirement.source_quote in source for source in sources):
-                raise ValueError('Audit quotes must come from human input')
+                raise ValueError('Use an exact human substring, not a paraphrase: ' + repr(requirement.source_quote))
             if not set(requirement.objective_ids) <= objectives or not set(requirement.constraint_refs) <= constraints:
-                raise ValueError('Audit referenced an unknown objective or predicate')
+                raise ValueError('Unknown audit reference. Allowed objectives=' + repr(sorted(objectives)) + '; predicates=' + repr(sorted(constraints)))
         if audit.verdict == 'APPROVED':
             if {o for r in audit.requirements for o in r.objective_ids} != objectives:
                 raise ValueError('Audit did not account for every proposed objective')
@@ -138,6 +140,12 @@ def review_request(context, state, plan, history, *, phase):
                    if isinstance(error, ValidationError) else str(error))
         failure = AgentError('AUDIT_FORMAT_ERROR', '独立审查响应需修正：' + json.dumps(details, ensure_ascii=False), retryable=False)
         failure.audit_phase = phase
+        if _protocol_retry < 1:
+            context.record('audit_protocol_retry', phase=phase, code=failure.code)
+            retry_state = {**state, 'audit_format_feedback': dict(phase=phase, message=str(failure))}
+            result = review_request(context, retry_state, plan, history, phase=phase, _protocol_retry=_protocol_retry + 1)
+            state.pop('audit_format_feedback', None)
+            return result
         raise failure from error
     state.pop('audit_format_feedback', None)
     record = dict(phase=phase, binding=binding(state['request'], state['goal'], state['goal_revision']),

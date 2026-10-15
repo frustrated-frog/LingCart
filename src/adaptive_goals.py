@@ -75,11 +75,27 @@ def check_claims(state, plan, claims):
         if claim is None:
             failures.append(dict(objective_id=identity, code='MISSING_COMPLETION_CLAIM'))
             continue
-        errors = [_claim_error(state, objectives[identity], indexed.get(ref), indexed) for ref in claim.evidence_refs]
-        if objectives[identity]['kind'] == 'recommend' and len(claim.evidence_refs) != 1:
+        refs = list(claim.evidence_refs)
+        if objectives[identity]['kind'] == 'recommend' and len(refs) > 1:
+            selections = [indexed[ref] for ref in refs if ref in indexed and indexed[ref].tool == 'select_product'
+                          and _claim_error(state, objectives[identity], indexed[ref], indexed) is None]
+            products = {s.result['selected_product']['product_id'] for s in selections}
+            if len(products) == 1:
+                product_id = next(iter(products))
+                support = [ref for ref in refs if ref not in {s.step_id for s in selections}]
+                valid_support = all(ref in indexed and indexed[ref].status in {'SUCCEEDED', 'REUSED'}
+                    and ref in state.get('read_evidence_refs', [])
+                    and isinstance(indexed[ref].result, dict)
+                    and any(p.get('product_id') == product_id for p in indexed[ref].result.get('products', []))
+                    for ref in support)
+                if valid_support:
+                    # 同一商品的支持引用不等于多选；账本归一到最新的已验证选择。
+                    refs = [max(selections, key=lambda s: list(indexed).index(s.step_id)).step_id]
+        errors = [_claim_error(state, objectives[identity], indexed.get(ref), indexed) for ref in refs]
+        if objectives[identity]['kind'] == 'recommend' and len(refs) != 1:
             errors.append('AMBIGUOUS_RECOMMENDATION')
         errors = sorted({error for error in errors if error})
-        row.update(status='INVALIDATED' if errors else 'VERIFIED', evidence_refs=list(claim.evidence_refs), failures=errors)
+        row.update(status='INVALIDATED' if errors else 'VERIFIED', evidence_refs=refs, failures=errors)
         failures.extend(dict(objective_id=identity, code=error) for error in errors)
     return failures
 

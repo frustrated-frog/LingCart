@@ -278,9 +278,16 @@ def _accept(context, recorder, state, plan, decision, history):
 
 
 def _selection_step(state, plan, decision):
+    indexed = {s.step_id: s for s in plan.steps}
+    def roots(ref):
+        step = indexed.get(ref)
+        if step is not None and step.tool == _SELECT:
+            return [root for dependency in step.depends_on for root in roots(dependency)]
+        return [ref]
+    dependencies = list(dict.fromkeys(root for ref in decision.evidence_refs for root in roots(ref)))
     return TaskStep(f'step-{len(plan.steps) + 1}', 'shopping', _SELECT,
         dict(product_id=decision.product_id, objective_id=decision.objective_id,
-             goal_revision=state['goal_revision']), decision.evidence_refs)
+             goal_revision=state['goal_revision']), dependencies)
 
 
 def _repair(context, recorder, state, plan, error):
@@ -303,10 +310,11 @@ def _review_completion(context, recorder, state, plan, history):
     from src.request_audit import require_approved, review_request
     require_approved(state)
     # 恢复后的最终核验已经重新读取事实，不能复用基于旧观察的审查响应。
-    cached = context.models.get(str(context.model_cursor + 1))
-    if cached and json.loads(cached['input'])[0] == 'request_completion_audit':
-        context.models.pop(str(context.model_cursor + 1))
+    cursor = context.model_cursor + 1
+    while (cached := context.models.get(str(cursor))) and json.loads(cached['input'])[0] == 'request_completion_audit':
+        context.models.pop(str(cursor))
         context.record('audit_invalidated', reason='FRESH_COMPLETION_EVIDENCE')
+        cursor += 1
     try:
         audit = review_request(context, state, plan, history, phase='completion')
     except AgentError as error:

@@ -136,12 +136,36 @@ def test_intent_declaration_is_a_separate_persisted_model_phase(monkeypatch):
     assert script.inputs[1]['goal']['objectives'][0]['id'] == 'shopping'
 
 
+def test_missing_explanatory_reason_does_not_block_a_valid_read(monkeypatch):
+    first = search(first=True)
+    first.pop('reason')
+    model(monkeypatch, first, recommendation)
+    result = run_adaptive('推荐预算500的耳机')
+    assert result['status'] == 'SUCCEEDED', result
+
+
+def test_repeated_refreshes_do_not_create_artificial_dependency_depth():
+    from src.adaptive import _selection_step
+    from src.adaptive_decision import Decision
+    state = {'goal_revision': 0}
+    plan = TaskPlan(['shopping'], [TaskStep('step-1', 'shopping', 'search_products', {})])
+    for i in range(2, 8):
+        decision = Decision(action='recommend', reason='继续核验同一选择', objective_id='shopping',
+                            product_id='P1101', evidence_refs=[f'step-{i - 1}'])
+        step = _selection_step(state, plan, decision)
+        plan.steps.append(step)
+        plan.validate(10, 2)
+        assert step.depends_on == ['step-1']
+        assert decision.evidence_refs == [f'step-{i - 1}']
+
+
 def test_final_audit_format_error_is_repairable_and_reaches_auditor(monkeypatch):
     script = model(monkeypatch, search(first=True), recommendation, complete(('shopping', ['step-2'])))
     seen = audit_sequence(monkeypatch, None, {})
     result = run_adaptive('推荐预算500的耳机')
     assert result['status'] == 'SUCCEEDED', result
-    assert script.inputs[-1]['feedback']['code'] == 'AUDIT_FORMAT_ERROR'
+    assert len(script.inputs) == 2  # 审查协议自己修复，不要求规划模型重做业务决策。
+    assert sum(e['type'] == 'audit_protocol_retry' for e in result['events']) == 1
     assert 'audit_format_error' in seen[-1]['feedback']
     assert 'delivery_draft' in seen[-1]['feedback']
 
@@ -903,6 +927,24 @@ def test_search_evidence_cannot_replace_verified_recommendation(monkeypatch):
     assert '订单 1001' in result['reply']
 
 
+def test_supporting_search_citation_is_allowed_with_verified_selection(monkeypatch):
+    model(monkeypatch, compound_search(), recommendation, order_query(),
+          complete(('shopping', ['step-1', 'step-2']), ('order', ['step-3'])))
+    result = run_adaptive(COMPOUND_REQUEST)
+    assert result['status'] == 'SUCCEEDED', result
+    assert result['plan']['objective_ledger'][0]['evidence_refs'] == ['step-4']
+    assert result['plan']['steps'][3]['depends_on'] == ['step-1']
+
+
+def test_distinct_selected_products_still_need_an_unambiguous_completion_claim(monkeypatch):
+    script = model(monkeypatch, compound_search(), recommendation,
+        lambda p: recommendation(p, 1, 'step-1'), order_query(),
+        complete(('shopping', ['step-2', 'step-3']), ('order', ['step-4'])), clarification)
+    result = run_adaptive(COMPOUND_REQUEST)
+    assert result['status'] == 'WAITING_CLARIFICATION', result
+    assert any(f['code'] == 'AMBIGUOUS_RECOMMENDATION' for f in script.inputs[-1]['feedback']['failures'])
+
+
 def test_model_cannot_drop_an_unfinished_objective(monkeypatch):
     changed = dict(search(), goal=goal())
     model(monkeypatch, compound_search(), changed)
@@ -1151,7 +1193,7 @@ def test_model_can_repair_protocol_error_without_losing_budget(monkeypatch):
 
 def test_malformed_auditor_response_never_falls_back_to_approval(monkeypatch):
     model(monkeypatch, search(first=True), search(first=True), search(first=True))
-    audit_sequence(monkeypatch, {}, {}, {})
+    audit_sequence(monkeypatch, *[{} for _ in range(6)])
     result = run_adaptive('推荐预算500的耳机')
     assert result['status'] == 'FAILED' and not result['trace']
     assert result['terminal_reason'] == 'DECISION_REPAIR_BUDGET_EXHAUSTED'
@@ -1204,7 +1246,7 @@ def test_audit_must_account_for_every_hard_predicate(monkeypatch):
     model(monkeypatch, search(first=True), search(first=True), search(first=True))
     incomplete = dict(verdict='APPROVED', issues=[], requirements=[dict(source_quote='耳机', interpretation='推荐耳机',
                         objective_ids=['shopping'], constraint_refs=[], status='COVERED')])
-    audit_sequence(monkeypatch, incomplete, incomplete, incomplete)
+    audit_sequence(monkeypatch, *[incomplete for _ in range(6)])
     result = run_adaptive('推荐预算500的耳机')
     assert result['status'] == 'FAILED' and not result['trace']
     assert result['terminal_reason'] == 'DECISION_REPAIR_BUDGET_EXHAUSTED'
