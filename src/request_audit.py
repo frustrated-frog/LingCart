@@ -65,6 +65,9 @@ The goal's outcome set and requirement descriptions have ALREADY passed the inde
 Assess whether the effective predicates preserve those SAME accepted requirements using feedback.catalog_evidence.
 Correcting a guessed/null field or a catalog value encoding is allowed. Reject weakened bounds, reversed polarity,
 omitted conditions or invented restrictions. Check actual observed representations, not hypothetical future catalogs.
+feedback.intent_constraints is IMMUTABLE pre-discovery intent/provenance, not executable predicates. Its field/value
+may remain null or guessed permanently; the effective goal predicates already overlay the proposed mapping.
+NEVER require editing frozen intent to match a mapping. Compare its meaning/quotes with the effective predicates.
 COVERED means faithful mapping of accepted intent, NOT that an outcome is completed. Unchanged service objectives
 remain covered by their accepted description. Do not reopen accepted intent based on speculative reinterpretations.
 This phase MUST NOT demand completed recommendations, a VERIFIED ledger, exhaustive comparison or final delivery.
@@ -102,6 +105,9 @@ def review_request(context, state, plan, history, *, phase, _protocol_retry=0):
             proposed_bindings=state['constraint_bindings'])
     if phase == 'bindings':
         from src.constraint_bindings import catalog_evidence
+        # Discovery notes describe the accepted goal's earlier knowledge state;
+        # they cannot be additional mapping approval requirements.
+        review_state['goal'] = {**goal, 'uncertainties': []}
         review_state['objective_ledger'] = []
         review_state['feedback']['catalog_evidence'] = catalog_evidence(state, plan)
     if phase == 'completion':

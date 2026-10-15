@@ -374,7 +374,7 @@ def decide(context, state, plan, history):
                   for e in error.errors(include_input=False, include_url=False)[:8]]
         raise AgentError('MODEL_FORMAT_ERROR', '自主决策协议校验失败：' + json.dumps(issues, ensure_ascii=False), retryable=False) from error
     except (ValueError, TypeError) as error:
-        raise AgentError('MODEL_FORMAT_ERROR', '自主模型未返回有效决策', retryable=False) from error
+        raise AgentError('MODEL_FORMAT_ERROR', '自主决策协议无效：' + str(error)[:600], retryable=False) from error
 
 
 def validate_goal(goal, request, history):

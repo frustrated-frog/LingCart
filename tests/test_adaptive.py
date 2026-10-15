@@ -172,6 +172,7 @@ def test_final_audit_format_error_is_repairable_and_reaches_auditor(monkeypatch)
 
 def test_binding_auditor_sees_field_facts_without_prior_failed_completion(monkeypatch):
     first = search(first=True)
+    first['goal']['uncertainties'] = ['目录中的品类字段待查证']
     first['goal']['hard_constraints'].append(dict(description='商品是耳机', source_quote='耳机',
         field=None, op='contains', value='耳机'))
     model(monkeypatch, first, recommendation, refine(field='category', op='eq', value='耳机'), recommendation)
@@ -181,6 +182,11 @@ def test_binding_auditor_sees_field_facts_without_prior_failed_completion(monkey
     mapping = next(p for p in seen if p['feedback']['audit_phase'] == 'bindings')
     assert not mapping['observations'] and not mapping['objective_ledger']
     assert mapping['feedback']['catalog_evidence'][0]['observations'][0]['value'] == '耳机'
+    assert mapping['feedback']['intent_constraints']['global:1']['field'] is None
+    assert mapping['goal']['hard_constraints'][1]['field'] == 'category'
+    assert mapping['goal']['uncertainties'] == []
+    assert result['plan']['goal']['uncertainties'] == ['目录中的品类字段待查证']
+    assert result['plan']['goal']['hard_constraints'][1]['field'] is None
     assert 'delivery_draft' not in mapping['feedback']
 
 
