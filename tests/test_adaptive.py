@@ -126,6 +126,16 @@ def test_uncertain_initial_intent_can_be_clarified_without_fabricating_a_goal(mo
     assert not result['plan']['verification']['all_goals_satisfied']
 
 
+def test_intent_declaration_is_a_separate_persisted_model_phase(monkeypatch):
+    script = model(monkeypatch, {'reason': '先完整理解用户目标，不预设工具动作', 'goal': goal()}, search(), recommendation)
+    result = run_adaptive('推荐预算500的耳机')
+    assert result['status'] == 'SUCCEEDED', result
+    decisions = [e['decision'] for e in result['events'] if e['type'] == 'adaptive_decision']
+    assert decisions[0]['action'] == 'set_goal' and decisions[0]['tool'] is None
+    assert decisions[1]['action'] == 'tool'
+    assert script.inputs[1]['goal']['objectives'][0]['id'] == 'shopping'
+
+
 def test_final_audit_format_error_is_repairable_and_reaches_auditor(monkeypatch):
     script = model(monkeypatch, search(first=True), recommendation, complete(('shopping', ['step-2'])))
     seen = audit_sequence(monkeypatch, None, {})
@@ -190,6 +200,19 @@ def test_agent_refines_observed_catalog_mapping_without_mutating_user_goal(monke
     assert result['binding_audit']['verdict'] == 'APPROVED'
     assert result['completion_audit']['binding_revision'] == 1
     assert script.inputs[-1]['constraint_bindings']['global:1']['evidence_refs'] == ['step-1']
+    assert script.inputs[-1]['feedback']['code'] == 'BINDINGS_REFINED'
+
+
+def test_verification_feedback_distinguishes_duplicate_constraint_scopes(monkeypatch):
+    first = negated_search(unknown=True)
+    first['goal']['objectives'][0]['hard_constraints'] = [deepcopy(first['goal']['hard_constraints'][1])]
+    # 只绑定目标级条件，全局同义条件仍未绑定，不能被描述相同掩盖。
+    script = model(monkeypatch, first, refine('objective:shopping:0'), recommendation, clarification)
+    result = run_adaptive('推荐预算500的耳机，不要主动降噪')
+    assert result['status'] == 'WAITING_CLARIFICATION'
+    assert script.inputs[-1]['feedback']['constraint_failures'][0]['constraint_ref'] == 'global:1'
+    assert 'global:1' in script.inputs[-1]['constraint_refs']
+    assert 'objective:shopping:0' in script.inputs[-1]['constraint_refs']
 
 
 @pytest.mark.parametrize('patch,code', [

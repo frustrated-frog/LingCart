@@ -348,6 +348,7 @@ def _verify_recommendation(context, recorder, state, plan, decision, step):
     _verify_products(verification)
     fresh = next((p for p in result['products'] if p['product_id'] == decision.product_id), None)
     failures = []
+    constraint_failures = []
     if fresh is None:
         failures.append('PRODUCT_MISSING')
     else:
@@ -355,8 +356,15 @@ def _verify_recommendation(context, recorder, state, plan, decision, step):
             failures.append('OUT_OF_STOCK')
         goal = ShoppingGoal.model_validate(effective_goal(state))
         objective = next(o for o in goal.objectives if o.id == decision.objective_id)
-        constraints = [*goal.hard_constraints, *objective.hard_constraints]
-        failures.extend('HARD_CONSTRAINT: ' + c.description for c in constraints if not predicate_holds(fresh, c))
+        for ref, data in constraint_refs(goal.model_dump()).items():
+            if not (ref.startswith('global:') or ref.startswith(f'objective:{objective.id}:')):
+                continue
+            from src.adaptive_decision import Constraint
+            c = Constraint.model_validate(data)
+            if not predicate_holds(fresh, c):
+                failures.append('HARD_CONSTRAINT: ' + c.description)
+                constraint_failures.append(dict(constraint_ref=ref, field=c.field, op=c.op, value=c.value,
+                                                description=c.description))
         for ref in decision.evidence_refs:
             old = next(p for s in plan.steps if s.step_id == ref for p in _products(s) if p['product_id'] == decision.product_id)
             if any(old.get(key) != fresh.get(key) for key in ('price', 'stock', 'category', 'specs', 'name', 'summary')):
@@ -368,6 +376,8 @@ def _verify_recommendation(context, recorder, state, plan, decision, step):
     if failures:
         step.status = 'REJECTED'
         state['feedback'] = dict(code='RECOMMENDATION_VERIFICATION_FAILED', failures=failures, evidence_ref=step.step_id)
+        if constraint_failures:
+            state['feedback']['constraint_failures'] = constraint_failures
         recorder.record('verification_failed', step_id=step.step_id, **state['feedback'])
         return None
     step.status = 'SUCCEEDED'
@@ -547,6 +557,9 @@ def _run(context, user_message, history, pending_action):
                     step.error = dict(code=error.code, message=str(error))
                     state['feedback'] = dict(step_id=step.step_id, **step.error)
                 recorder.record('evidence_read', step_id=step.step_id, **step.args, status=step.status)
+            elif decision.action == 'refine_constraints':
+                state['feedback'] = dict(code='BINDINGS_REFINED', binding_revision=state['binding_revision'],
+                    message='新映射已通过独立审查并生效。以前的核验失败属于旧映射，尚未按新映射重新核验商品。')
             elif decision.action == 'tool':
                 executor = ToolExecutor(_READ_ONLY_TOOLS, recorder, max_calls=context.limits.max_tool_calls,
                     observation_scope=f"adaptive:{state['goal_revision']}:{step.step_id}")

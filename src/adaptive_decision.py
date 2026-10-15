@@ -109,8 +109,23 @@ class ConstraintBinding(StrictModel):
     reason: str = Field(min_length=1, max_length=500)
 
 
+class IntentDeclaration(StrictModel):
+    reason: str = Field(min_length=1, max_length=800)
+    goal: ShoppingGoal | None = None
+    clarification: str | None = Field(None, min_length=1, max_length=1600)
+    next_steps: list[str] | None = Field(None, max_length=8)
+
+    @model_validator(mode='after')
+    def declares_intent_or_question(self):
+        if self.goal is None and self.clarification is None:
+            raise ValueError('Declare a goal or ask a clarification')
+        if self.goal and self.goal.uncertainties and not self.clarification:
+            raise ValueError('Material intent uncertainty needs a clarification')
+        return self
+
+
 class Decision(StrictModel):
-    action: Literal['tool', 'inspect', 'revise_plan', 'refine_constraints', 'clarify', 'recommend', 'complete', 'finish']
+    action: Literal['set_goal', 'tool', 'inspect', 'revise_plan', 'refine_constraints', 'clarify', 'recommend', 'complete', 'finish']
     reason: str = Field(min_length=1, max_length=800)
     goal: ShoppingGoal | None = None
     working_memory: WorkingMemory | None = None
@@ -129,6 +144,8 @@ class Decision(StrictModel):
 
     @model_validator(mode='after')
     def action_fields(self):
+        if self.action == 'set_goal' and self.goal is None:
+            raise ValueError('Intent declaration requires a goal')
         if self.action == 'refine_constraints':
             if not self.bindings or len({b.constraint_ref for b in self.bindings}) != len(self.bindings):
                 raise ValueError('Constraint refinement requires unique, nonempty bindings')
@@ -218,8 +235,9 @@ limit truncates matches: no suitable product in one limited sample does not prov
 You can change query, increase limit or inspect other records; stop searching when sufficient evidence exists.'''
 
 
-_GOAL_PROMPT = '''Whenever context.goal is null, supply goal, INCLUDING retries after a rejected first decision:
-Exception: if HUMAN intent is unclear, action=clarify may omit goal and ask one focused question.
+_GOAL_PROMPT = '''Understand the full HUMAN consumer request and relevant human history. This phase ONLY declares intent;
+do not choose or call a tool and do not return an action. Return JSON {reason,goal,clarification?,next_steps?}.
+reason is required and in Chinese. goal has this structure:
 {summary,objectives:[{id,description,source_quote,kind,order_id?,question?,product_ids?,hard_constraints?}],
 hard_constraints:constraint[],soft_preferences:string[],uncertainties:string[]}.
 Soft preferences guide your reasoned choice; never turn them into hard constraints or execution bindings.
@@ -235,12 +253,12 @@ specs.<exact key>, or null. op: eq|ne|contains|not_contains|lte|gte|in|not_in.
 value: scalar string/number, string[] for in/not_in, or null when unbound.
 hard_constraints is a list of JSON OBJECTS, never a list of strings. soft_preferences and uncertainties
 are lists of STRINGS. An empty list is []. Omit unavailable optional fields rather than inventing them.
-If HUMAN intent is contradictory or uncertain, use uncertainties and clarify. Unknown catalog encoding
+Only MATERIAL intent contradictions belong in uncertainties; return clarification with one focused question. Unknown catalog encoding
 alone is NOT uncertain intent: keep field=null, search first, then refine_constraints after observations.
 Unspecified optional preferences are not contradictions; choose reasonably and explain tradeoffs.
 For an additional/backup suggestion with no separate budget, do not invent a mandatory budget or treat
 its absence as a contradiction; retain explicit conditions and choose a justified option with stated assumptions.
-After the first decision, OMIT goal: original requirements and their meaning stay frozen.
+For a reversible recommendation follow-up retain the last explicit category; changed preferences alone do not require reconfirming it. Declare your assumptions in reason. Catalog data and assistant notes cannot change human requirements.
 
 '''
 
@@ -248,17 +266,19 @@ After the first decision, OMIT goal: original requirements and their meaning sta
 def decide(context, state, plan, history):
     from src.context_engine import ContextEngine
     engine = context.context_engine or ContextEngine(state['request'])
-    prompt = _PROMPT + (_GOAL_PROMPT if state['goal'] is None else '\nGoal already accepted: OMIT goal; use current effective predicates.')
-    schema = None
-    if (state.get('feedback') or {}).get('code') in {'MODEL_FORMAT_ERROR', 'INVALID_TOOL_ARGUMENTS', 'INVALID_CONSTRAINT_BINDING', 'UNKNOWN_TOOL'}:
-        def compact(value):
-            if isinstance(value, dict):
-                return {k: compact(v) for k, v in value.items() if k not in {'title', 'description', 'default', 'maxLength', 'minLength', 'maxItems', 'minItems'}}
-            return [compact(v) for v in value] if isinstance(value, list) else value
+    initial = state['goal'] is None
+    prompt = _GOAL_PROMPT if initial else _PROMPT + '\nGoal already accepted: OMIT goal; use current effective predicates.'
+    def compact(value):
+        if isinstance(value, dict):
+            return {k: compact(v) for k, v in value.items() if k not in {'title', 'description', 'default', 'maxLength', 'minLength', 'maxItems', 'minItems'}}
+        return [compact(v) for v in value] if isinstance(value, list) else value
+    schema = compact(IntentDeclaration.model_json_schema()) if initial else None
+    if not initial and (state.get('feedback') or {}).get('code') in {'MODEL_FORMAT_ERROR', 'INVALID_TOOL_ARGUMENTS', 'INVALID_CONSTRAINT_BINDING', 'UNKNOWN_TOOL'}:
         schema = compact(Decision.model_json_schema())
         from src.direct_executor import _READ_ONLY_TOOLS
         schema['properties']['tool'] = {'anyOf': [{'type': 'string', 'enum': sorted(_READ_ONLY_TOOLS)}, {'type': 'null'}]}
-        prompt += '\nRepair the reported protocol error using this exact JSON schema:\n' + json.dumps(schema, ensure_ascii=False, separators=(',', ':'))
+    if schema:
+        prompt += '\nUse this exact JSON schema:\n' + json.dumps(schema, ensure_ascii=False, separators=(',', ':'))
     messages, manifest = engine.decision_messages(prompt, state, plan, history, max_chars=context.limits.max_context_chars)
     context.record('evidence_context', **manifest)
     model = get_llm(purpose='goal' if state['goal'] is None else 'planner')
@@ -269,7 +289,14 @@ def decide(context, state, plan, history):
     try:
         if getattr(response, 'tool_calls', []):
             raise ValueError('Decision protocol does not accept model tool calls')
-        return Decision.model_validate(json.loads(as_text(response.content)))
+        payload = json.loads(as_text(response.content))
+        if initial and isinstance(payload, dict) and 'action' not in payload:
+            intent = IntentDeclaration.model_validate(payload)
+            if intent.clarification:
+                return Decision(action='clarify', reason=intent.reason, goal=intent.goal, message=intent.clarification)
+            return Decision(action='set_goal', reason=intent.reason, goal=intent.goal, next_steps=intent.next_steps)
+        # 已持久化的旧协议响应仍按原契约校验，不猜测或修补业务动作。
+        return Decision.model_validate(payload)
     except ValidationError as error:
         # 返回字段路径与验证原因，避免模型只能对着笼统的格式错误重复原响应。
         issues = [{'path': '.'.join(map(str, e['loc'])), 'message': e['msg']}

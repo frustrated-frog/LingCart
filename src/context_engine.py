@@ -110,6 +110,11 @@ class ContextEngine:
             payload['goal'] = effective_goal(state)
             payload.update(binding_revision=state.get('binding_revision', 0),
                            constraint_bindings=deepcopy(state['constraint_bindings']))
+        if (state.get('goal') and 'objectives' in state['goal']
+                and not (state.get('feedback') or {}).get('audit_phase')):
+            from src.constraint_bindings import effective_goal, constraint_refs
+            payload['constraint_refs'] = {ref: {key: c.get(key) for key in ('field', 'op', 'value')}
+                                          for ref, c in constraint_refs(effective_goal(state)).items()}
 
         def messages():
             payload['context_manifest']['archived_refs'] = [o['step_id'] for o in payload['observations']
