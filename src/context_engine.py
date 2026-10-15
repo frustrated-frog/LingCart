@@ -128,15 +128,20 @@ class ContextEngine:
             payload['context_manifest']['omitted_history_indices'].append(index)
         if not fits():
             raise ContextBudgetError()
-        # Latest observation has priority, then older records if they fit intact.
-        for index in reversed(range(len(plan.steps))):
+        required_refs = {ref for row in state.get('objective_ledger', []) if row.get('status') == 'VERIFIED'
+                         for ref in row.get('evidence_refs', [])}
+        # 最新观察和待交付结果的证据先于旧历史，其余观察放得下才完整加入。
+        latest = [len(plan.steps) - 1] if plan.steps else []
+        priority = latest + [i for i in reversed(range(len(plan.steps) - 1)) if plan.steps[i].step_id in required_refs]
+        order = priority + [i for i in reversed(range(len(plan.steps))) if i not in priority]
+        for index in order:
             summary = payload['observations'][index]
             payload['observations'][index] = deepcopy(plan.steps[index].__dict__)
             saved_history = list(payload['history'])
             saved_omitted = list(payload['context_manifest']['omitted_history_indices'])
             # 新获取的完整记录先于旧历史。否则 inspect 的每一页都可能立即被归档，
             # 模型永远只看到索引，无法读到刚刚请求的证据。
-            if index == len(plan.steps) - 1:
+            if index == len(plan.steps) - 1 or plan.steps[index].step_id in required_refs:
                 while not fits() and payload['history']:
                     omitted = len(history or []) - len(payload['history'])
                     payload['history'].pop(0)

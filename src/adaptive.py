@@ -153,7 +153,7 @@ def _present(context, recorder, intake, state, plan, *, reason, message, error=N
 
 def _validate_tool(decision, state, plan, history):
     if decision.tool not in _READ_ONLY_TOOLS:
-        raise AgentError('UNKNOWN_TOOL', '自主决策不能执行未授权工具', retryable=False)
+        raise AgentError('UNKNOWN_TOOL', '该工具未执行。可调用只读工具：' + ', '.join(sorted(_READ_ONLY_TOOLS)) + '；选择商品请使用 action=recommend，选择并非业务工具调用。', retryable=False)
     spec = tool_spec(decision.tool, _READ_ONLY_TOOLS[decision.tool])
     if spec.effect != ToolEffect.READ:
         raise AgentError('TOOL_POLICY_REJECTED', '自主选购只能执行只读工具', retryable=False)
@@ -199,6 +199,7 @@ def _accept(context, recorder, state, plan, decision, history):
                     message='对照用户原文修复全部目标和约束；不确定则澄清。')
                 raise AgentError('REQUEST_AUDIT_REJECTED', '独立审查未确认需求覆盖与语义，不能执行当前目标', retryable=False)
             state['request_audit'] = audit
+            state.pop('audit_format_feedback', None)
         state['goal'] = decision.goal.model_dump()
         state['objective_ledger'] = new_ledger(state['goal'])
         plan.goals = [o['id'] for o in state['goal']['objectives']]
@@ -218,6 +219,7 @@ def _accept(context, recorder, state, plan, decision, history):
         before = deepcopy(state.get('constraint_bindings', {}))
         state.update(constraint_bindings=proposed['constraint_bindings'], binding_revision=proposed['binding_revision'],
                      binding_audit=audit, completion_audit=None)
+        state.pop('audit_format_feedback', None)
         # 已验证推荐只证明旧执行映射；服务查询证据不受字段映射修订影响。
         recommendation_ids = {o['id'] for o in state['goal']['objectives'] if o['kind'] == 'recommend'}
         for row in state['objective_ledger']:
@@ -288,6 +290,7 @@ def _repair(context, recorder, state, plan, error):
         state['feedback'] = dict(code=error.code, message=str(error),
                                 instruction='修复协议或参数后提交下一次决策；不要放宽用户目标或审批条件。')
         if error.code == 'AUDIT_FORMAT_ERROR':
+            state['audit_format_feedback'] = dict(phase=getattr(error, 'audit_phase', None), message=str(error))
             state['feedback']['instruction'] = '审查响应格式无效不代表原提案被语义否定。可重提同一目标或映射，让审查模型修正协议；不要为此改变用户原意。'
     state['pending'] = None
     _save(context, state, plan)
@@ -304,7 +307,13 @@ def _review_completion(context, recorder, state, plan, history):
     if cached and json.loads(cached['input'])[0] == 'request_completion_audit':
         context.models.pop(str(context.model_cursor + 1))
         context.record('audit_invalidated', reason='FRESH_COMPLETION_EVIDENCE')
-    audit = review_request(context, state, plan, history, phase='completion')
+    try:
+        audit = review_request(context, state, plan, history, phase='completion')
+    except AgentError as error:
+        if error.code != 'AUDIT_FORMAT_ERROR':
+            raise
+        _repair(context, recorder, state, plan, error)
+        return False
     state['completion_audit'] = audit
     state['model_cursor'] = context.model_cursor
     _save(context, state, plan)
@@ -438,6 +447,7 @@ def _run(context, user_message, history, pending_action):
                          model_cursor=0, feedback=None, working_memory=None, objective_ledger=[],
                          next_steps=None, request_audit=None, completion_audit=None,
                          constraint_bindings={}, binding_revision=0, binding_audit=None,
+                         audit_format_feedback=None,
                          version=state['version'] + 1)
             plan.goals = []
             plan.verification = {}
@@ -466,7 +476,7 @@ def _run(context, user_message, history, pending_action):
                     _accept(context, recorder, state, plan, decision, history)
                     apply_controls(context)
                 except AgentError as error:
-                    if error.code in {'MODEL_FORMAT_ERROR', 'INVALID_TOOL_ARGUMENTS', 'REQUEST_AUDIT_REJECTED', 'AUDIT_FORMAT_ERROR',
+                    if error.code in {'MODEL_FORMAT_ERROR', 'UNKNOWN_TOOL', 'INVALID_TOOL_ARGUMENTS', 'REQUEST_AUDIT_REJECTED', 'AUDIT_FORMAT_ERROR',
                                       'INVALID_CONSTRAINT_BINDING', 'UNREAD_BINDING_EVIDENCE', 'UNOBSERVED_BINDING_FIELD', 'BINDING_AUDIT_REJECTED'}:
                         _repair(context, recorder, state, plan, error)
                         continue
@@ -552,6 +562,8 @@ def _run(context, user_message, history, pending_action):
                     else:
                         if step.tool in {'search_products', 'compare_products'}:
                             _verify_products(step)
+                            if not result['products']:
+                                state['feedback'] = dict(code='EMPTY_CATALOG_RESULT', message='本次查询无匹配，不代表目录中不存在商品。可以更换检索词、使用品类过滤或澄清；空观察不能支持映射或推荐。')
                         else:
                             verify_observation(step)
                         step.status = event['status']

@@ -126,6 +126,30 @@ def test_uncertain_initial_intent_can_be_clarified_without_fabricating_a_goal(mo
     assert not result['plan']['verification']['all_goals_satisfied']
 
 
+def test_final_audit_format_error_is_repairable_and_reaches_auditor(monkeypatch):
+    script = model(monkeypatch, search(first=True), recommendation, complete(('shopping', ['step-2'])))
+    seen = audit_sequence(monkeypatch, None, {})
+    result = run_adaptive('推荐预算500的耳机')
+    assert result['status'] == 'SUCCEEDED', result
+    assert script.inputs[-1]['feedback']['code'] == 'AUDIT_FORMAT_ERROR'
+    assert 'audit_format_error' in seen[-1]['feedback']
+    assert 'delivery_draft' in seen[-1]['feedback']
+
+
+def test_binding_auditor_sees_field_facts_without_prior_failed_completion(monkeypatch):
+    first = search(first=True)
+    first['goal']['hard_constraints'].append(dict(description='商品是耳机', source_quote='耳机',
+        field=None, op='contains', value='耳机'))
+    model(monkeypatch, first, recommendation, refine(field='category', op='eq', value='耳机'), recommendation)
+    seen = audit_sequence(monkeypatch)
+    result = run_adaptive('推荐预算500的耳机')
+    assert result['status'] == 'SUCCEEDED', result
+    mapping = next(p for p in seen if p['feedback']['audit_phase'] == 'bindings')
+    assert not mapping['observations'] and not mapping['objective_ledger']
+    assert mapping['feedback']['catalog_evidence'][0]['observations'][0]['value'] == '耳机'
+    assert 'delivery_draft' not in mapping['feedback']
+
+
 def test_model_receives_action_validation_reason_and_repairs_protocol(monkeypatch):
     malformed = {**search(first=True), 'objective_id': 'shopping'}
     def corrected(payload):
@@ -382,9 +406,14 @@ def test_model_cannot_silently_relax_goal(monkeypatch):
     (dict(action='recommend', reason='伪造', product_id='P9999', objective_id='shopping', evidence_refs=['step-1']), 'UNGROUNDED_RECOMMENDATION'),
 ])
 def test_unsafe_actions_are_rejected(monkeypatch, decision, code):
-    model(monkeypatch, search(first=True), decision)
+    script = model(monkeypatch, search(first=True), decision, *([clarification] if code == 'UNKNOWN_TOOL' else []))
     result = run_adaptive('推荐预算500的耳机')
-    assert result['terminal_reason'] == code
+    if code == 'UNKNOWN_TOOL':
+        assert result['status'] == 'WAITING_CLARIFICATION'
+        assert script.inputs[-1]['feedback']['code'] == code
+        assert all(t['tool'] != 'process_payment' for t in result['trace'])
+    else:
+        assert result['terminal_reason'] == code
     assert tools.get_payment_status(1003)['status'] == 'pending'
 
 

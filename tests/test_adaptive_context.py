@@ -101,3 +101,21 @@ def test_newly_requested_evidence_page_takes_priority_over_old_history():
     assert manifest['omitted_history_indices']
     assert state['evidence_access']['step-2'] == [page['products'][0]['product_id']]
     assert sum(_text_length(m) for m in messages) <= 3500
+
+
+def test_all_verified_outcome_evidence_precedes_old_history():
+    from langchain_core.messages import HumanMessage
+    state, plan = fixture()
+    for i in (2, 3):
+        plan.steps.append(TaskStep(f'step-{i}', 'shopping', 'read_evidence', {'reference': 'step-1'},
+            status='SUCCEEDED', result=ContextEngine.read_evidence(plan, 'step-1', offset=i, limit=1)))
+    plan.steps.append(TaskStep('step-4', 'order', 'get_order_status', {'order_id': 1001},
+                              status='SUCCEEDED', result={'order_id': 1001, 'status': 'delivered'}))
+    state['objective_ledger'] = [dict(objective_id=f'outcome-{i}', status='VERIFIED', evidence_refs=[f'step-{i}'])
+                                 for i in (2, 3, 4)]
+    messages, _ = ContextEngine(state['request']).decision_messages('system', state, plan,
+        [HumanMessage(content='旧历史' * 600), HumanMessage(content='更近历史' * 450)], max_chars=6000)
+    observations = json.loads(messages[-1].content)['observations']
+    assert all('products' in observations[i - 1]['result'] for i in (2, 3))
+    assert observations[3]['result']['status'] == 'delivered'
+    assert sum(_text_length(m) for m in messages) <= 6000

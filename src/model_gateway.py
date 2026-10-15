@@ -282,6 +282,12 @@ class RotatingChatModel:
     def bind(self, **kwargs):
         return self._clone([candidate.client.bind(**kwargs) for candidate in self._candidates])
 
+    def json_mode(self):
+        """为支持 JSON Output 的兼容端点启用协议格式，业务动作仍由模型决定。"""
+        return self._clone([c.client.bind(response_format={'type': 'json_object'})
+                            if c.config.provider in {'openai', 'openai_compatible'} else c.client
+                            for c in self._candidates])
+
     @staticmethod
     def _health_key(candidate: ModelCandidate) -> str:
         config = candidate.config

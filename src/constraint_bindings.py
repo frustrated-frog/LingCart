@@ -35,11 +35,11 @@ def propose_bindings(state, plan, proposals):
     for proposal in proposals:
         ref = proposal.constraint_ref
         if ref not in constraints:
-            raise AgentError('INVALID_CONSTRAINT_BINDING', '字段映射必须引用现有硬约束，不能增删用户要求', retryable=False)
+            raise AgentError('INVALID_CONSTRAINT_BINDING', '未知约束引用；可用引用：' + ', '.join(constraints), retryable=False)
         try:
             predicate = Constraint.model_validate({**constraints[ref], **proposal.model_dump(include={'field', 'op', 'value'})})
         except ValueError as error:
-            raise AgentError('INVALID_CONSTRAINT_BINDING', '映射谓词的操作符与数值类型不匹配', retryable=False) from error
+            raise AgentError('INVALID_CONSTRAINT_BINDING', '操作符与数值类型不匹配：lte/gte 的 value 必须是单个数字（单位在字段值中核对），in/not_in 必须是字符串数组。', retryable=False) from error
         rows = []
         for evidence_ref in proposal.evidence_refs:
             step = indexed.get(evidence_ref)
@@ -64,6 +64,28 @@ def propose_bindings(state, plan, proposals):
     if constraint_refs(effective_goal(proposed)) == constraint_refs(effective_goal(state)):
         raise AgentError('BINDING_ALREADY_CURRENT', '该映射已生效，无需重复审查；请继续选择工具、推荐、完成或澄清。软偏好不需要字段绑定。', retryable=False)
     return bindings
+
+
+def catalog_evidence(state, plan):
+    """仅提供映射所引用的已读字段事实，不把旧核验状态混进映射审查。"""
+    indexed = {s.step_id: s for s in plan.steps}
+    evidence = []
+    for ref, binding in state.get('constraint_bindings', {}).items():
+        observations = []
+        for step_id in binding['evidence_refs']:
+            step = indexed[step_id]
+            for product in step.result.get('products', []):
+                if product['product_id'] not in state.get('evidence_access', {}).get(step_id, []):
+                    continue
+                value = product
+                for part in binding['field'].split('.'):
+                    if not isinstance(value, dict) or part not in value:
+                        break
+                    value = value[part]
+                else:
+                    observations.append(dict(evidence_ref=step_id, product_id=product['product_id'], value=value))
+        evidence.append(dict(constraint_ref=ref, field=binding['field'], observations=observations))
+    return evidence
 
 
 def require_bindings_approved(state):

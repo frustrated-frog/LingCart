@@ -131,6 +131,27 @@ def test_goal_reasoning_is_configurable_without_changing_execution_model(monkeyp
         model_gateway.load_gateway_config(purpose='goal')
 
 
+def test_json_mode_preserves_provider_and_does_not_change_unsupported_clients():
+    class JsonClient:
+        def __init__(self, options=None):
+            self.options = options or {}
+        def bind(self, **options):
+            return JsonClient({**self.options, **options})
+        def invoke(self, messages):
+            assert self.options['response_format'] == {'type': 'json_object'}
+            return AIMessage(content='{"action":"clarify","reason":"需要补充信息"}')
+    first = JsonClient()
+    unsupported = object()
+    model = RotatingChatModel([
+        ModelCandidate(ProviderConfig('openai_compatible', 'flash', 'test'), first),
+        ModelCandidate(ProviderConfig('unknown', 'other', 'test'), unsupported)])
+    encoded = model.json_mode()
+    assert encoded._candidates[1].client is unsupported
+    assert not first.options
+    assert encoded.invoke('json').content.startswith('{')
+    assert encoded.last_call['model'] == 'flash'
+
+
 def test_purpose_override_only_changes_primary_auto_provider(monkeypatch):
     monkeypatch.setenv("GEMINI_API_KEY", "gemini-secret")
     monkeypatch.setenv("GROQ_API_KEY", "groq-secret")
