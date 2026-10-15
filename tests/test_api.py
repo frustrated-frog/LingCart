@@ -208,3 +208,26 @@ def test_preferences_require_explicit_save_and_are_scoped():
     assert client.get(f'/profiles/{other}/preferences').json()['preferences'] == []
     assert client.post(f'/profiles/{profile}/bindings', json={'session_id': 'profile-session'}).status_code == 200
     assert client.delete(f'/profiles/{profile}/preferences/max_price').json()['forgotten']
+
+
+@pytest.mark.parametrize('path', ['steer', 'cancel', 'follow-up'])
+@pytest.mark.parametrize('fields', [{}, {'command_id': 'id'}, {'expected_revision': 0},
+                                    {'command_id': 'id', 'expected_revision': None},
+                                    {'command_id': 'id', 'expected_revision': True}])
+def test_control_api_requires_id_and_revision(path, fields):
+    response = client.post(f'/runs/unknown/{path}', json={'session_id': 'session', 'message': '新需求', **fields})
+    assert response.status_code == 422
+
+
+def test_control_api_retries_are_idempotent_and_old_window_is_rejected():
+    from src.session_control import ControlStore
+    store = ControlStore()
+    run_id = store.claim('two-windows', 'request', '原需求', {})['run_id']
+    body = dict(session_id='two-windows', message='预算300', command_id='window-one', expected_revision=0)
+    first = client.post(f'/runs/{run_id}/steer', json=body)
+    assert first.status_code == 202
+    assert client.post(f'/runs/{run_id}/steer', json=body).json() == first.json()
+    stale = client.post(f'/runs/{run_id}/cancel', json={**body, 'command_id': 'window-two'})
+    assert stale.status_code == 409
+    assert stale.json()['detail']['code'] == 'STALE_CONTROL_REVISION'
+    assert store.revision(run_id) == 1

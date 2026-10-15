@@ -343,6 +343,15 @@ def lab_page():
     if saved:
         with st.expander('结构化上下文与证据引用'):
             st.json(saved['checkpoint'].get('context', {}))
+        with st.expander('工作笔记与已读取证据'):
+            adaptive = saved['checkpoint'].get('adaptive', {})
+            st.json({'working_memory': adaptive.get('working_memory'),
+                     'evidence_access': adaptive.get('evidence_access', {}),
+                     'read_evidence_refs': adaptive.get('read_evidence_refs', [])})
+        with st.expander('逐项目标与完成证据'):
+            adaptive = saved['checkpoint'].get('adaptive', {})
+            st.json({'goal': adaptive.get('goal'), 'objective_ledger': adaptive.get('objective_ledger', []),
+                     'verification': run['result'].get('plan', {}).get('verification', {})})
         with st.expander('运行控制与计划版本'):
             st.json(ControlStore().commands(saved['session_id'], chosen))
             st.json(saved['checkpoint'].get('adaptive', {}).get('journal', []))
@@ -364,7 +373,18 @@ def active_run_panel():
         render_run({'run_id': run_id, 'events': run['events'], 'trace': [], 'status': run['status']})
     controls = ControlStore()
     revision = controls.revision(run_id)
-    st.caption(f'当前需求版本：{revision}')
+    st.caption(f'当前控制版本：{revision}')
+    # Keep the revision shown when this form was created, including across reruns.
+    # Never silently upgrade a stale submission to the server's latest revision.
+    draft_key = f'control_draft_{run_id}'
+    if draft_key not in st.session_state:
+        st.session_state[draft_key] = {'command_id': uuid.uuid4().hex, 'expected_revision': revision}
+    draft = st.session_state[draft_key]
+    if draft['expected_revision'] != revision:
+        st.warning('任务已变化，请刷新指令版本后提交。')
+        if st.button('刷新指令版本', key='refresh_control_revision'):
+            del st.session_state[draft_key]
+            st.rerun()
     if run['status'] == 'INTERRUPTED':
         if st.button('恢复任务', key='resume_run', type='primary'):
             try:
@@ -379,13 +399,16 @@ def active_run_panel():
         submitted = st.form_submit_button('发送补充要求', type='primary')
     if submitted and message.strip():
         try:
-            controls.enqueue(session_id, run_id, kind, message=message.strip(), expected_revision=revision)
+            controls.enqueue(session_id, run_id, kind, message=message.strip(), **draft)
+            del st.session_state[draft_key]
             st.rerun()
         except AgentError as error:
             st.error(str(error))
     if st.button('停止后续步骤', key='cancel_running'):
         try:
-            controls.enqueue(session_id, run_id, 'CANCEL')
+            controls.enqueue(session_id, run_id, 'CANCEL', command_id='cancel-' + draft['command_id'],
+                             expected_revision=draft['expected_revision'])
+            del st.session_state[draft_key]
             if run['status'] == 'INTERRUPTED':
                 SessionController().start(session_id, '', resume_id=run_id)
             st.rerun()

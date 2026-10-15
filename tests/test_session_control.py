@@ -54,7 +54,7 @@ def test_cancel_keeps_completed_observation_and_prevents_next_tool(database):
         context = current_runtime()
         executor = ToolExecutor({'get_order_status': tools.get_order_status}, TraceRecorder(context.run_id))
         executor.execute('get_order_status', {'order_id': 1002})
-        ControlStore().enqueue('s', context.run_id, 'CANCEL', command_id='stop')
+        ControlStore().enqueue('s', context.run_id, 'CANCEL', command_id='stop', expected_revision=0)
         executor.execute('get_order_status', {'order_id': 1003})
         raise AssertionError('不应执行第二步')
     result = run_conversation('查询两个订单', 's', runner=runner)
@@ -69,12 +69,12 @@ def test_commands_are_scoped_idempotent_and_revision_checked(database):
     a = store.enqueue('s', run_id, 'STEER', message='预算300', command_id='one', expected_revision=0)
     assert store.enqueue('s', run_id, 'STEER', message='预算300', command_id='one', expected_revision=0) == a
     with pytest.raises(AgentError) as stale:
-        store.enqueue('s', run_id, 'STEER', message='预算500', expected_revision=0)
+        store.enqueue('s', run_id, 'STEER', message='预算500', command_id='stale', expected_revision=0)
     assert stale.value.code == 'STALE_CONTROL_REVISION'
     with pytest.raises(AgentError):
-        store.enqueue('other', run_id, 'CANCEL')
-    store.enqueue('s', run_id, 'FOLLOW_UP', message='查询订单1003')
-    store.enqueue('s', run_id, 'CANCEL')
+        store.enqueue('other', run_id, 'CANCEL', command_id='other', expected_revision=1)
+    store.enqueue('s', run_id, 'FOLLOW_UP', message='查询订单1003', command_id='follow', expected_revision=1)
+    store.enqueue('s', run_id, 'CANCEL', command_id='cancel', expected_revision=2)
     assert store.commands('s', run_id)[1]['status'] == 'CANCELLED'
 
 
@@ -88,7 +88,7 @@ def test_async_follow_up_is_durable_and_sequential(database):
     controller = SessionController()
     handle = controller.start('s', '查询订单 1002 的状态', runner=runner)
     assert entered.wait(3)
-    ControlStore().enqueue('s', handle['run_id'], 'FOLLOW_UP', message='查询订单 1003 的状态', command_id='later')
+    ControlStore().enqueue('s', handle['run_id'], 'FOLLOW_UP', message='查询订单 1003 的状态', command_id='later', expected_revision=0)
     release.set()
     assert wait_result(handle['run_id'])['status'] == 'SUCCEEDED'
     deadline = time.monotonic() + 5
@@ -105,7 +105,7 @@ def test_cancel_survives_process_interruption(database):
     class Crash(BaseException): pass
     def runner(message, **kwargs):
         context = current_runtime()
-        ControlStore().enqueue('s', context.run_id, 'CANCEL', command_id='durable-stop')
+        ControlStore().enqueue('s', context.run_id, 'CANCEL', command_id='durable-stop', expected_revision=0)
         raise Crash()
     with pytest.raises(Crash):
         run_conversation('查询订单1002', 's', runner=runner)
@@ -134,7 +134,7 @@ def test_steer_after_budget_exhaustion_has_terminal_result(database):
     def runner(message, **kwargs):
         context = current_runtime()
         time.sleep(.02)
-        ControlStore().enqueue('expired', context.run_id, 'STEER', message='改预算')
+        ControlStore().enqueue('expired', context.run_id, 'STEER', message='改预算', command_id='expired', expected_revision=0)
         return {'reply': '尚未完成', 'trace': [], 'agent': 'runtime'}
     result = run_conversation('原始需求', 'expired', limits=BudgetLimits(max_seconds=.01), runner=runner)
     assert result['status'] == 'FAILED'
@@ -149,7 +149,7 @@ def test_read_retry_checks_new_cancel_before_reinvoking(database):
     def read(value: str):
         calls.append(value)
         active = ControlStore().conversation('retry')['active_run_id']
-        ControlStore().enqueue('retry', active, 'CANCEL')
+        ControlStore().enqueue('retry', active, 'CANCEL', command_id='retry-stop', expected_revision=0)
         raise TimeoutError('测试暂时超时')
     def runner(message, **kwargs):
         context = current_runtime()
@@ -164,8 +164,8 @@ def test_drain_continues_after_cached_followup_from_restart(database):
     from src.runtime import BudgetLimits
     store = ControlStore()
     parent = store.claim('restart-queue', 'parent', '查询订单1002状态', BudgetLimits().__dict__)
-    store.enqueue('restart-queue', parent['run_id'], 'FOLLOW_UP', message='查询订单1003状态', command_id='first')
-    store.enqueue('restart-queue', parent['run_id'], 'FOLLOW_UP', message='查询订单1001状态', command_id='second')
+    store.enqueue('restart-queue', parent['run_id'], 'FOLLOW_UP', message='查询订单1003状态', command_id='first', expected_revision=0)
+    store.enqueue('restart-queue', parent['run_id'], 'FOLLOW_UP', message='查询订单1001状态', command_id='second', expected_revision=1)
     execute_claim(parent, store=store)
     first = store.claim('restart-queue', 'first', '查询订单1003状态', BudgetLimits().__dict__)
     execute_claim(first, store=store)  # 模拟完成后、command确认前崩溃。
@@ -198,10 +198,56 @@ def test_recovery_does_not_reuse_an_old_observation_scope(database):
     with pytest.raises(Crash):
         run_conversation('核验库存', 'scope-recovery', runner=runner, store=CrashOnSecondRead())
     active = ControlStore().conversation('scope-recovery')['active_run_id']
-    ControlStore().enqueue('scope-recovery', active, 'CANCEL')
+    ControlStore().enqueue('scope-recovery', active, 'CANCEL', command_id='scope-stop', expected_revision=0)
     result = resume_run('scope-recovery', active, runner=runner)
     assert result['status'] == 'CANCELLED'
     assert reads == ['stock']
     assert len([e for e in result['events'] if e['type'] == 'tool_result']) == 1
     assert any(e.get('code') == 'INTERRUPTED_TOOL_CALL' for e in result['events'])
     assert project_trace(result['events'])['integrity']['complete'] is True
+
+
+@pytest.mark.parametrize('fields', [{}, {'command_id': 'id'}, {'expected_revision': 0},
+                                    {'command_id': ' ', 'expected_revision': 0},
+                                    {'command_id': 'id', 'expected_revision': True}])
+def test_control_contract_requires_id_and_integer_revision(database, fields):
+    store = ControlStore()
+    run_id = store.claim('contract', 'request', '目标', {})['run_id']
+    with pytest.raises(AgentError, match='必须提供'):
+        store.enqueue('contract', run_id, 'CANCEL', **fields)
+    assert store.commands('contract', run_id) == []
+
+
+def test_command_id_cannot_be_rebound_to_another_revision(database):
+    store = ControlStore()
+    run_id = store.claim('revision', 'request', '目标', {})['run_id']
+    store.enqueue('revision', run_id, 'STEER', message='新目标', command_id='id', expected_revision=0)
+    with pytest.raises(AgentError) as error:
+        store.enqueue('revision', run_id, 'STEER', message='新目标', command_id='id', expected_revision=1)
+    assert error.value.code == 'COMMAND_ID_CONFLICT'
+
+
+@pytest.mark.parametrize('kinds,same_id', [(('STEER', 'STEER'), False), (('STEER', 'CANCEL'), False),
+                                        (('FOLLOW_UP', 'FOLLOW_UP'), False), (('STEER', 'STEER'), True)])
+def test_concurrent_controls_have_one_atomic_winner_or_one_idempotent_command(database, kinds, same_id):
+    from concurrent.futures import ThreadPoolExecutor
+    store = ControlStore()
+    run_id = store.claim('concurrent', 'request', '目标', {})['run_id']
+    barrier = threading.Barrier(2)
+    def submit(index):
+        barrier.wait(timeout=3)
+        try:
+            return store.enqueue('concurrent', run_id, kinds[index], message='新目标',
+                                 command_id='same' if same_id else f'command-{index}', expected_revision=0)
+        except AgentError as error:
+            return error.code
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = [executor.submit(submit, index) for index in range(2)]
+        results = [future.result(timeout=5) for future in futures]
+    assert len(store.commands('concurrent', run_id)) == 1
+    assert store.revision(run_id) == 1
+    if same_id:
+        assert results[0] == results[1]
+    else:
+        assert sum(isinstance(r, dict) for r in results) == 1
+        assert any(r in ('STALE_CONTROL_REVISION', 'RUN_CANCELLING') for r in results if isinstance(r, str))

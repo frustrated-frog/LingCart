@@ -4,7 +4,7 @@
 
 ## 运行控制
 
-`POST /runs` 接受 `message / session_id / request_id / action_id / execution_mode`，返回 `202` 和运行编号；`execution_mode` 可为 `auto` 或 `adaptive`。同一会话仅有一个活动运行。`POST /runs/{run_id}/steer|cancel|follow-up` 接受 `session_id / message / command_id / expected_revision`。指令先落库，编号保证重试幂等，版本过期会拒绝。最多四次调整；自主计划本身最多两次重规划。
+`POST /runs` 接受 `message / session_id / request_id / action_id / execution_mode`，返回 `202` 和运行编号；`execution_mode` 可为 `auto` 或 `adaptive`。同一会话仅有一个活动运行。`POST /runs/{run_id}/steer|cancel|follow-up` 接受 `session_id / message / command_id / expected_revision`。`command_id` 与非负整数 `expected_revision` 均为必填，API 缺失字段返回 422，存储层也拒绝绕过。客户端必须为同一次逻辑操作保留相同编号与请求体；同编号不同请求（包括不同预期版本）被拒绝。同一次重试返回原指令，每个新指令原子增加控制版本，过期窗口的操作被拒绝。工作台表单保留创建时的版本，冲突后须显式刷新。最多四次 Steering，其他控制不占用此次数；自主计划说明最多修改两次。
 
 控制在每次实际模型/工具调用与重试前生效；正在执行的调用允许完成并保留真实结果。取消停止后续步骤，并取消尚未启动的后续追问，不回滚已提交业务。补充要求增加目标版本、清除旧模型决策和审批授权；已完成动作保持账本保护。写操作仍要求重新确认，不会因补充要求获得授权。
 
@@ -32,4 +32,4 @@
 
 `venv/bin/python eval/run_live_eval.py --dry-run` 校验固定 20 项（开发/测试各十项），不导入应用。真实执行默认每项三次，使用隔离业务 DB、物理工具观察和数据库变化核验。报告包含首次成功率、全部重复成功率、资源和延迟；token 无法确认时为 `null`，没有已验证价格时费用为 `null`。缺少模型配置返回 `NOT_RUN`，测试注入结果标为 `test_harness`，不能冻结为真实模型基线。`--gate --baseline <report>` 仅比较来源、数据、模型用途配置、提示词、预算与完整样本集合均兼容的真实报告。
 
-本次按用户要求未配置密钥、未调用真实提供方，因此没有真实模型成功率结论。
+当前环境未配置可用模型，未调用真实提供方，因此没有真实模型成功率结论。

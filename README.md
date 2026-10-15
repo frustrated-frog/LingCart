@@ -32,7 +32,7 @@ New tables are added automatically without resetting existing orders, payments,
 refunds, or modified product stock. Starting a new conversation leaves archived runs intact.
 Conversation messages and pending approvals are saved in SQLite. The browser URL carries the conversation ID so refreshing or restarting the service restores the same context. Interrupted tasks can resume from the workbench. See [runtime and recovery](docs/agent-runtime.md) for consistency guarantees and limits.
 
-工作台可启用“允许助手按执行结果调整选购步骤”：按真实目录搜索、对比、核验商品，价格或库存不再满足条件时最多重规划两次。运行中支持补充要求、取消后续步骤和排队追问。异步 API 使用 `POST /runs`，持久事件通过 SSE 支持断线续传；已提交业务操作在取消和恢复后仍保留证据。
+工作台可启用“允许助手按执行结果调整选购步骤”：由模型理解目标并在每次观察后选择下一步，可调整搜索、比较候选、澄清或提交推荐；执行层重新核验价格、库存和硬约束，失败结果交回模型。选购与订单查询等复合请求逐项目标核验，单项完成不会冒充全部完成；最终完成前再次刷新推荐商品。未配置模型时明确报告自主模式未执行。运行中支持补充要求、取消后续步骤和排队追问。异步 API 使用 `POST /runs`，持久事件通过 SSE 支持断线续传；已提交业务操作在取消和恢复后仍保留证据。
 
 详见 [自主计划](docs/adaptive-planning.md) 与 [会话控制、上下文及偏好](docs/session-control-memory.md)。真实评测入口 `eval/run_live_eval.py` 包含固定 20 项任务、开发/测试各十项、默认三次重复；未配置模型时返回 `NOT_RUN`。当前仅完成离线验证，未调用真实模型。
 

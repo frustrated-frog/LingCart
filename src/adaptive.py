@@ -1,11 +1,9 @@
-"""Evidence-driven shopping plans with durable, bounded changes to unfinished work.
-
-Business tools and model calls keep their existing runtime/approval boundaries.
-The adaptive layer chooses only from observations; it never generates catalog IDs.
-"""
+"""Model-directed shopping loop; code owns safety, evidence and execution budgets."""
 from __future__ import annotations
 
 from copy import deepcopy
+import hashlib
+import json
 import math
 import re
 import time
@@ -13,26 +11,17 @@ import uuid
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from src.adaptive_decision import Decision, ShoppingGoal, decide, predicate_holds, validate_goal
+from src.adaptive_goals import check_claims, new_ledger, outcome_report, record_outcome, recommendation_text, verification
 from src.direct_executor import _READ_ONLY_TOOLS, _finish
 from src.errors import AgentError, classify_exception
-from src.intake import (CLARIFICATION_REQUIRED, DIRECT, LLM_REQUIRED, PAYMENT_PROCESS,
-                        PRODUCT_SEARCH, REFUND_REQUEST, TaskIntake, analyze_request)
-from src.runtime import (BudgetLimits, RunRuntime, ToolEffect, ToolExecutor,
-                         TraceRecorder, current_runtime, runtime_scope)
-from src.task_plan import TaskPlan, TaskStep, _facts, build_plan, verify_observation
-
+from src.intake import DIRECT, PAYMENT_PROCESS, PRODUCT_SEARCH, REFUND_REQUEST, TaskIntake, analyze_request
+from src.runtime import BudgetLimits, RunRuntime, ToolEffect, ToolExecutor, TraceRecorder, current_runtime, runtime_scope, tool_spec
+from src.task_plan import TaskPlan, TaskStep, verify_observation
 
 MAX_REPLANS = 2
 _SELECT = "select_product"
-_DONE = {"SUCCEEDED", "REUSED", "NOT_NEEDED", "REJECTED", "WAITING_APPROVAL"}
-_FEATURES = ("主动降噪", "通话降噪", "降噪", "静音", "三模", "双模", "有线", "无线", "蓝牙",
-             "头戴式", "开放式", "入耳式", "4k", "60hz", "30hz", "便携", "通勤", "办公",
-             "防水", "红轴", "茶轴", "磁轴", "双屏", "hdmi", "运动", "视频会议", "麦克风", "空间音频")
-_BUDGET = re.compile(
-    r"(?:预算|价格|价钱|花费|费用)\s*(?:改为|改成|调整为|提高到|提高至|降到|降至|为|是|控制在|低于|最多|不高于|不超过|≤|<=)?\s*[¥￥]?\s*(-?\d+(?:\.\d+)?)"
-    r"|(?:不超过|不高于|最多)\s*[¥￥]?\s*(-?\d+(?:\.\d+)?)\s*(?:元|块|人民币)"
-    r"|(-?\d+(?:\.\d+)?)\s*(?:元|块)?\s*(?:以内|以下|不超过)"
-    r"|(?:under|budget|max(?:imum)?)\s*(?:cny|rmb|[¥￥])?\s*(-?\d+(?:\.\d+)?)", re.I)
+_DONE = {"SUCCEEDED", "REUSED", "NOT_NEEDED", "REJECTED", "WAITING_APPROVAL", "FAILED"}
 
 
 class StepDraft(BaseModel):
@@ -90,104 +79,6 @@ def apply_plan_patch(plan, patch, limits, *, registry=None):
     return candidate
 
 
-def _goal(request, intake, *, previous=None, additions=()):
-    """Known hard constraints are checked against values, never model prose."""
-    category = intake.entities.get("category")
-    if not category:
-        category = next((s.args.get("category") for s in build_plan(intake).steps if s.tool == "search_products"), None)
-    goal = dict(category=category, max_price=intake.entities.get("max_price"), features=[], excluded=[],
-                minimums={}, product_ids=intake.entities.get("product_ids", []))
-    if previous:
-        goal = deepcopy(previous)
-        goal.pop("conflict", None)
-    texts = list(additions) if previous else [request]
-    for text in texts:
-        lower = text.casefold()
-        if previous and any(intent not in {"PRODUCT_SEARCH", "PRODUCT_COMPARE"} for intent in analyze_request(text).intents):
-            goal["conflict"] = "本次补充包含新的服务任务，请另行提交订单、支付或退款请求。已完成的购物查询仍保留。"
-        budgets = [float(next(value for value in match.groups() if value is not None)) for match in _BUDGET.finditer(lower)]
-        if budgets:
-            goal["max_price"] = min(budgets)
-        if re.search(r"(?:不限制|不限|无上限|不设上限)\s*(?:预算|价格)|(?:预算|价格)\s*(?:不限|无上限|不设上限)|no\s+(?:budget|price)\s+limit", lower):
-            goal['max_price'] = None
-        categories = [c for c in ("耳机", "键盘", "扩展坞") if c in lower]
-        if len(categories) > 1:
-            goal["conflict"] = "一次购物目标包含多个商品类别，请分别说明要选哪类商品。"
-        elif categories and previous:
-            goal["category"] = categories[0]
-        for feature in _FEATURES:
-            if feature not in lower:
-                continue
-            denied = bool(re.search(r"(?:不要|不需要|无需|排除|不想要)\s*" + re.escape(feature), lower))
-            destination, other = ("excluded", "features") if denied else ("features", "excluded")
-            if denied or previous:
-                goal[other] = [value for value in goal[other] if value != feature]
-            if previous and feature in {"头戴式", "开放式", "入耳式"} and re.search(r"改成|改为|换成", lower):
-                goal["features"] = [value for value in goal["features"] if value not in {"头戴式", "开放式", "入耳式"}]
-            if feature not in goal[destination]:
-                goal[destination].append(feature)
-        # Preserve unfamiliar explicit requirements conservatively as exact terms.
-        for match in re.finditer(r"(?:支持|带有|要有|必须有|with\s+)([^，,。;；\n]{1,30})", lower):
-            term = re.split(r"(?:的)?(?:耳机|键盘|扩展坞)|预算|价格", match.group(1))[0].strip()
-            remainder = term
-            for known in sorted(_FEATURES, key=len, reverse=True):
-                remainder = remainder.replace(known, "")
-            if remainder.strip(" 的和及、 ") and term and term not in goal["features"]:
-                goal["features"].append(term)
-        for pattern, key in ((r"(?:续航[^\d]{0,6}|至少\s*)(\d+(?:\.\d+)?)\s*(?:个)?小时", "battery_hours"),
-                             (r"(?:至少|不少于)\s*(\d+)\s*(?:个)?键", "keys"),
-                             (r"(?:至少|不少于)\s*(\d+)\s*(?:个)?接口", "ports"),
-                             (r"(?:至少|不少于)\s*(\d+)\s*w", "power_watts")):
-            match = re.search(pattern, lower)
-            if match:
-                goal["minimums"][key] = float(match.group(1))
-    if not previous and intake.entities.get("query"):
-        # A model's query is a constraint only if grounded in the customer's text.
-        for term in intake.entities["query"].casefold().split():
-            if term not in request.casefold():
-                raise AgentError("UNGROUNDED_PLAN_CONSTRAINT", "规划提出了用户没有提供的商品条件", retryable=False)
-            if term not in goal["features"] and term not in goal["excluded"]:
-                goal["features"].append(term)
-    if goal["max_price"] is not None and (not math.isfinite(goal["max_price"]) or goal["max_price"] < 0):
-        goal["conflict"] = "预算必须是非负数，请明确可接受的最高价格。"
-    if len(set(goal["features"]) & {"头戴式", "开放式", "入耳式"}) > 1:
-        goal["conflict"] = "同一款耳机的佩戴方式条件冲突，请选择头戴式、开放式或入耳式。"
-    if set(goal["features"]) & set(goal["excluded"]):
-        goal["conflict"] = "商品特征同时被要求和排除，请明确保留哪项条件。"
-    if len(goal["product_ids"]) > 3:
-        goal["conflict"] = "一次最多对比三款商品，请明确保留哪两到三款。"
-    return goal
-
-
-def _search_args(goal):
-    return dict(query=" ".join(goal["features"]), category=goal["category"], max_price=goal["max_price"],
-                available_only=True, limit=60)
-
-
-def _matches(product, goal):
-    if product["stock"] <= 0 or (goal["category"] and product["category"] != goal["category"]):
-        return False
-    if goal["max_price"] is not None and product["price"] > goal["max_price"]:
-        return False
-    specs = product["specs"]
-    # Spec keys such as "降噪" are not evidence that a product has that feature.
-    values = " ".join(str(v) for v in specs.values()).casefold()
-    text = f"{product['name']} {product['summary']} {values}".casefold()
-    def has(feature):
-        if "降噪" in feature:
-            value = str(specs.get("降噪", "")).casefold()
-            return feature in value and value not in {"无", "不支持", "none"}
-        return feature in text
-    if not all(has(f) for f in goal["features"]) or any(has(f) for f in goal["excluded"]):
-        return False
-    for key, minimum in goal["minimums"].items():
-        value = specs.get({"battery_hours": "综合续航", "keys": "键数", "ports": "接口数量", "power_watts": "PD 供电"}[key])
-        number = re.search(r"\d+(?:\.\d+)?", str(value))
-        if not number or float(number.group()) < minimum:
-            return False
-    return True
-
-
 def _verify_products(step):
     verify_observation(step)
     ids = []
@@ -215,235 +106,389 @@ def _save(context, state, plan):
     context.checkpoint(adaptive=deepcopy(state), plan=plan.payload())
 
 
-def _scope(state):
-    return f"adaptive:{state['goal_revision']}:{state['replans']}"
+def _products(step):
+    return (step.result or {}).get('products', []) if isinstance(step.result, dict) else []
 
 
-def _replace_remaining(context, recorder, state, plan, goal, reason):
-    if state["replans"] >= MAX_REPLANS:
-        raise AgentError("REPLAN_BUDGET_EXHAUSTED", "已达到两次重规划上限，请明确条件后创建新任务", retryable=False)
-    pending = [s for s in plan.steps if s.specialist == "shopping" and s.status not in _DONE and s.status != "CANCELLED"]
-    identities = [s.step_id for s in pending]
-    number = len(plan.steps)
-    while len(identities) < 3:
-        number += 1
-        identities.append(f"step-{number}")
-    search, compare, select = identities[:3]
-    drafts = [StepDraft(step_id=search, tool="search_products", args=_search_args(goal)),
-              StepDraft(step_id=compare, tool="compare_products", depends_on=[search]),
-              StepDraft(step_id=select, tool=_SELECT, depends_on=[compare])]
-    existing_ids = {s.step_id for s in pending}
-    patch = PlanPatch(reason=reason, replace=[s for s in drafts if s.step_id in existing_ids],
-                      append=[s for s in drafts if s.step_id not in existing_ids], cancel=identities[3:])
-    candidate = apply_plan_patch(plan, patch, context.limits)
-    state["version"] += 1
-    state["replans"] += 1
-    state["goal"] = goal
-    state["journal"].append(dict(version=state["version"], goal_revision=state["goal_revision"], **patch.model_dump()))
-    for draft in drafts:
-        state["scopes"][draft.step_id] = _scope(state)
-    _save(context, state, candidate)
-    recorder.record("plan_replanned", source="adaptive", version=state["version"], goal_revision=state["goal_revision"],
-                    replan_count=state["replans"], patch=patch.model_dump())
-    return candidate
+def _observation(result, event):
+    return dict(result, observation=dict(timestamp=event['timestamp'],
+        reference=f"{event['run_id']}:{event['sequence']}",
+        digest=hashlib.sha256(json.dumps(result, sort_keys=True, ensure_ascii=False).encode()).hexdigest()))
 
 
-def _present(context, recorder, intake, state, plan, *, reason="COMPLETED", message=None, error=None, pending_action=None):
-    active = [s for s in plan.steps if s.status != "CANCELLED"]
-    selected = [s for s in active if s.tool == _SELECT and s.status in _DONE]
-    satisfied = reason == "COMPLETED" and bool(selected) and all(s.status in _DONE for s in active)
-    plan.verification = dict(all_goals_satisfied=satisfied, satisfied_steps=[s.step_id for s in active if s.status in _DONE],
-                             incomplete_steps=[s.step_id for s in active if s.status not in _DONE], waiting_steps=[],
-                             side_effects_executed=False, goal_revision=state["goal_revision"])
+def _present(context, recorder, intake, state, plan, *, reason, message, error=None, success=False):
+    plan.verification = verification(state, complete=success)
+    success = plan.verification['all_goals_satisfied']
+    if not success and state.get('objective_ledger'):
+        message += '\n\n' + outcome_report(state, plan)
     _save(context, state, plan)
-    recorder.record("verification", **plan.verification)
-    if error:
-        status = "PARTIAL" if any(s.status in _DONE for s in active) else "FAILED"
+    recorder.record('verification', **plan.verification)
+    trace = [dict(run_id=context.run_id, agent='shopping', tool=e['tool'], args=e.get('args', {}),
+                  result=e.get('result'), status=e.get('status'), duration_ms=e.get('duration_ms'))
+             for e in context.events if e['type'] == 'tool_result']
+    if success:
+        status = 'SUCCEEDED'
+    elif error or reason == 'MODEL_STOPPED':
+        status = 'PARTIAL' if trace else 'FAILED'
     else:
-        status = "SUCCEEDED" if satisfied else "WAITING_CLARIFICATION"
-    if message is None and selected:
-        product = selected[-1].result["selected_product"]
-        latest_compare = next(s for s in active if s.step_id == selected[-1].depends_on[0])
-        products = latest_compare.result["products"]
-        comparisons = "\n".join(f"- {p['name']}（{p['product_id']}）：¥{p['price']:.2f}，{p['summary']}" for p in products)
-        message = (f"按你的条件，在本地演示目录中选择 {product['name']}（{product['product_id']}），"
-                   f"价格 ¥{product['price']:.2f}，当前有货。\n{comparisons}\n选择依据：满足预算和已明确的商品条件，优先价格较低的商品。")
-        facts = [_facts(s) for s in active if s.specialist != "shopping" and s.status in _DONE]
-        if facts:
-            message = "\n\n".join([*facts, message])
-    trace = [dict(run_id=context.run_id, agent="shopping" if e["tool"] in {"search_products", "compare_products"} else "orchestrator",
-                  tool=e["tool"], args=e.get("args", {}), result=e.get("result"), status=e.get("status"), duration_ms=e.get("duration_ms"))
-             for e in context.events if e["type"] == "tool_result"]
-    result = _finish(recorder, intake, context.run_id, "shopping", trace, reply=message or "请补充商品条件后继续。",
-                     status=status, terminal_reason=reason, pending_action=pending_action, error=error)
-    result["route"] = "ADAPTIVE"
-    result["plan"] = dict(plan.payload(), version=state["version"], goal_revision=state["goal_revision"],
-                          replan_count=state["replans"], journal=deepcopy(state["journal"]), goal=deepcopy(state["goal"]))
+        status = 'WAITING_CLARIFICATION'
+    result = _finish(recorder, intake, context.run_id, 'shopping', trace, reply=message,
+                     status=status, terminal_reason=reason, error=error)
+    result.update(route='ADAPTIVE', plan=dict(plan.payload(), version=state['version'],
+        goal_revision=state['goal_revision'], replan_count=state['replans'],
+        journal=deepcopy(state['journal']), goal=deepcopy(state['goal']), next_steps=state['next_steps'],
+        working_memory=deepcopy(state.get('working_memory')), objective_ledger=deepcopy(state.get('objective_ledger', []))))
     return result
 
 
-def _run(context, user_message, history, pending_action):
-    from src.orchestrator import resolve_followup, run_orchestrator
-    request = resolve_followup(user_message, history)
-    intake = analyze_request(request)
-    state = deepcopy(context.snapshot.get("adaptive"))
-    recorder = TraceRecorder(context.run_id)
-    revision = context.snapshot.get("goal_revision", 0)
-    if pending_action or (not state and (PAYMENT_PROCESS in intake.intents or REFUND_REQUEST in intake.intents)):
-        return run_orchestrator(user_message, history, pending_action)
-    if state:
-        plan = _restore_plan(state["plan"])
-        intake = TaskIntake(**{**state["intake"], "intents": tuple(state["intake"]["intents"]),
-                               "missing_slots": tuple(state["intake"].get("missing_slots", []))})
-        if revision == state["goal_revision"] and request != state["request"]:
-            raise AgentError("CHECKPOINT_CONFLICT", "恢复请求与已保存目标不一致", retryable=False)
-    else:
-        planned = None
-        if intake.execution_mode == LLM_REQUIRED:
-            from src.planner import create_model_plan
-            intake, planned = create_model_plan(request, history)
-            if planned:
-                shopping = [s for s in planned.steps if s.tool == "search_products"]
-                if len(shopping) == 1:
-                    budget = shopping[0].args.get("max_price")
-                    numbers = {float(value) for value in re.findall(r"\d+(?:\.\d+)?", request)}
-                    if budget is not None and budget not in numbers:
-                        raise AgentError("UNGROUNDED_PLAN_CONSTRAINT", "模型预算没有来自用户提供的金额", retryable=False)
-                    ids = list(dict.fromkeys(p for s in planned.steps if s.tool == 'compare_products' for p in s.args.get('product_ids', [])))
-                    intake = TaskIntake(request, tuple(planned.goals), {**intake.entities, **shopping[0].args, 'product_ids': ids}, execution_mode=DIRECT,
-                                        reason="模型识别目标，商品选择由真实工具证据验证")
-        if PRODUCT_SEARCH not in intake.intents or intake.execution_mode == CLARIFICATION_REQUIRED:
-            if planned:
-                from src.task_plan import execute_plan
-                return execute_plan(intake, context.run_id, plan=planned, source="model")
-            return run_orchestrator(user_message, history, pending_action)
-        if any(intent in intake.intents for intent in (PAYMENT_PROCESS, REFUND_REQUEST)):
-            if planned:
-                from src.task_plan import execute_plan
-                return execute_plan(intake, context.run_id, plan=planned, source="model")
-            return run_orchestrator(user_message, history, pending_action)
-        goal = _goal(request, intake)
-        additions = context.snapshot.get("steering", [])
-        if additions:
-            goal = _goal(request, intake, previous=goal, additions=additions)
-        plan = planned or build_plan(intake)
-        searches = [s for s in plan.steps if s.tool == "search_products"]
-        if len(searches) != 1:
-            raise AgentError("AMBIGUOUS_SHOPPING_GOALS", "请一次提供一个商品选择目标", retryable=False)
-        # An explicit comparison is resolved only after search evidence exists.
-        plan.steps = [s for s in plan.steps if s.tool != "compare_products"]
-        search = searches[0]
-        search.args = _search_args(goal)
-        next_id = 1 + max([int(s.step_id.split('-')[-1]) for s in plan.steps if re.fullmatch(r'step-\d+', s.step_id)] or [0])
-        compare_id = f"step-{next_id}"
-        plan.steps += [TaskStep(compare_id, "shopping", "compare_products", {}, [search.step_id]),
-                       TaskStep(f"step-{next_id + 1}", "shopping", _SELECT, {}, [compare_id])]
-        plan.validate(context.limits.max_steps, context.limits.max_depth)
-        state = dict(version=1, replans=0, goal_revision=revision, request=request, intake=intake.to_dict(),
-                     goal=goal, journal=[], scopes={s.step_id: f"adaptive:{revision}:0" for s in plan.steps},
-                     steering_count=len(context.snapshot.get("steering", [])))
-        _save(context, state, plan)
-        recorder.record("plan_created", source="adaptive", version=1, goal_revision=revision, plan=plan.payload(), goal=goal)
+def _validate_tool(decision, state, plan, history):
+    if decision.tool not in _READ_ONLY_TOOLS:
+        raise AgentError('UNKNOWN_TOOL', '自主决策不能执行未授权工具', retryable=False)
+    spec = tool_spec(decision.tool, _READ_ONLY_TOOLS[decision.tool])
+    if spec.effect != ToolEffect.READ:
+        raise AgentError('TOOL_POLICY_REJECTED', '自主选购只能执行只读工具', retryable=False)
     try:
-        if revision != state["goal_revision"]:
-            additions = context.snapshot.get("steering", [])[state.get("steering_count", 0):]
-            if not additions:
-                raise AgentError("CHECKPOINT_CONFLICT", "目标版本变化但没有对应补充要求", retryable=False)
-            goal = _goal(request, intake, previous=state["goal"], additions=additions)
-            state["goal_revision"] = revision
-            state["request"] = request
-            state["steering_count"] = len(context.snapshot.get("steering", []))
-            plan = _replace_remaining(context, recorder, state, plan, goal, "USER_CONSTRAINT_CHANGED")
-        if state["goal"].get("conflict"):
-            return _present(context, recorder, intake, state, plan, reason="CONSTRAINT_CONFLICT", message=state["goal"]["conflict"])
-        while True:
-            context.require()
-            pending = next((s for s in plan.steps if s.status not in _DONE and s.status != "CANCELLED"), None)
-            if pending is None:
-                return _present(context, recorder, intake, state, plan, pending_action=pending_action)
-            step = pending
-            completed = {s.step_id: s for s in plan.steps}
-            if any(completed[d].status not in _DONE for d in step.depends_on):
-                raise AgentError("DEPENDENCY_FAILED", "前置步骤未完成，已停止后续执行", retryable=False)
-            recorder.record("step_started", step_id=step.step_id, specialist=step.specialist, dependencies=step.depends_on)
-            if step.tool == "compare_products":
-                source = completed[step.depends_on[0]]
-                products = [p for p in source.result["products"] if _matches(p, state["goal"])]
-                requested = state["goal"].get("product_ids", [])
-                if requested:
-                    products = [p for p in products if p["product_id"] in requested]
-                if not products or (requested and not set(requested) <= {p["product_id"] for p in products}):
-                    return _present(context, recorder, intake, state, plan, reason="NO_MATCHING_PRODUCTS",
-                                    message="本地演示目录中没有同时满足当前预算、库存和商品条件的商品。请明确调整哪项条件后继续；预算和条件已保留。")
-                products.sort(key=lambda p: (p["price"], p["product_id"]))
-                products = products[:3]
-                if len(products) == 1:
-                    step.status = "NOT_NEEDED"
-                    step.result = dict(products=products, reason="SINGLE_MATCH", evidence_step=source.step_id)
-                    _save(context, state, plan)
-                    recorder.record("step_completed", step_id=step.step_id, specialist="shopping", status=step.status)
-                    continue
-                step.args = dict(product_ids=[p["product_id"] for p in products])
-                _save(context, state, plan)
-            if step.tool == _SELECT:
-                source = completed[step.depends_on[0]]
-                eligible = [p for p in source.result["products"] if _matches(p, state["goal"])]
-                if not eligible:
-                    recorder.record("verification_failed", step_id=step.step_id, reason="PRODUCT_CONSTRAINT_CHANGED",
-                                    evidence_step=source.step_id)
-                    plan = _replace_remaining(context, recorder, state, plan, state["goal"], "PRODUCT_CONSTRAINT_CHANGED")
-                    continue
-                product = min(eligible, key=lambda p: (p["price"], p["product_id"]))
-                step.result = dict(selected_product=deepcopy(product), evidence_step=source.step_id)
-                step.status = "SUCCEEDED"
-            else:
-                registry = {name: value for name, value in _READ_ONLY_TOOLS.items() if name != _SELECT}
-                executor = ToolExecutor(registry, recorder, max_calls=context.limits.max_tool_calls,
-                                        observation_scope=state["scopes"][step.step_id])
-                if executor.registry[step.tool].effect != ToolEffect.READ:
-                    raise AgentError("INVALID_PLAN_PATCH", "自主管理的步骤只能调用只读工具", retryable=False)
-                step.result, event = executor.execute(step.tool, step.args)
-                if event["status"] == "BUSINESS_ERROR":
-                    raise AgentError("BUSINESS_DATA_NOT_FOUND", step.result["error"], retryable=False)
-                if step.tool in {"search_products", "compare_products"}:
-                    _verify_products(step)
-                else:
-                    verify_observation(step)
-                step.status = event["status"]
-            _save(context, state, plan)
-            recorder.record("step_completed", step_id=step.step_id, specialist=step.specialist, status=step.status)
+        args = spec.schema.model_validate(decision.args, strict=True).model_dump()
+    except ValueError as error:
+        raise AgentError('INVALID_TOOL_ARGUMENTS', '模型提交的工具参数无效', retryable=False) from error
+    if decision.tool == 'compare_products':
+        observed = {p['product_id'] for step in plan.steps for p in _products(step)}
+        ids = args['product_ids']
+        if not 2 <= len(ids) <= 3 or len(set(ids)) != len(ids) or not set(ids) <= observed:
+            raise AgentError('UNGROUNDED_PLAN_ENTITY', '对比只能引用已观察的两到三款商品', retryable=False)
+    if 'order_id' in args:
+        sources = [state['request'], *(str(m.content) for m in history or [] if getattr(m, 'type', None) == 'human')]
+        if not any(re.search(r'(?<!\d)' + str(args['order_id']) + r'(?!\d)', source) for source in sources):
+            raise AgentError('UNGROUNDED_PLAN_ENTITY', '订单编号必须来自用户', retryable=False)
+    return args
+
+
+def _accept(context, recorder, state, plan, decision, history):
+    if state['goal'] is None:
+        if decision.goal is None:
+            raise AgentError('MODEL_FORMAT_ERROR', '首次决策必须包含目标及约束', retryable=False)
+        validate_goal(decision.goal, state['request'], history)
+        state['goal'] = decision.goal.model_dump()
+        state['objective_ledger'] = new_ledger(state['goal'])
+        plan.goals = [o['id'] for o in state['goal']['objectives']]
+    elif decision.goal is not None and decision.goal.model_dump() != state['goal']:
+        raise AgentError('GOAL_CHANGE_REQUIRES_USER', '没有新用户指令时不能修改目标或硬约束', retryable=False)
+    if state['goal']['uncertainties'] and decision.action != 'clarify':
+        raise AgentError('CLARIFICATION_REQUIRED', '存在未解决的目标歧义，必须先澄清', retryable=False)
+    if decision.working_memory is not None:
+        completed = {s.step_id for s in plan.steps if s.status in _DONE and s.result is not None}
+        if not set(decision.working_memory.evidence_refs) <= completed:
+            raise AgentError('UNGROUNDED_WORKING_MEMORY', '工作笔记只能引用已完成的证据', retryable=False)
+        state['working_memory'] = decision.working_memory.model_dump()
+    if decision.next_steps is not None:
+        if state['next_steps'] is not None and decision.next_steps != state['next_steps']:
+            if state['replans'] >= MAX_REPLANS:
+                raise AgentError('REPLAN_BUDGET_EXHAUSTED', '计划修改次数已耗尽', retryable=False)
+            state['replans'] += 1
+            state['version'] += 1
+            entry = dict(version=state['version'], goal_revision=state['goal_revision'],
+                         reason=decision.reason, before=state['next_steps'], after=decision.next_steps)
+            state['journal'].append(entry)
+            recorder.record('plan_replanned', source='model', **entry)
+        state['next_steps'] = decision.next_steps
+    step = None
+    if decision.action == 'tool':
+        args = _validate_tool(decision, state, plan, history)
+        step = TaskStep(f'step-{len(plan.steps) + 1}', 'shopping', decision.tool, args)
+    elif decision.action == 'inspect':
+        step = TaskStep(f'step-{len(plan.steps) + 1}', 'shopping', 'read_evidence',
+                        dict(reference=decision.evidence_ref, offset=decision.offset, limit=decision.limit))
+    elif decision.action == 'recommend':
+        if not any(o['id'] == decision.objective_id and o['kind'] == 'recommend' for o in state['goal']['objectives']):
+            raise AgentError('INVALID_RECOMMENDATION_OBJECTIVE', '推荐必须对应当前目标中的选购项', retryable=False)
+        indexed = {s.step_id: s for s in plan.steps}
+        for ref in decision.evidence_refs:
+            if ref not in indexed or not any(p['product_id'] == decision.product_id for p in _products(indexed[ref])):
+                raise AgentError('UNGROUNDED_RECOMMENDATION', '推荐必须引用包含该商品的真实观察', retryable=False)
+            if decision.product_id not in state.get('evidence_access', {}).get(ref, []):
+                raise AgentError('UNREAD_RECOMMENDATION_EVIDENCE', '请先读取商品完整证据，不能仅凭索引推荐', retryable=False)
+        step = _selection_step(state, plan, decision)
+    if step:
+        candidate = deepcopy(plan)
+        candidate.steps.append(step)
+        candidate.validate(context.limits.max_steps, context.limits.max_depth)
+        plan.steps.append(step)
+    state['pending'] = dict(decision=decision.model_dump(), step_id=step.step_id if step else None)
+    state['model_cursor'] = context.model_cursor
+    state['feedback'] = None
+    _save(context, state, plan)
+    recorder.record('adaptive_decision', source='model', decision=decision.model_dump(),
+                    goal_revision=state['goal_revision'], step_id=step.step_id if step else None)
+
+
+def _selection_step(state, plan, decision):
+    return TaskStep(f'step-{len(plan.steps) + 1}', 'shopping', _SELECT,
+        dict(product_id=decision.product_id, objective_id=decision.objective_id,
+             goal_revision=state['goal_revision']), decision.evidence_refs)
+
+
+def _verify_recommendation(context, recorder, state, plan, decision, step):
+    # A new scope on EVERY attempt, including process resume. Historical ledger
+    # replay must never satisfy the final freshness gate.
+    executor = ToolExecutor(_READ_ONLY_TOOLS, recorder, max_calls=context.limits.max_tool_calls,
+                            observation_scope=f'adaptive:verify:{uuid.uuid4().hex}')
+    try:
+        result, event = executor.execute('search_products', dict(query=decision.product_id,
+            category=None, max_price=None, available_only=False, limit=60))
     except AgentError as error:
-        return _present(context, recorder, intake, state, plan, reason=error.code,
-                        message="运行已停止，已保留完成步骤和原始条件。" + str(error),
-                        error=dict(code=error.code, message=str(error), retryable=error.retryable), pending_action=pending_action)
+        if error.code not in {'TOOL_TIMEOUT', 'TOOL_ERROR'}:
+            raise
+        step.status = 'FAILED'
+        step.error = dict(code=error.code, message=str(error))
+        state['feedback'] = dict(code='RECOMMENDATION_VERIFICATION_FAILED',
+                                failures=[error.code], evidence_ref=step.step_id)
+        recorder.record('verification_failed', step_id=step.step_id, **state['feedback'])
+        return None
+    verification = TaskStep('fresh', 'shopping', 'search_products', {}, result=result)
+    _verify_products(verification)
+    fresh = next((p for p in result['products'] if p['product_id'] == decision.product_id), None)
+    failures = []
+    if fresh is None:
+        failures.append('PRODUCT_MISSING')
+    else:
+        if fresh['stock'] <= 0:
+            failures.append('OUT_OF_STOCK')
+        goal = ShoppingGoal.model_validate(state['goal'])
+        objective = next(o for o in goal.objectives if o.id == decision.objective_id)
+        constraints = [*goal.hard_constraints, *objective.hard_constraints]
+        failures.extend('HARD_CONSTRAINT: ' + c.description for c in constraints if not predicate_holds(fresh, c))
+        for ref in decision.evidence_refs:
+            old = next(p for s in plan.steps if s.step_id == ref for p in _products(s) if p['product_id'] == decision.product_id)
+            if any(old.get(key) != fresh.get(key) for key in ('price', 'stock', 'category', 'specs', 'name', 'summary')):
+                failures.append('STALE_EVIDENCE: ' + ref)
+    step.result = _observation(dict(products=[fresh] if fresh else [], failures=failures,
+        evidence_refs=decision.evidence_refs, rationale=decision.reason), event)
+    if failures:
+        step.status = 'REJECTED'
+        state['feedback'] = dict(code='RECOMMENDATION_VERIFICATION_FAILED', failures=failures, evidence_ref=step.step_id)
+        recorder.record('verification_failed', step_id=step.step_id, **state['feedback'])
+        return None
+    step.status = 'SUCCEEDED'
+    step.result['selected_product'] = deepcopy(fresh)
+    return recommendation_text(step)
+
+
+def _complete(context, recorder, state, plan, decision):
+    # A crash can leave a refresh attempt pending after its tool event was saved.
+    # Keep its history, but never leave an abandoned attempt presented as live work.
+    for step in plan.steps:
+        if step.tool == _SELECT and step.status == 'PENDING':
+            step.status = 'CANCELLED'
+            step.error = dict(code='SUPERSEDED_VERIFICATION', message='恢复后重新读取，旧核验尝试不作为完成证据')
+    failures = check_claims(state, plan, decision.claims)
+    if failures:
+        state['feedback'] = dict(code='COMPLETION_VERIFICATION_FAILED', failures=failures)
+        recorder.record('verification_failed', **state['feedback'])
+        return None
+    # Each recommendation is refreshed at the terminal boundary, even if it was
+    # verified earlier while another outcome was still being investigated.
+    for objective in state['goal']['objectives']:
+        if objective['kind'] != 'recommend':
+            continue
+        row = next(r for r in state['objective_ledger'] if r['objective_id'] == objective['id'])
+        source = next(s for s in plan.steps if s.step_id == row['evidence_refs'][0])
+        row.update(status='PENDING', failures=['FINAL_REFRESH_REQUIRED'])
+        _save(context, state, plan)
+        proposal = Decision(action='recommend', objective_id=objective['id'],
+            product_id=source.result['selected_product']['product_id'], evidence_refs=[source.step_id],
+            reason=source.result['rationale'])
+        step = _selection_step(state, plan, proposal)
+        candidate = deepcopy(plan)
+        candidate.steps.append(step)
+        candidate.validate(context.limits.max_steps, context.limits.max_depth)
+        plan.steps.append(step)
+        _save(context, state, plan)
+        message = _verify_recommendation(context, recorder, state, plan, proposal, step)
+        record_outcome(state, objective['id'], step)
+        _save(context, state, plan)
+        recorder.record('step_completed', step_id=step.step_id, specialist='shopping', status=step.status)
+        if message is None:
+            return None
+    return outcome_report(state, plan, complete=True)
+
+
+def _run(context, user_message, history, pending_action):
+    from src.orchestrator import run_orchestrator
+    intake = analyze_request(user_message)
+    saved = context.snapshot.get('adaptive')
+    if pending_action or (not saved and (PAYMENT_PROCESS in intake.intents or REFUND_REQUEST in intake.intents
+            or (intake.execution_mode == DIRECT and intake.intents and PRODUCT_SEARCH not in intake.intents
+                and 'PRODUCT_COMPARE' not in intake.intents))):
+        result = run_orchestrator(user_message, history, pending_action)
+        result['execution_mode'] = 'auto'
+        return result
+    recorder = TraceRecorder(context.run_id)
+    revision = context.snapshot.get('goal_revision', 0)
+    if saved:
+        if saved.get('schema_version') != 3:
+            raise AgentError('ADAPTIVE_CHECKPOINT_INCOMPATIBLE', '旧检查点缺少逐项目标契约，不能安全恢复，请新建任务', retryable=False)
+        state = deepcopy(saved)
+        plan = _restore_plan(state['plan'])
+        if revision == state['goal_revision'] and user_message != state['request']:
+            raise AgentError('CHECKPOINT_CONFLICT', '恢复请求与已保存目标不一致', retryable=False)
+        if revision != state['goal_revision']:
+            for step in plan.steps:
+                if step.status == 'PENDING':
+                    step.status = 'CANCELLED'
+            state['journal'].append(dict(reason='USER_CONSTRAINT_CHANGED', goal_revision=revision,
+                                         previous_goal=state['goal']))
+            state.update(goal_revision=revision, goal=None, request=user_message, pending=None,
+                         model_cursor=0, feedback=None, working_memory=None, objective_ledger=[],
+                         next_steps=None, version=state['version'] + 1)
+            plan.goals = []
+            plan.verification = {}
+            _save(context, state, plan)
+        context.model_cursor = state['model_cursor']
+    else:
+        plan = TaskPlan([], [])
+        state = dict(schema_version=3, version=1, replans=0, goal_revision=revision, request=user_message,
+                     goal=None, next_steps=None, working_memory=None, journal=[], pending=None,
+                     objective_ledger=[], feedback=None, model_cursor=context.model_cursor)
+        _save(context, state, plan)
+        recorder.record('plan_created', source='adaptive_model', plan=plan.payload())
+    intake = TaskIntake(user_message, (PRODUCT_SEARCH,), {}, execution_mode='adaptive', reason='模型逐步决策')
+    try:
+        while True:
+            from src.session_control import apply_controls
+            apply_controls(context)
+            context.require()
+            if state['pending'] is None:
+                decision = decide(context, state, plan, history)
+                # A steering command arriving during model inference invalidates
+                # that decision before any action or completion is accepted.
+                apply_controls(context)
+                try:
+                    _accept(context, recorder, state, plan, decision, history)
+                except AgentError as error:
+                    if error.code not in {'UNREAD_RECOMMENDATION_EVIDENCE', 'INVALID_RECOMMENDATION_OBJECTIVE'}:
+                        raise
+                    # An index is not sufficient evidence. Let the model choose
+                    # which original records to inspect, within its remaining budget.
+                    state['feedback'] = dict(code=error.code, message=str(error))
+                    state['model_cursor'] = context.model_cursor
+                    _save(context, state, plan)
+                    recorder.record('decision_rejected', code=error.code, action=decision.action)
+                    continue
+            pending = state['pending']
+            decision = Decision.model_validate(pending['decision'])
+            step = next((s for s in plan.steps if s.step_id == pending['step_id']), None)
+            if decision.action in {'clarify', 'finish'}:
+                return _present(context, recorder, intake, state, plan,
+                    reason='MODEL_CLARIFICATION' if decision.action == 'clarify' else 'MODEL_STOPPED', message=decision.message)
+            if decision.action == 'recommend':
+                if step.status == 'SUCCEEDED':
+                    # A previous verification succeeded but its terminal result
+                    # wasn't committed. Preserve that historical observation and
+                    # create a fresh attempt instead of overwriting completed work.
+                    candidate = deepcopy(plan)
+                    step = _selection_step(state, plan, decision)
+                    candidate.steps.append(step)
+                    candidate.validate(context.limits.max_steps, context.limits.max_depth)
+                    plan.steps.append(step)
+                    state['pending']['step_id'] = step.step_id
+                    _save(context, state, plan)
+                row = next(r for r in state['objective_ledger'] if r['objective_id'] == decision.objective_id)
+                row.update(status='PENDING', failures=['FINAL_REFRESH_REQUIRED'])
+                _save(context, state, plan)
+                message = _verify_recommendation(context, recorder, state, plan, decision, step)
+                record_outcome(state, decision.objective_id, step)
+                if message is not None and len(state['objective_ledger']) == 1:
+                    # Keep the pending proposal through terminal persistence. If
+                    # the process dies before commit, resume must refresh again.
+                    apply_controls(context)
+                    context.require()
+                    if context.hook_error:
+                        raise context.hook_error
+                    return _present(context, recorder, intake, state, plan, reason='COMPLETED', message=message, success=True)
+                if message is not None:
+                    state['feedback'] = dict(code='OBJECTIVES_REQUIRE_COMPLETION',
+                        message='此选购项已核验，请继续处理剩余目标，再逐项提交 complete 证据。')
+            elif decision.action == 'complete':
+                message = _complete(context, recorder, state, plan, decision)
+                if message is not None:
+                    apply_controls(context)
+                    context.require()
+                    if context.hook_error:
+                        raise context.hook_error
+                    # Preserve the pending completion across the durable commit;
+                    # replay verifies current business facts again after a crash.
+                    return _present(context, recorder, intake, state, plan, reason='COMPLETED', message=message, success=True)
+            elif decision.action == 'inspect':
+                from src.context_engine import ContextEngine
+                try:
+                    step.result = ContextEngine.read_evidence(plan, **step.args)
+                    step.status = 'SUCCEEDED'
+                except AgentError as error:
+                    step.status = 'FAILED'
+                    step.error = dict(code=error.code, message=str(error))
+                    state['feedback'] = dict(step_id=step.step_id, **step.error)
+                recorder.record('evidence_read', step_id=step.step_id, **step.args, status=step.status)
+            elif decision.action == 'tool':
+                executor = ToolExecutor(_READ_ONLY_TOOLS, recorder, max_calls=context.limits.max_tool_calls,
+                    observation_scope=f"adaptive:{state['goal_revision']}:{step.step_id}")
+                try:
+                    result, event = executor.execute(step.tool, step.args)
+                    step.result = result
+                    if event['status'] == 'BUSINESS_ERROR':
+                        step.status = 'FAILED'
+                    else:
+                        if step.tool in {'search_products', 'compare_products'}:
+                            _verify_products(step)
+                        else:
+                            verify_observation(step)
+                        step.status = event['status']
+                    if isinstance(result, dict):
+                        step.result = _observation(result, event)
+                except AgentError as error:
+                    # Recoverable tool observations go back to the model. Safety
+                    # and budget failures remain hard runtime boundaries.
+                    if error.code not in {'TOOL_TIMEOUT', 'TOOL_ERROR'}:
+                        raise
+                    step.status = 'FAILED'
+                    step.error = dict(code=error.code, message=str(error))
+                    state['feedback'] = dict(step_id=step.step_id, **step.error)
+            state['pending'] = None
+            _save(context, state, plan)
+            if step:
+                recorder.record('step_completed', step_id=step.step_id, specialist='shopping', status=step.status)
+    except Exception as exc:
+        error = classify_exception(exc, source='model')
+        message = ('未配置可用模型，自主模式未执行。请配置模型后重试。' if error.code == 'MODEL_UNAVAILABLE'
+                   and not context.counters['model_calls'] else '自主运行未完成：' + str(error))
+        return _present(context, recorder, intake, state, plan, reason=error.code, message=message,
+                        error=dict(code=error.code, message=str(error), retryable=error.retryable))
 
 
 def run_adaptive(user_message, history=None, pending_action=None, *, limits=None):
-    """Production entry point; uses the same runtime and result contract as auto."""
     context = current_runtime()
     if context is None:
         context = RunRuntime(uuid.uuid4().hex, limits or BudgetLimits())
         with runtime_scope(context):
             return run_adaptive(user_message, history, pending_action)
     started = time.perf_counter()
-    context.record("intake", request=user_message, execution_mode="adaptive")
+    context.record('intake', request=user_message, execution_mode='adaptive')
     try:
         result = _run(context, user_message, history, pending_action)
     except Exception as exc:
-        error = classify_exception(exc, source="model")
-        recorder = TraceRecorder(context.run_id)
-        result = _finish(recorder, analyze_request(user_message), context.run_id, "runtime", [], reply=str(error),
-                         status="FAILED", terminal_reason=error.code, pending_action=pending_action,
-                         error=dict(code=error.code, message=str(error), retryable=error.retryable))
-        result["route"] = "ADAPTIVE"
-    result["events"] = context.events
+        error = classify_exception(exc, source='model')
+        result = _finish(TraceRecorder(context.run_id), analyze_request(user_message), context.run_id, 'runtime', [],
+            reply=str(error), status='FAILED', terminal_reason=error.code, pending_action=pending_action,
+            error=dict(code=error.code, message=str(error), retryable=error.retryable))
+        result['route'] = 'ADAPTIVE'
+    result['events'] = context.events
     from src.agents.base import sum_usage
-    calls = [e for e in context.events if e["type"] == "model_call"]
+    calls = [e for e in context.events if e['type'] == 'model_call']
     if calls:
-        result["usage"] = sum_usage(*(e.get("usage") for e in calls))
-    elif any(e["type"] == "model_started" for e in context.events):
-        result["usage"] = dict(input_tokens=None, output_tokens=None, total_tokens=None)
-    result["budget"] = dict(limits=context.limits.__dict__, consumed=dict(context.counters))
-    result["execution_mode"] = "adaptive"
-    result["latency_ms"] = round((time.perf_counter() - started) * 1000, 2)
+        result['usage'] = sum_usage(*(e.get('usage') for e in calls))
+    elif any(e['type'] == 'model_started' for e in context.events):
+        result['usage'] = dict(input_tokens=None, output_tokens=None, total_tokens=None)
+    result['budget'] = dict(limits=context.limits.__dict__, consumed=dict(context.counters))
+    result.setdefault('execution_mode', 'adaptive')
+    result['autonomous_executed'] = any(e['type'] == 'model_call' and e.get('purpose') == 'adaptive_decision' for e in context.events)
+    result['latency_ms'] = round((time.perf_counter() - started) * 1000, 2)
     return result

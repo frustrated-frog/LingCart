@@ -30,14 +30,18 @@ class ControlStore(RunStore):
             raise AgentError('INVALID_CONTROL', '不支持该运行控制指令', retryable=False)
         if kind != 'CANCEL' and not message.strip():
             raise AgentError('INVALID_CONTROL', '补充指令不能为空', retryable=False)
-        command_id = command_id or uuid.uuid4().hex
+        if (not isinstance(command_id, str) or not command_id.strip() or len(command_id) > 64
+                or type(expected_revision) is not int or expected_revision < 0):
+            raise AgentError('INVALID_CONTROL', '必须提供有效的 command_id 和 expected_revision', retryable=False)
         with transaction() as session:
             run = session.get(AgentRun, run_id)
             if run is None or run.session_id != session_id:
                 raise AgentError('RUN_NOT_FOUND', '没有找到当前会话的任务', retryable=False)
             existing = session.get(RunCommand, command_id)
             if existing:
-                if existing.session_id != session_id or existing.run_id != run_id or existing.kind != kind or existing.payload.get('message', '') != message:
+                if (existing.session_id != session_id or existing.run_id != run_id or existing.kind != kind
+                        or existing.payload.get('message', '') != message
+                        or existing.payload.get('expected_revision') != expected_revision):
                     raise AgentError('COMMAND_ID_CONFLICT', '同一指令编号不能用于不同操作', retryable=False)
                 return self.command_payload(existing)
             if run.result is not None:
@@ -51,14 +55,16 @@ class ControlStore(RunStore):
                 session.add(control)
             elif control.closed:
                 raise AgentError('RUN_FINALIZING', '任务正在保存最终结果，请稍后发送新需求', retryable=True)
-            if expected_revision is not None and expected_revision != control.revision:
+            if expected_revision != control.revision:
                 raise AgentError('STALE_CONTROL_REVISION', '任务约束版本已变化，请刷新后重试', retryable=False)
             if kind == 'STEER':
-                if control.revision >= 4:
+                steers = session.scalars(select(RunCommand).where(
+                    RunCommand.run_id == run_id, RunCommand.kind == 'STEER')).all()
+                if len(steers) >= 4:
                     raise AgentError('STEERING_BUDGET_EXHAUSTED', '本次任务已达到调整次数上限，请结束后创建新任务', retryable=False)
-                control.revision += 1
+            control.revision += 1
             row = RunCommand(command_id=command_id, run_id=run_id, session_id=session_id, kind=kind,
-                             payload={'message': message, 'revision': control.revision,
+                             payload={'message': message, 'revision': control.revision, 'expected_revision': expected_revision,
                                       'execution_mode': (session.get(Checkpoint, run_id).payload or {}).get('execution_mode', 'auto')},
                              status='QUEUED', created_at=utcnow())
             session.add(row)

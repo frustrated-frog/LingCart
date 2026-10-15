@@ -1,4 +1,4 @@
-"""S4: real catalog evidence, constrained patches, budgets and durable recovery."""
+"""Scripted model protocol tests with real tools; these do not measure LLM quality."""
 from copy import deepcopy
 import json
 
@@ -13,19 +13,63 @@ from src.backend.seed import seed
 from src.durable import resume_run, run_conversation
 from src.errors import AgentError
 from src.persistence import RunStore
-from src.runtime import BudgetLimits, RunRuntime, ToolSpec, runtime_scope, tool_spec
+from src.runtime import BudgetLimits, ToolSpec, tool_spec
 from src.task_plan import TaskPlan, TaskStep
 
 
 @pytest.fixture(autouse=True)
-def database(tmp_path):
-    path = tmp_path / 'adaptive.db'
-    engine = get_engine(f'sqlite:///{path}')
+def database(tmp_path, monkeypatch):
+    engine = get_engine(f'sqlite:///{tmp_path / "adaptive.db"}')
     tools.configure_db(engine)
     with get_session_factory(engine)() as session:
         seed(session)
-    yield path
+    def unavailable(**kwargs):
+        raise AgentError('MODEL_UNAVAILABLE', '未配置模型', retryable=False)
+    monkeypatch.setattr('src.adaptive_decision.get_llm', unavailable)
+    yield
     engine.dispose()
+
+
+def goal(**updates):
+    return dict(dict(summary='选购耳机', objectives=[dict(id='shopping', description='推荐耳机',
+        source_quote='耳机', kind='recommend')], hard_constraints=[
+        dict(description='预算上限500', source_quote='预算500', field='price', op='lte', value=500)],
+        soft_preferences=[], uncertainties=[]), **updates)
+
+
+def search(*, first=False, query='', **kwargs):
+    return dict(action='tool', reason='获取候选证据', tool='search_products',
+                args=dict(query=query, category='耳机', limit=2, **kwargs), **({'goal': goal()} if first else {}))
+
+
+def recommendation(payload, index=0, ref=None):
+    observation = next(s for s in reversed(payload['observations']) if s['step_id'] == ref) if ref else payload['observations'][-1]
+    product = observation['result']['products'][index]
+    return dict(action='recommend', reason='根据用户偏好和已观察规格选择', product_id=product['product_id'], objective_id='shopping',
+                evidence_refs=[observation['step_id']])
+
+
+def clarification(payload=None):
+    return dict(action='clarify', reason='现有证据不足，需要用户决定', message='是否调整预算或选择条件？')
+
+
+class Script:
+    def __init__(self, decisions):
+        self.decisions = iter(decisions)
+        self.inputs = []
+    def invoke(self, messages):
+        payload = json.loads(messages[-1].content)
+        self.inputs.append(payload)
+        decision = next(self.decisions)
+        content = decision(payload) if callable(decision) else decision
+        return AIMessage(content=json.dumps(content, ensure_ascii=False),
+                         usage_metadata={'input_tokens': 100, 'output_tokens': 80, 'total_tokens': 180})
+
+
+def model(monkeypatch, *decisions):
+    script = Script(decisions)
+    monkeypatch.setattr('src.adaptive_decision.get_llm', lambda **kwargs: script)
+    return script
 
 
 def selected(result):
@@ -39,162 +83,247 @@ def install(monkeypatch, name, function):
     monkeypatch.setitem(direct._READ_ONLY_TOOLS, name, ToolSpec(function, tool_spec(name, original).schema))
 
 
-def test_search_compare_select_are_grounded_and_bounded():
-    result = run_adaptive('推荐500元以内的主动降噪头戴式耳机')
-    assert result['status'] == 'SUCCEEDED'
-    assert result['plan']['verification']['all_goals_satisfied']
-    assert result['execution_mode'] == 'adaptive'
-    search, comparison = result['trace']
-    assert search['tool'] == 'search_products' and comparison['tool'] == 'compare_products'
-    observed = {p['product_id'] for p in search['result']['products']}
-    assert 2 <= len(comparison['args']['product_ids']) <= 3
-    assert set(comparison['args']['product_ids']) <= observed
-    product = selected(result)
-    assert product['price'] <= 500 and product['stock'] > 0
-    assert product['specs']['降噪'] == '主动降噪'
-    assert product['specs']['佩戴方式'] == '头戴式'
-    assert result['budget']['consumed']['model_calls'] == 0
-    assert result['plan']['version'] == 1
+def change(identity, **values):
+    with tools._session() as session:
+        product = session.get(Product, identity)
+        for key, value in values.items():
+            setattr(product, key, value)
+        session.commit()
 
 
-def test_single_candidate_uses_search_observation_without_invalid_compare():
-    result = run_adaptive('预算1000推荐续航至少60小时的耳机')
-    assert result['status'] == 'SUCCEEDED'
-    assert selected(result)['product_id'] == 'P1108'
-    assert [t['tool'] for t in result['trace']] == ['search_products']
-    assert next(s for s in result['plan']['steps'] if s['tool'] == 'compare_products')['status'] == 'NOT_NEEDED'
-
-
-def test_zero_matches_preserves_budget_and_waits_for_user():
-    result = run_adaptive('推荐预算50的降噪耳机')
-    assert result['status'] == 'WAITING_CLARIFICATION'
-    assert result['terminal_reason'] == 'NO_MATCHING_PRODUCTS'
-    assert result['plan']['goal']['max_price'] == 50
+def test_no_model_does_not_run_an_autonomous_workflow():
+    result = run_adaptive('推荐预算500的耳机')
+    assert result['status'] == 'FAILED'
+    assert result['terminal_reason'] == 'MODEL_UNAVAILABLE'
+    assert '自主模式未执行' in result['reply']
+    assert not result['trace'] and not result['autonomous_executed']
     assert not result['plan']['verification']['all_goals_satisfied']
-    assert result['plan']['replan_count'] == 0
-    assert len(result['trace']) == 1
-    assert '预算和条件已保留' in result['reply']
 
 
-@pytest.mark.parametrize('message', ['推荐预算-1的耳机', '推荐500元以内的头戴式开放式耳机'])
-def test_constraint_conflict_stops_before_tools(message):
-    result = run_adaptive(message)
+def test_model_decides_after_each_observation_and_can_choose_more_expensive(monkeypatch):
+    def compare(payload):
+        return dict(action='tool', reason='比较候选的规格差异', tool='compare_products',
+                    args={'product_ids': [p['product_id'] for p in payload['observations'][-1]['result']['products']]})
+    script = model(monkeypatch, search(first=True), compare, lambda p: recommendation(p, 1))
+    result = run_adaptive('推荐预算500的耳机')
+    assert result['status'] == 'SUCCEEDED', result
+    assert result['budget']['consumed']['model_calls'] == 3
+    assert [t['tool'] for t in result['trace']] == ['search_products', 'compare_products', 'search_products']
+    assert selected(result)['price'] > script.inputs[1]['observations'][0]['result']['products'][0]['price']
+    assert script.inputs[2]['observations'][-1]['tool'] == 'compare_products'
+    assert result['plan']['verification']['all_goals_satisfied']
+
+
+def test_model_can_change_query_after_empty_search_without_forced_compare(monkeypatch):
+    script = model(monkeypatch, search(first=True, query='不存在的型号'),
+        dict(action='revise_plan', reason='精确型号没有结果，改查品类', next_steps=['按品类查找']),
+        search(), recommendation)
+    result = run_adaptive('推荐预算500的耳机')
+    assert result['status'] == 'SUCCEEDED', result
+    assert script.inputs[1]['observations'][0]['result']['products'] == []
+    assert [t['tool'] for t in result['trace']] == ['search_products'] * 3
+    assert result['budget']['consumed']['model_calls'] == 4
+
+
+def test_negative_scope_is_model_supplied_without_substring_expansion(monkeypatch):
+    understood = goal()
+    understood['hard_constraints'].append(dict(description='排除主动降噪', source_quote='不要主动降噪',
+        field='specs.降噪', op='not_contains', value='主动降噪'))
+    first = search(first=True, query='P1102')
+    first['goal'] = understood
+    with tools._session() as session:
+        product = session.get(Product, 'P1102')
+        product.specs = {**product.specs, '降噪': '无'}
+        product.stock = 8
+        product.price = 100
+        session.commit()
+    model(monkeypatch, first, recommendation)
+    result = run_adaptive('推荐预算500的耳机，不要主动降噪')
+    assert result['status'] == 'SUCCEEDED', result
+    assert selected(result)['specs']['降噪'] == '无'
+    assert result['plan']['goal']['hard_constraints'] == understood['hard_constraints']
+
+
+def test_model_clarifies_uncertainty_before_tools(monkeypatch):
+    first = clarification()
+    first['goal'] = goal(uncertainties=['不清楚用户是否要隔绝环境声'])
+    model(monkeypatch, first)
+    result = run_adaptive('推荐预算500的耳机')
     assert result['status'] == 'WAITING_CLARIFICATION'
-    assert result['terminal_reason'] == 'CONSTRAINT_CONFLICT'
+    assert not result['trace'] and result['budget']['consumed']['model_calls'] == 1
+
+
+@pytest.mark.parametrize('values', [{'price': 9999}, {'stock': 0}, {'price': 9999, 'stock': 0},
+                                  {'specs': {'降噪': '主动降噪'}}])
+def test_changes_after_comparison_are_freshly_verified_and_returned_to_model(monkeypatch, values):
+    def compare(p):
+        return dict(action='tool', reason='查证候选', tool='compare_products',
+                    args={'product_ids': [x['product_id'] for x in p['observations'][-1]['result']['products']]})
+    def stale(p):
+        decision = recommendation(p)
+        change(decision['product_id'], **values)
+        return decision
+    script = model(monkeypatch, search(first=True), compare, stale, clarification)
+    result = run_adaptive('推荐预算500的耳机')
+    assert result['status'] == 'WAITING_CLARIFICATION', result
+    assert not result['plan']['verification']['all_goals_satisfied']
+    assert script.inputs[-1]['feedback']['code'] == 'RECOMMENDATION_VERIFICATION_FAILED'
+    fresh = script.inputs[-1]['observations'][-1]['result']['products'][0]
+    for key, value in values.items():
+        assert fresh[key] == value
+    assert not any(s['tool'] == 'select_product' and s['status'] == 'SUCCEEDED' for s in result['plan']['steps'])
+
+
+def test_model_can_accept_changed_price_using_new_evidence(monkeypatch):
+    def stale(p):
+        decision = recommendation(p)
+        change(decision['product_id'], price=199)
+        return decision
+    script = model(monkeypatch, search(first=True), stale, recommendation)
+    result = run_adaptive('推荐预算500的耳机')
+    assert result['status'] == 'SUCCEEDED', result
+    assert selected(result)['price'] == 199
+    assert '¥199.00' in result['reply']
+    assert script.inputs[-1]['observations'][-1]['status'] == 'REJECTED'
+    assert result['budget']['consumed']['tool_calls'] == 3
+
+
+def test_model_can_choose_another_candidate_after_stock_failure(monkeypatch):
+    def stale(p):
+        decision = recommendation(p)
+        change(decision['product_id'], stock=0)
+        return decision
+    model(monkeypatch, search(first=True), stale, lambda p: recommendation(p, 1, ref='step-1'))
+    result = run_adaptive('推荐预算500的耳机')
+    assert result['status'] == 'SUCCEEDED', result
+    assert selected(result)['stock'] > 0
+
+
+@pytest.mark.parametrize('predicate', [dict(field='specs.未知特征', op='not_contains', value='主动降噪'),
+                                     dict(field=None, op='eq', value=None),
+                                     dict(field='price', op='lte', value=1)])
+def test_unverifiable_or_failed_hard_constraints_cannot_complete(monkeypatch, predicate):
+    first = search(first=True)
+    first['goal']['hard_constraints'].append(dict(description='必须核验', source_quote='预算500', **predicate))
+    model(monkeypatch, first, recommendation, clarification)
+    result = run_adaptive('推荐预算500的耳机')
+    assert result['status'] == 'WAITING_CLARIFICATION'
+    assert not result['plan']['verification']['all_goals_satisfied']
+
+
+def test_model_cannot_silently_relax_goal(monkeypatch):
+    second = search()
+    second['goal'] = goal(summary='忽略预算', hard_constraints=[])
+    model(monkeypatch, search(first=True), second)
+    result = run_adaptive('推荐预算500的耳机')
+    assert result['terminal_reason'] == 'GOAL_CHANGE_REQUIRES_USER'
+    assert len(result['trace']) == 1
+
+
+@pytest.mark.parametrize('decision,code', [
+    (dict(action='tool', reason='写入', tool='process_payment', args={'order_id': 1003, 'method': 'card'}), 'UNKNOWN_TOOL'),
+    (dict(action='tool', reason='对比', tool='compare_products', args={'product_ids': ['P9998', 'P9999']}), 'UNGROUNDED_PLAN_ENTITY'),
+    (dict(action='recommend', reason='伪造', product_id='P9999', objective_id='shopping', evidence_refs=['step-1']), 'UNGROUNDED_RECOMMENDATION'),
+])
+def test_unsafe_actions_are_rejected(monkeypatch, decision, code):
+    model(monkeypatch, search(first=True), decision)
+    result = run_adaptive('推荐预算500的耳机')
+    assert result['terminal_reason'] == code
+    assert tools.get_payment_status(1003)['status'] == 'pending'
+
+
+@pytest.mark.parametrize('limits,code', [
+    (BudgetLimits(max_model_calls=0), 'MODEL_ROUND_BUDGET_EXHAUSTED'),
+    (BudgetLimits(max_tool_calls=0), 'TOOL_BUDGET_EXHAUSTED'),
+    (BudgetLimits(max_steps=0), 'PLAN_STEP_BUDGET_EXHAUSTED'),
+    (BudgetLimits(max_prompt_tokens=1), 'PROMPT_TOKEN_BUDGET_EXHAUSTED'),
+    (BudgetLimits(max_context_chars=1), 'CONTEXT_BUDGET_EXHAUSTED'),
+])
+def test_shared_budgets_cannot_be_bypassed(monkeypatch, limits, code):
+    model(monkeypatch, search(first=True))
+    result = run_adaptive('推荐预算500的耳机', limits=limits)
+    assert result['terminal_reason'] == code, result
     assert not result['trace']
 
 
-def test_feature_keys_do_not_prove_the_feature_and_negative_constraints_hold():
-    result = run_adaptive('推荐500元以内的降噪耳机')
-    assert selected(result)['specs']['降噪'] != '无'
-    excluded = run_adaptive('推荐500元以内不要降噪的耳机')
-    assert selected(excluded)['specs']['降噪'] == '无'
-    unavailable = run_adaptive('推荐500元以内防水的耳机')
-    assert unavailable['status'] == 'WAITING_CLARIFICATION'
-    assert unavailable['terminal_reason'] == 'NO_MATCHING_PRODUCTS'
+def test_final_refresh_consumes_tool_budget_and_never_uses_cached_search(monkeypatch):
+    model(monkeypatch, search(first=True), recommendation)
+    result = run_adaptive('推荐预算500的耳机', limits=BudgetLimits(max_tool_calls=1))
+    assert result['terminal_reason'] == 'TOOL_BUDGET_EXHAUSTED'
+    assert result['status'] != 'SUCCEEDED'
 
 
-@pytest.mark.parametrize('field,value', [('stock', 0), ('price', 9999)])
-def test_observed_stock_or_price_change_replans_only_unfinished_steps(monkeypatch, field, value):
-    original = tools.compare_products
-    calls = []
-    def changing(product_ids: list[str]):
-        calls.append(product_ids)
-        if len(calls) == 1:
-            with tools._session() as session:
-                for identity in product_ids:
-                    setattr(session.get(Product, identity), field, value)
-                session.commit()
-        return original(product_ids)
-    install(monkeypatch, 'compare_products', changing)
-    result = run_adaptive('推荐预算500的耳机')
-    assert result['status'] == 'SUCCEEDED'
-    assert result['plan']['version'] == 2 and result['plan']['replan_count'] == 1
-    assert result['plan']['journal'][0]['reason'] == 'PRODUCT_CONSTRAINT_CHANGED'
-    steps = result['plan']['steps']
-    assert steps[0]['tool'] == 'search_products' and steps[0]['status'] == 'SUCCEEDED'
-    assert steps[1]['tool'] == 'compare_products' and steps[1]['status'] == 'SUCCEEDED'
-    assert len(steps) == 5
-    assert len([t for t in result['trace'] if t['tool'] == 'search_products']) == 2
-    assert selected(result)['product_id'] not in calls[0]
-    assert result['plan']['goal']['max_price'] == 500
-    assert any(e['type'] == 'verification_failed' for e in result['events'])
-    assert any(e['type'] == 'plan_replanned' for e in result['events'])
-
-
-def test_replanning_stops_after_two_changes(monkeypatch):
-    original = tools.compare_products
-    calls = []
-    def drifting(product_ids: list[str]):
-        calls.append(product_ids)
-        result = original(product_ids)
-        for p in result['products']:
-            p['stock'] = 0
-        return result
-    install(monkeypatch, 'compare_products', drifting)
-    result = run_adaptive('推荐预算500的耳机')
-    assert result['status'] == 'PARTIAL'
-    assert result['terminal_reason'] == 'REPLAN_BUDGET_EXHAUSTED'
-    assert result['plan']['replan_count'] == 2
-    assert len(result['plan']['journal']) == 2
-    assert len(calls) == 3
-    assert result['budget']['consumed']['tool_calls'] == 6
-    assert not result['plan']['verification']['all_goals_satisfied']
-
-
-def test_tool_retry_is_bounded_by_shared_runtime(monkeypatch):
+def test_tool_failure_is_an_observation_for_next_model_decision(monkeypatch):
     calls = []
     def timeout(query='', category=None, max_price=None, available_only=True, limit=12):
         calls.append(query)
         raise TimeoutError('catalog timeout')
     install(monkeypatch, 'search_products', timeout)
+    script = model(monkeypatch, search(first=True), clarification)
     result = run_adaptive('推荐预算500的耳机')
-    assert result['terminal_reason'] == 'TOOL_TIMEOUT'
+    assert result['status'] == 'WAITING_CLARIFICATION'
     assert len(calls) == 2
-    assert result['budget']['consumed']['tool_calls'] == 2
-    assert result['plan']['replan_count'] == 0
+    assert script.inputs[-1]['feedback']['code'] == 'TOOL_TIMEOUT'
 
 
-@pytest.mark.parametrize('limits,reason', [
-    (BudgetLimits(max_steps=2), 'PLAN_STEP_BUDGET_EXHAUSTED'),
-    (BudgetLimits(max_depth=2), 'PLAN_DEPTH_BUDGET_EXHAUSTED'),
-    (BudgetLimits(max_tool_calls=0), 'TOOL_BUDGET_EXHAUSTED'),
-])
-def test_shared_budgets_cannot_be_bypassed(limits, reason):
-    result = run_adaptive('推荐预算500的耳机', limits=limits)
-    assert result['terminal_reason'] == reason
-    assert not result['trace']
-    assert result['budget']['consumed']['tool_calls'] == 0
+class Crash(BaseException):
+    pass
 
 
-def test_replanning_retains_the_total_step_limit(monkeypatch):
-    original = tools.compare_products
-    def drift(product_ids: list[str]):
-        observation = original(product_ids)
-        for product in observation['products']:
-            product['stock'] = 0
-        return observation
-    install(monkeypatch, 'compare_products', drift)
-    result = run_adaptive('推荐预算500的耳机', limits=BudgetLimits(max_steps=4))
-    assert result['terminal_reason'] == 'PLAN_STEP_BUDGET_EXHAUSTED'
-    assert result['plan']['version'] == 1
-    assert result['plan']['replan_count'] == 0
-    assert len(result['plan']['steps']) == 3
+class CrashAfterSearch(RunStore):
+    def save_checkpoint(self, run_id, token, snapshot, event=None):
+        if event and event.get('type') == 'tool_result' and event.get('tool') == 'search_products':
+            raise Crash()
+        return super().save_checkpoint(run_id, token, snapshot, event)
 
 
-def test_untrusted_comparison_id_cannot_complete_selection(monkeypatch):
-    original = tools.compare_products
-    def invented(product_ids: list[str]):
-        observation = original(product_ids)
-        observation['products'][0]['product_id'] = 'P9999'
-        return observation
-    install(monkeypatch, 'compare_products', invented)
-    result = run_adaptive('推荐预算500的耳机')
-    assert result['terminal_reason'] == 'INVALID_TOOL_RESULT'
-    assert not result['plan']['verification']['all_goals_satisfied']
-    assert not any(s['tool'] == 'select_product' and s['status'] == 'SUCCEEDED' for s in result['plan']['steps'])
+def test_resume_replays_committed_observation_but_refreshes_recommendation(monkeypatch):
+    script = model(monkeypatch, search(first=True), recommendation, clarification)
+    with pytest.raises(Crash):
+        run_conversation('推荐预算500的耳机', 'resume', runner=run_adaptive, store=CrashAfterSearch())
+    store = RunStore()
+    active = store.conversation('resume')['active_run_id']
+    with tools._session() as session:
+        for product in session.scalars(select(Product)):
+            product.price = 9999
+        session.commit()
+    result = resume_run('resume', active, runner=run_adaptive)
+    assert result['status'] == 'WAITING_CLARIFICATION', result
+    assert result['trace'][0]['status'] == 'REUSED'
+    assert script.inputs[-1]['observations'][-1]['result']['products'][0]['price'] == 9999
+    assert len(script.inputs) == 3  # Initial decision wasn't rerun.
+    assert result['budget']['consumed']['model_calls'] == 3
 
 
+def test_steering_reinterprets_goal_in_model_and_keeps_previous_evidence(monkeypatch):
+    from src.session_control import ControlStore
+    def steer(p):
+        active = RunStore().conversation('steer')['active_run_id']
+        ControlStore().enqueue('steer', active, 'STEER', message='预算改为200', command_id='steer-1', expected_revision=0)
+        return recommendation(p)  # This now-stale decision must never execute.
+    revised = search()
+    revised['goal'] = goal(summary='新预算', hard_constraints=[dict(description='预算200',
+        source_quote='预算改为200', field='price', op='lte', value=200)], soft_preferences=[], uncertainties=[])
+    first = search(first=True)
+    first['working_memory'] = dict(summary='按原预算500考虑候选', evidence_refs=[], open_questions=[])
+    script = model(monkeypatch, first, steer, revised, recommendation)
+    result = run_conversation('推荐预算500的耳机', 'steer', runner=run_adaptive)
+    assert result['status'] == 'SUCCEEDED', result
+    assert result['plan']['goal_revision'] == 1
+    assert selected(result)['price'] <= 200
+    assert script.inputs[2]['goal'] is None
+    assert script.inputs[1]['working_memory']['summary'] == '按原预算500考虑候选'
+    assert script.inputs[2]['working_memory'] is None
+    assert script.inputs[2]['objective_ledger'] == []
+    assert len(script.inputs[2]['observations']) == 1
+    assert result['plan']['journal'][0]['reason'] == 'USER_CONSTRAINT_CHANGED'
+
+
+def test_payment_uses_existing_approval_path():
+    result = run_adaptive('帮我支付订单1003')
+    assert result['status'] == 'WAITING_APPROVAL'
+    assert result['execution_mode'] == 'auto' and not result['autonomous_executed']
+    assert tools.get_payment_status(1003)['status'] == 'pending'
 def test_plan_patch_cannot_change_completed_work_or_add_unguarded_write():
     done = TaskStep('step-1', 'payment', 'process_payment', {'order_id': 1003, 'method': 'card'}, status='SUCCEEDED', result={'success': True})
     pending = TaskStep('step-2', 'shopping', 'search_products', {})
@@ -213,133 +342,512 @@ def test_plan_patch_cannot_change_completed_work_or_add_unguarded_write():
     assert valid.steps[0] == done and valid.steps[1].status == 'CANCELLED'
 
 
-def test_payment_and_pending_approval_use_existing_safe_path():
-    result = run_adaptive('帮我支付订单1003')
-    assert result['status'] == 'WAITING_APPROVAL'
-    assert tools.get_payment_status(1003)['status'] == 'pending'
-    assert not any(t['tool'] == 'process_payment' for t in result['trace'])
-    unrelated = run_adaptive('推荐500元以内的耳机', pending_action=result['pending_action'])
-    assert unrelated['pending_action'] == result['pending_action']
-    assert tools.get_payment_status(1003)['status'] == 'pending'
 
 
-class Crash(BaseException):
-    pass
-
-
-class CrashAfterSearch(RunStore):
-    def save_checkpoint(self, run_id, token, snapshot, event=None):
-        if event and event.get('type') == 'tool_result' and event.get('tool') == 'search_products':
+def test_resume_after_final_verification_refreshes_again_and_preserves_history(monkeypatch):
+    class CrashBeforeCommit(RunStore):
+        def finish(self, *args, **kwargs):
             raise Crash()
-        return super().save_checkpoint(run_id, token, snapshot, event)
-
-
-def test_resume_reuses_original_plan_and_tool_ledger(database, monkeypatch):
+    model(monkeypatch, search(first=True), recommendation, clarification)
     with pytest.raises(Crash):
-        run_conversation('推荐预算500的耳机', 'resume', runner=run_adaptive, store=CrashAfterSearch())
+        run_conversation('推荐预算500的耳机', 'final-crash', runner=run_adaptive, store=CrashBeforeCommit())
     store = RunStore()
-    active = store.conversation('resume')['active_run_id']
-    original = deepcopy(store.run(active)['checkpoint']['adaptive'])
-    with tools._session() as session:
-        # Recovery must use the committed observation even if the database changes.
-        for product in session.scalars(select(Product)):
-            product.price = 9999
-        session.commit()
-    tools.configure_db(get_engine(f'sqlite:///{database}'))
-    result = resume_run('resume', active, runner=run_adaptive)
-    search = next(t for t in result['trace'] if t['tool'] == 'search_products')
-    assert search['status'] == 'REUSED'
-    assert result['plan']['steps'][0]['args'] == original['plan']['steps'][0]['args']
-    assert result['plan']['steps'][0]['result'] == search['result']
-    assert result['plan']['replan_count'] == 1
-    assert result['status'] == 'WAITING_CLARIFICATION'
-    assert result['terminal_reason'] == 'NO_MATCHING_PRODUCTS'
-    with tools._session() as session:
-        ledgers = session.scalars(select(ToolLedger).where(ToolLedger.tool_name == 'search_products')).all()
-        assert len(ledgers) == 2  # Original evidence plus a deliberate fresh replan scope.
+    active = store.conversation('final-crash')['active_run_id']
+    old = deepcopy(store.run(active)['checkpoint']['adaptive']['plan']['steps'][-1])
+    change(old['result']['selected_product']['product_id'], price=9999, stock=0)
+    result = resume_run('final-crash', active, runner=run_adaptive)
+    assert result['status'] == 'WAITING_CLARIFICATION', result
+    assert not result['plan']['verification']['all_goals_satisfied']
+    assert result['plan']['steps'][1] == old
+    assert result['plan']['steps'][-1]['result']['products'][0]['price'] == 9999
 
 
-def test_steering_changes_only_unfinished_steps_and_keeps_prior_observations(monkeypatch):
+def test_resume_reuses_model_response_saved_before_decision_checkpoint(monkeypatch):
+    class CrashAfterModel(RunStore):
+        def save_checkpoint(self, run_id, token, snapshot, event=None):
+            super().save_checkpoint(run_id, token, snapshot, event)
+            if event and event.get('type') == 'model_call':
+                raise Crash()
+    script = model(monkeypatch, search(first=True), recommendation)
+    with pytest.raises(Crash):
+        run_conversation('推荐预算500的耳机', 'model-crash', runner=run_adaptive, store=CrashAfterModel())
+    active = RunStore().conversation('model-crash')['active_run_id']
+    result = resume_run('model-crash', active, runner=run_adaptive)
+    assert result['status'] == 'SUCCEEDED', result
+    assert len(script.inputs) == 2
+    assert any(e['type'] == 'model_reused' for e in result['events'])
+
+
+def test_model_cancellation_during_inference_prevents_action(monkeypatch):
     from src.session_control import ControlStore
-    original = tools.search_products
-    calls = []
-    def search(query='', category=None, max_price=None, available_only=True, limit=12):
-        result = original(query, category, max_price, available_only, limit)
-        calls.append(max_price)
-        if len(calls) == 1:
-            # A tool runs on the bounded worker, so use the durable active run ID.
-            active = RunStore().conversation('steer')['active_run_id']
-            ControlStore().enqueue('steer', active, 'STEER', message='预算改为200')
-        return result
-    install(monkeypatch, 'search_products', search)
-    result = run_conversation('推荐预算500的耳机', 'steer', runner=run_adaptive)
-    assert result['status'] == 'SUCCEEDED'
-    assert selected(result)['price'] <= 200
-    assert result['plan']['goal_revision'] == 1 and result['plan']['version'] == 2
-    assert result['plan']['goal']['max_price'] == 200
-    assert calls == [500, 200]
-    original_step = result['plan']['steps'][0]
-    assert original_step['status'] == 'SUCCEEDED' and original_step['args']['max_price'] == 500
-    assert any(p['price'] > 200 for p in original_step['result']['products'])
-    assert result['plan']['journal'][0]['reason'] == 'USER_CONSTRAINT_CHANGED'
-
-
-def test_natural_goal_uses_budgeted_model_only_for_intake(monkeypatch):
-    import src.planner as planner
-    class Model:
-        def invoke(self, messages):
-            return AIMessage(content=json.dumps({'goals': [{'intent': 'PRODUCT_SEARCH', 'category': '耳机', 'max_price': 500.0, 'query': '主动降噪'}]}))
-    monkeypatch.setattr(planner, 'get_llm', lambda **kwargs: Model())
-    result = run_adaptive('最近想换一副主动降噪耳机，花费控制在500左右')
-    assert result['status'] == 'SUCCEEDED'
-    assert result['budget']['consumed']['model_calls'] == 1
-    assert selected(result)['specs']['降噪'] == '主动降噪'
-    assert selected(result)['price'] <= 500
-
-
-def test_model_intake_cannot_invent_constraints_or_bypass_model_budget(monkeypatch):
-    import src.planner as planner
-    class Model:
-        def invoke(self, messages):
-            return AIMessage(content=json.dumps({'goals': [{'intent': 'PRODUCT_SEARCH', 'category': '耳机', 'query': '防水'}]}))
-    monkeypatch.setattr(planner, 'get_llm', lambda **kwargs: Model())
-    result = run_adaptive('通勤时很吵想换一副耳机')
-    assert result['terminal_reason'] == 'UNGROUNDED_PLAN_CONSTRAINT'
+    def cancel(p):
+        active = RunStore().conversation('cancel-model')['active_run_id']
+        ControlStore().enqueue('cancel-model', active, 'CANCEL', command_id='stop', expected_revision=0)
+        return search(first=True)
+    model(monkeypatch, cancel)
+    result = run_conversation('推荐预算500的耳机', 'cancel-model', runner=run_adaptive)
+    assert result['status'] == 'CANCELLED'
     assert not result['trace']
-    exhausted = run_adaptive('通勤时很吵想换一副耳机', limits=BudgetLimits(max_model_calls=0))
-    assert exhausted['terminal_reason'] == 'MODEL_ROUND_BUDGET_EXHAUSTED'
-    assert exhausted['budget']['consumed']['model_calls'] == 0
 
 
-@pytest.mark.parametrize('message', ['推荐价格不超过100元的耳机', '推荐不高于100元的耳机', '推荐最多100元的耳机'])
-def test_front_position_budget_is_a_hard_limit(message):
-    result = run_adaptive(message)
-    assert result['plan']['goal']['max_price'] == 100
+def test_autonomous_goal_is_not_rewritten_by_preference_rules(monkeypatch):
+    from src.context_engine import ContextEngine
+    monkeypatch.setattr(ContextEngine, 'effective_request', lambda self: (_ for _ in ()).throw(AssertionError('不应改写目标')))
+    first = clarification()
+    first['goal'] = goal()
+    script = model(monkeypatch, first)
+    result = run_conversation('推荐预算500的耳机', 'original-goal', runner=run_adaptive)
+    assert result['status'] == 'WAITING_CLARIFICATION', result
+    assert script.inputs[0]['request'] == '推荐预算500的耳机'
+
+
+@pytest.mark.parametrize('plans', [[['策略0'], ['策略1'], ['策略2']], [[], ['策略1'], []]])
+def test_plan_revisions_are_model_authored_and_bounded(monkeypatch, plans):
+    first = search(first=True)
+    first['next_steps'] = ['搜型号']
+    model(monkeypatch, first, *[dict(action='revise_plan', reason=f'调整策略{i}', next_steps=steps) for i, steps in enumerate(plans)])
+    result = run_adaptive('推荐预算500的耳机')
+    assert result['terminal_reason'] == 'REPLAN_BUDGET_EXHAUSTED', result
+    assert len(result['plan']['journal']) == 2
+    assert len(result['trace']) == 1
+
+
+def test_invalid_tool_evidence_cannot_be_cited(monkeypatch):
+    original = tools.search_products
+    def corrupt(query='', category=None, max_price=None, available_only=True, limit=12):
+        result = original(query, category, max_price, available_only, limit)
+        result['products'][0]['stock'] = -1
+        return result
+    install(monkeypatch, 'search_products', corrupt)
+    model(monkeypatch, search(first=True), recommendation)
+    result = run_adaptive('推荐预算500的耳机')
+    assert result['terminal_reason'] == 'INVALID_TOOL_RESULT'
+    assert not result['plan']['verification']['all_goals_satisfied']
+
+
+def test_finish_without_recommendation_cannot_claim_success(monkeypatch):
+    model(monkeypatch, search(first=True), dict(action='finish', reason='证据不足', message='无法完成推荐。'))
+    result = run_adaptive('推荐预算500的耳机')
+    assert result['status'] == 'PARTIAL'
+    assert not result['plan']['verification']['all_goals_satisfied']
+
+
+@pytest.mark.parametrize('unknown', [None, {}, [], True, 0])
+def test_unknown_or_wrong_type_spec_cannot_prove_a_negative(monkeypatch, unknown):
+    with tools._session() as session:
+        product = session.get(Product, 'P1102')
+        product.specs = {**product.specs, '降噪': unknown}
+        product.stock, product.price = 8, 100
+        session.commit()
+    first = search(first=True, query='P1102')
+    first['goal']['hard_constraints'].append(dict(description='排除主动降噪', source_quote='不要主动降噪',
+        field='specs.降噪', op='ne', value='主动降噪'))
+    model(monkeypatch, first, recommendation, clarification)
+    result = run_adaptive('推荐预算500的耳机，不要主动降噪')
+    assert result['status'] == 'WAITING_CLARIFICATION', result
+    assert not result['plan']['verification']['all_goals_satisfied']
+
+
+def test_final_verification_timeout_returns_to_model_without_recommending(monkeypatch):
+    original = tools.search_products
+    def timeout_on_verify(query='', category=None, max_price=None, available_only=True, limit=12):
+        if not available_only:
+            raise TimeoutError('final refresh failed')
+        return original(query, category, max_price, available_only, limit)
+    install(monkeypatch, 'search_products', timeout_on_verify)
+    script = model(monkeypatch, search(first=True), recommendation, clarification)
+    result = run_adaptive('推荐预算500的耳机')
     assert result['status'] == 'WAITING_CLARIFICATION'
-    assert result['terminal_reason'] == 'NO_MATCHING_PRODUCTS'
+    assert script.inputs[-1]['feedback']['failures'] == ['TOOL_TIMEOUT']
+    assert result['budget']['consumed']['tool_calls'] == 3
 
 
-def test_model_plan_retains_explicit_comparison_and_unique_step_ids(monkeypatch):
-    import src.planner as planner
-    class Model:
-        def invoke(self, messages):
-            return AIMessage(content=json.dumps({'goals': [
-                {'intent': 'PRODUCT_SEARCH', 'category': '耳机', 'max_price': 500.0},
-                {'intent': 'PRODUCT_COMPARE', 'product_ids': ['P1102', 'P1103']},
-                {'intent': 'ORDER_STATUS', 'order_id': 1001}]}))
-    monkeypatch.setattr(planner, 'get_llm', lambda **kwargs: Model())
-    result = run_adaptive('我在考虑一副耳机，花费控制在500左右，P1102与P1103这两款如何，另外订单1001现在怎样了')
-    assert result['terminal_reason'] != 'INVALID_TASK_PLAN'
-    assert set(result['plan']['goal']['product_ids']) == {'P1102', 'P1103'}
-    ids = [s['step_id'] for s in result['plan']['steps']]
-    assert len(ids) == len(set(ids))
-    # 旧版商品编号在当前目录无库存证据，不能改选无关商品声称成功。
-    if result['status'] == 'SUCCEEDED':
-        assert selected(result)['product_id'] in {'P1102', 'P1103'}
+def large_search():
+    first = search(first=True)
+    first['args'].update(limit=60)
+    first['goal']['hard_constraints'].append(dict(description='耳机品类', source_quote='耳机', field='category', op='eq', value='耳机'))
+    return first
+
+
+def inspect_page(offset=0, limit=1):
+    return dict(action='inspect', reason='按需读取候选完整规格', evidence_ref='step-1', offset=offset, limit=limit)
+
+
+def test_large_catalog_is_archived_and_model_can_inspect_arbitrary_page(monkeypatch):
+    def inspect(payload):
+        archived = payload['observations'][0]['result']
+        assert archived['archived'] is True and 'products' not in archived
+        assert archived['product_count'] > 10
+        return inspect_page(offset=4)
+    script = model(monkeypatch, large_search(), inspect, recommendation)
+    result = run_adaptive('推荐预算500的耳机', limits=BudgetLimits(max_context_chars=9000))
+    assert result['status'] == 'SUCCEEDED', result
+    all_products = result['plan']['steps'][0]['result']['products']
+    assert len(all_products) > 10
+    assert selected(result) == all_products[4]
+    loaded = script.inputs[-1]['observations'][-1]['result']
+    assert loaded['products'] == [all_products[4]]
+    assert loaded['evidence_page']['next_offset'] == 5
+    assert loaded['evidence_page']['refreshed'] is False
+    assert result['budget']['consumed']['tool_calls'] == 2  # Search + final refresh, not archive reads.
+    assert any(e['type'] == 'evidence_read' for e in result['events'])
+    assert result['plan']['goal']['hard_constraints'][0]['value'] == 500
+
+
+def test_index_only_recommendation_is_rejected_then_model_reads_evidence(monkeypatch):
+    def premature(p):
+        return dict(action='recommend', reason='只看到了编号', objective_id='shopping',
+                    product_id=p['observations'][0]['result']['product_ids'][0], evidence_refs=['step-1'])
+    def repair(p):
+        assert p['feedback']['code'] == 'UNREAD_RECOMMENDATION_EVIDENCE'
+        return inspect_page()
+    model(monkeypatch, large_search(), premature, repair, recommendation)
+    result = run_adaptive('推荐预算500的耳机', limits=BudgetLimits(max_context_chars=9000))
+    assert result['status'] == 'SUCCEEDED', result
+    assert result['budget']['consumed']['model_calls'] == 4
+    assert len([s for s in result['plan']['steps'] if s['tool'] == 'select_product']) == 1
+
+
+def test_archived_reads_do_not_refresh_prices_or_bypass_final_verifier(monkeypatch):
+    def drift(p):
+        identity = p['observations'][0]['result']['product_ids'][0]
+        change(identity, price=9999, stock=0)
+        return inspect_page()
+    script = model(monkeypatch, large_search(), drift, recommendation, clarification)
+    result = run_adaptive('推荐预算500的耳机', limits=BudgetLimits(max_context_chars=9000))
+    assert result['status'] == 'WAITING_CLARIFICATION', result
+    assert script.inputs[2]['observations'][-1]['result']['products'][0]['price'] < 500
+    assert script.inputs[3]['feedback']['code'] == 'RECOMMENDATION_VERIFICATION_FAILED'
+    assert script.inputs[3]['observations'][-1]['result']['products'][0]['price'] == 9999
+
+
+def test_archive_reference_is_run_local_and_unknown_reference_returns_to_model(monkeypatch):
+    script = model(monkeypatch, large_search(), dict(action='inspect', reason='读取错误编号',
+        evidence_ref='other-run:step-1'), clarification)
+    result = run_adaptive('推荐预算500的耳机', limits=BudgetLimits(max_context_chars=9000))
+    assert result['status'] == 'WAITING_CLARIFICATION', result
+    assert script.inputs[-1]['feedback']['code'] == 'EVIDENCE_NOT_FOUND'
+    assert result['budget']['consumed']['tool_calls'] == 1
+
+
+def test_archive_and_pending_inspection_survive_restart(monkeypatch):
+    class CrashBeforeRead(RunStore):
+        def save_checkpoint(self, run_id, token, snapshot, event=None):
+            super().save_checkpoint(run_id, token, snapshot, event)
+            if event and event.get('type') == 'adaptive_decision' and event['decision']['action'] == 'inspect':
+                raise Crash()
+    script = model(monkeypatch, large_search(), inspect_page(offset=2), recommendation)
+    with pytest.raises(Crash):
+        run_conversation('推荐预算500的耳机', 'archive-resume', runner=run_adaptive,
+                         limits=BudgetLimits(max_context_chars=9000), store=CrashBeforeRead())
+    store = RunStore()
+    active = store.conversation('archive-resume')['active_run_id']
+    source = deepcopy(store.run(active)['checkpoint']['adaptive']['plan']['steps'][0])
+    result = resume_run('archive-resume', active, runner=run_adaptive)
+    assert result['status'] == 'SUCCEEDED', result
+    assert result['plan']['steps'][0] == source
+    assert selected(result) == source['result']['products'][2]
+    assert len(script.inputs) == 3
+
+
+def test_evidence_inspection_is_bounded_by_step_budget(monkeypatch):
+    model(monkeypatch, large_search(), inspect_page())
+    result = run_adaptive('推荐预算500的耳机', limits=BudgetLimits(max_steps=1, max_context_chars=9000))
+    assert result['terminal_reason'] == 'PLAN_STEP_BUDGET_EXHAUSTED'
+    assert not any(e['type'] == 'evidence_read' for e in result['events'])
+
+
+def test_model_working_memory_survives_archiving_and_is_not_a_hard_constraint(monkeypatch):
+    first = large_search()
+    first['working_memory'] = dict(summary='接下来查看不同候选的参数', evidence_refs=[], open_questions=['佩戴方式是否合适？'])
+    def inspect(p):
+        assert p['working_memory']['open_questions'] == ['佩戴方式是否合适？']
+        return dict(inspect_page(offset=1), working_memory=dict(summary='先查看第二个候选，不因价格排序直接决定',
+            evidence_refs=['step-1'], open_questions=[]))
+    def choose(p):
+        assert p['working_memory']['evidence_refs'] == ['step-1']
+        assert p['goal']['hard_constraints'][0]['value'] == 500
+        return recommendation(p)
+    model(monkeypatch, first, inspect, choose)
+    result = run_conversation('推荐预算500的耳机', 'working-memory', runner=run_adaptive,
+                              limits=BudgetLimits(max_context_chars=9500))
+    assert result['status'] == 'SUCCEEDED', result
+    saved = RunStore().run(result['run_id'])['checkpoint']['adaptive']
+    assert saved['working_memory']['summary'] == '先查看第二个候选，不因价格排序直接决定'
+
+
+def test_working_memory_cannot_fabricate_evidence(monkeypatch):
+    first = search(first=True)
+    first['working_memory'] = dict(summary='虚构证据', evidence_refs=['foreign:step-1'], open_questions=[])
+    model(monkeypatch, first)
+    result = run_adaptive('推荐预算500的耳机')
+    assert result['terminal_reason'] == 'UNGROUNDED_WORKING_MEMORY'
+    assert not result['trace']
+
+
+COMPOUND_REQUEST = '推荐预算500的耳机，并查询订单1001状态'
+
+
+def compound_search(order_id=1001):
+    first = search(first=True)
+    first['goal']['objectives'].append(dict(id='order', kind='get_order_status',
+        description=f'查询订单{order_id}状态', source_quote=f'订单{order_id}', order_id=order_id))
+    return first
+
+
+def order_query(order_id=1001, tool='get_order_status'):
+    return dict(action='tool', reason='完成订单查询目标', tool=tool, args=dict(order_id=order_id))
+
+
+def complete(*claims):
+    return dict(action='complete', reason='逐项提交已完成目标的真实证据',
+                claims=[dict(objective_id=identity, evidence_refs=refs) for identity, refs in claims])
+
+
+COMPOUND_COMPLETE = complete(('shopping', ['step-2']), ('order', ['step-3']))
+
+
+def test_recommendation_does_not_skip_other_objectives(monkeypatch):
+    script = model(monkeypatch, compound_search(), recommendation, order_query(), COMPOUND_COMPLETE)
+    result = run_adaptive(COMPOUND_REQUEST)
+    assert result['status'] == 'SUCCEEDED', result
+    assert len(script.inputs) == 4
+    assert script.inputs[2]['objective_ledger'][0]['status'] == 'VERIFIED'
+    assert script.inputs[2]['objective_ledger'][1]['status'] == 'PENDING'
+    assert script.inputs[2]['feedback']['code'] == 'OBJECTIVES_REQUIRE_COMPLETION'
+    assert result['plan']['verification']['all_goals_satisfied']
+    assert result['plan']['verification']['incomplete_objectives'] == []
+    assert [t['tool'] for t in result['trace']] == ['search_products', 'search_products', 'get_order_status', 'search_products']
+    assert '订单 1001' in result['reply'] and selected(result)['product_id'] in result['reply']
+
+
+def test_model_can_do_order_before_shopping_without_fixed_order(monkeypatch):
+    first = dict(order_query(), goal=compound_search()['goal'])
+    model(monkeypatch, first, search(), recommendation,
+          complete(('shopping', ['step-3']), ('order', ['step-1'])))
+    result = run_adaptive(COMPOUND_REQUEST)
+    assert result['status'] == 'SUCCEEDED', result
+    assert result['trace'][0]['tool'] == 'get_order_status'
+
+
+def test_missing_goal_claim_is_returned_to_model_for_repair(monkeypatch):
+    script = model(monkeypatch, compound_search(), recommendation,
+        complete(('shopping', ['step-2'])), order_query(), COMPOUND_COMPLETE)
+    result = run_adaptive(COMPOUND_REQUEST)
+    assert result['status'] == 'SUCCEEDED', result
+    assert script.inputs[3]['feedback'] == dict(code='COMPLETION_VERIFICATION_FAILED',
+        failures=[dict(objective_id='order', code='MISSING_COMPLETION_CLAIM')])
+
+
+@pytest.mark.parametrize('query,code', [
+    (order_query(1002), 'EVIDENCE_TARGET_MISMATCH'),
+    (order_query(tool='get_payment_status'), 'EVIDENCE_KIND_MISMATCH'),
+])
+def test_wrong_order_or_wrong_query_cannot_satisfy_objective(monkeypatch, query, code):
+    script = model(monkeypatch, compound_search(), recommendation, query, COMPOUND_COMPLETE, clarification)
+    result = run_adaptive(COMPOUND_REQUEST + '，不用查询订单1002')
+    assert result['status'] == 'WAITING_CLARIFICATION', result
+    assert script.inputs[-1]['feedback']['failures'] == [dict(objective_id='order', code=code)]
+    assert not result['plan']['verification']['all_goals_satisfied']
+    assert 'order' in result['plan']['verification']['incomplete_objectives']
+    assert '尚未完成：查询订单1001状态' in result['reply']
+
+
+def test_failed_business_lookup_is_not_completed_even_if_model_claims_it(monkeypatch):
+    script = model(monkeypatch, compound_search(9999), recommendation, order_query(9999), COMPOUND_COMPLETE, clarification)
+    result = run_adaptive(COMPOUND_REQUEST.replace('1001', '9999'))
+    assert result['status'] == 'WAITING_CLARIFICATION', result
+    assert script.inputs[-1]['feedback']['failures'] == [dict(objective_id='order', code='EVIDENCE_NOT_SUCCESSFUL')]
+    assert result['plan']['steps'][2]['status'] == 'FAILED'
+
+
+def test_search_evidence_cannot_replace_verified_recommendation(monkeypatch):
+    script = model(monkeypatch, compound_search(), order_query(),
+        complete(('shopping', ['step-1']), ('order', ['step-2'])), clarification)
+    result = run_adaptive(COMPOUND_REQUEST)
+    assert result['status'] == 'WAITING_CLARIFICATION', result
+    assert script.inputs[-1]['feedback']['failures'] == [dict(objective_id='shopping', code='RECOMMENDATION_NOT_VERIFIED')]
+    assert '订单 1001' in result['reply']
+
+
+def test_model_cannot_drop_an_unfinished_objective(monkeypatch):
+    changed = dict(search(), goal=goal())
+    model(monkeypatch, compound_search(), changed)
+    result = run_adaptive(COMPOUND_REQUEST)
+    assert result['terminal_reason'] == 'GOAL_CHANGE_REQUIRES_USER'
+    assert len(result['plan']['goal']['objectives']) == 2
+    assert not result['plan']['verification']['all_goals_satisfied']
+
+
+def test_product_changes_while_querying_another_goal_are_reverified(monkeypatch):
+    def query_after_price_change(payload):
+        change(payload['observations'][-1]['result']['selected_product']['product_id'], price=9999, stock=0)
+        return order_query()
+    script = model(monkeypatch, compound_search(), recommendation, query_after_price_change, COMPOUND_COMPLETE, clarification)
+    result = run_adaptive(COMPOUND_REQUEST)
+    assert result['status'] == 'WAITING_CLARIFICATION', result
+    assert script.inputs[-1]['feedback']['code'] == 'RECOMMENDATION_VERIFICATION_FAILED'
+    assert script.inputs[-1]['objective_ledger'][0]['status'] == 'INVALIDATED'
+    assert script.inputs[-1]['objective_ledger'][1]['status'] == 'VERIFIED'
+    assert not result['plan']['verification']['all_goals_satisfied']
+    assert '订单 1001' in result['reply'] and '¥109.65' not in result['reply']
+
+
+def test_final_compound_refresh_cannot_bypass_shared_budget(monkeypatch):
+    model(monkeypatch, compound_search(), recommendation, order_query(), COMPOUND_COMPLETE)
+    result = run_adaptive(COMPOUND_REQUEST, limits=BudgetLimits(max_tool_calls=3))
+    assert result['terminal_reason'] == 'TOOL_BUDGET_EXHAUSTED'
+    assert result['status'] == 'PARTIAL'
+    assert not result['plan']['verification']['all_goals_satisfied']
+    assert result['plan']['objective_ledger'][0]['status'] == 'PENDING'
+    assert '订单 1001' in result['reply']
+
+
+def test_compound_completion_crash_requires_another_fresh_read(monkeypatch):
+    class CrashBeforeCommit(RunStore):
+        def finish(self, *args, **kwargs):
+            raise Crash()
+    script = model(monkeypatch, compound_search(), recommendation, order_query(), COMPOUND_COMPLETE, clarification)
+    with pytest.raises(Crash):
+        run_conversation(COMPOUND_REQUEST, 'compound-resume', runner=run_adaptive, store=CrashBeforeCommit())
+    active = RunStore().conversation('compound-resume')['active_run_id']
+    saved = RunStore().run(active)['checkpoint']['adaptive']
+    original_steps = deepcopy(saved['plan']['steps'])
+    change(original_steps[-1]['result']['selected_product']['product_id'], stock=0)
+    result = resume_run('compound-resume', active, runner=run_adaptive)
+    assert result['status'] == 'WAITING_CLARIFICATION', result
+    assert result['plan']['steps'][:len(original_steps)] == original_steps
+    assert len(script.inputs) == 5  # The accepted completion decision was resumed, not inferred twice.
+    assert len([t for t in result['trace'] if t['tool'] == 'get_order_status']) == 1
+    assert result['plan']['objective_ledger'][0]['status'] == 'INVALIDATED'
+
+
+@pytest.mark.parametrize('mutation', ['missing', 'empty', 'duplicate', 'invented_order'])
+def test_objective_contract_rejects_missing_or_ungrounded_goals(monkeypatch, mutation):
+    first = compound_search()
+    if mutation == 'missing':
+        del first['goal']['objectives']
+    elif mutation == 'empty':
+        first['goal']['objectives'] = []
+    elif mutation == 'duplicate':
+        first['goal']['objectives'].append(first['goal']['objectives'][0])
     else:
-        assert result['terminal_reason'] == 'NO_MATCHING_PRODUCTS'
+        first['goal']['objectives'][1]['order_id'] = 7777
+    model(monkeypatch, first)
+    result = run_adaptive(COMPOUND_REQUEST)
+    assert result['status'] == 'FAILED', result
+    assert result['terminal_reason'] == ('UNGROUNDED_GOAL' if mutation == 'invented_order' else 'MODEL_FORMAT_ERROR')
+    assert not result['trace']
 
 
-def test_explicit_unlimited_budget_clears_initial_limit():
-    result = run_adaptive('推荐耳机，预算500元，这次不限制预算')
-    assert result['plan']['goal']['max_price'] is None
+def test_unresolved_objective_cannot_be_silently_treated_as_done(monkeypatch):
+    first = search(first=True)
+    first['goal']['objectives'].append(dict(id='unknown', kind='unresolved',
+        description='确认长期佩戴舒适度', source_quote='佩戴舒适'))
+    script = model(monkeypatch, first, recommendation,
+        complete(('shopping', ['step-2']), ('unknown', ['step-1'])), clarification)
+    result = run_adaptive('推荐预算500的耳机，要求佩戴舒适')
+    assert result['status'] == 'WAITING_CLARIFICATION', result
+    assert script.inputs[-1]['feedback']['failures'][0]['code'] == 'EVIDENCE_KIND_MISMATCH'
+    assert 'unknown' in result['plan']['verification']['incomplete_objectives']
+
+
+def test_goal_specific_constraints_are_checked_for_selected_objective(monkeypatch):
+    first = search(first=True)
+    first['goal']['objectives'][0]['hard_constraints'] = [dict(description='不能超过1元',
+        source_quote='1元以内', field='price', op='lte', value=1)]
+    model(monkeypatch, first, recommendation, clarification)
+    result = run_adaptive('推荐预算500的耳机，实际上只能买1元以内')
+    assert result['status'] == 'WAITING_CLARIFICATION', result
+    assert result['plan']['objective_ledger'][0]['status'] == 'INVALIDATED'
+
+
+def test_multiple_recommendations_need_separate_receipts_and_final_refresh(monkeypatch):
+    first = search(first=True)
+    first['goal']['objectives'].append(dict(id='backup', kind='recommend',
+        description='推荐一款备用耳机', source_quote='备用耳机'))
+    def backup(p):
+        return dict(recommendation(p, 1, 'step-1'), objective_id='backup')
+    script = model(monkeypatch, first, recommendation, backup,
+        complete(('shopping', ['step-2']), ('backup', ['step-3'])))
+    result = run_adaptive('推荐预算500的耳机，再推荐一款备用耳机')
+    assert result['status'] == 'SUCCEEDED', result
+    assert len(script.inputs) == 4
+    assert len([t for t in result['trace'] if t['tool'] == 'search_products']) == 5
+    assert len(result['plan']['verification']['objectives']) == 2
+    assert all(row['status'] == 'VERIFIED' for row in result['plan']['objective_ledger'])
+    assert {row['evidence_refs'][0] for row in result['plan']['objective_ledger']} == {'step-4', 'step-5'}
+
+
+def test_one_recommendation_receipt_cannot_complete_two_objectives(monkeypatch):
+    first = search(first=True)
+    first['goal']['objectives'].append(dict(id='backup', kind='recommend',
+        description='推荐备用耳机', source_quote='备用耳机'))
+    script = model(monkeypatch, first, recommendation,
+        complete(('shopping', ['step-2']), ('backup', ['step-2'])), clarification)
+    result = run_adaptive('推荐预算500的耳机，再推荐备用耳机')
+    assert result['status'] == 'WAITING_CLARIFICATION', result
+    assert script.inputs[-1]['feedback']['failures'] == [dict(objective_id='backup', code='RECOMMENDATION_NOT_VERIFIED')]
+
+
+@pytest.mark.parametrize('question,expected', [('退货政策是什么？', 'SUCCEEDED'), ('如何付款？', 'WAITING_CLARIFICATION')])
+def test_faq_completion_matches_the_requested_question(monkeypatch, question, expected):
+    first = search(first=True)
+    first['goal']['objectives'].append(dict(id='faq', kind='answer_faq',
+        description='回答退货政策', source_quote='退货政策是什么？', question='退货政策是什么？'))
+    script = model(monkeypatch, first, recommendation,
+        dict(action='tool', reason='查询政策', tool='answer_faq', args=dict(question=question)),
+        complete(('shopping', ['step-2']), ('faq', ['step-3'])), clarification)
+    result = run_adaptive('推荐预算500的耳机，退货政策是什么？')
+    assert result['status'] == expected, result
+    if expected != 'SUCCEEDED':
+        assert script.inputs[-1]['feedback']['failures'] == [dict(objective_id='faq', code='EVIDENCE_TARGET_MISMATCH')]
+
+
+def test_steering_after_verified_selection_invalidates_its_receipt(monkeypatch):
+    from src.session_control import ControlStore
+    def steer(p):
+        assert p['objective_ledger'][0]['status'] == 'VERIFIED'
+        active = RunStore().conversation('compound-steer')['active_run_id']
+        ControlStore().enqueue('compound-steer', active, 'STEER', message='只要耳机，预算改为200',
+            command_id='goal-steer', expected_revision=0)
+        return order_query()
+    revised = dict(complete(('shopping', ['step-2'])), goal=goal(hard_constraints=[
+        dict(description='预算200', source_quote='预算改为200', field='price', op='lte', value=200)]))
+    script = model(monkeypatch, compound_search(), recommendation, steer, revised, clarification)
+    result = run_conversation(COMPOUND_REQUEST, 'compound-steer', runner=run_adaptive)
+    assert result['status'] == 'WAITING_CLARIFICATION', result
+    assert script.inputs[3]['objective_ledger'] == []
+    assert script.inputs[-1]['feedback']['failures'] == [dict(objective_id='shopping', code='RECOMMENDATION_NOT_VERIFIED')]
+    assert result['plan']['goal_revision'] == 1
+    assert not any(t['tool'] == 'get_order_status' for t in result['trace'])
+
+
+def test_crash_during_compound_refresh_retires_pending_attempt(monkeypatch):
+    class CrashDuringRefresh(RunStore):
+        def save_checkpoint(self, run_id, token, snapshot, event=None):
+            super().save_checkpoint(run_id, token, snapshot, event)
+            pending = snapshot.get('adaptive', {}).get('pending') or {}
+            if (event and event.get('type') == 'tool_result' and event.get('tool') == 'search_products'
+                    and pending.get('decision', {}).get('action') == 'complete'):
+                raise Crash()
+    script = model(monkeypatch, compound_search(), recommendation, order_query(), COMPOUND_COMPLETE)
+    with pytest.raises(Crash):
+        run_conversation(COMPOUND_REQUEST, 'refresh-crash', runner=run_adaptive, store=CrashDuringRefresh())
+    active = RunStore().conversation('refresh-crash')['active_run_id']
+    result = resume_run('refresh-crash', active, runner=run_adaptive)
+    assert result['status'] == 'SUCCEEDED', result
+    assert len(script.inputs) == 4
+    assert result['plan']['steps'][3]['status'] == 'CANCELLED'
+    assert result['plan']['steps'][4]['status'] == 'SUCCEEDED'
+    assert not any(s['status'] == 'PENDING' for s in result['plan']['steps'])
+
+
+def test_old_goal_checkpoint_cannot_skip_new_objective_contract():
+    from src.runtime import RunRuntime, runtime_scope
+    context = RunRuntime('legacy-adaptive')
+    context.snapshot['adaptive'] = dict(schema_version=2)
+    with runtime_scope(context):
+        result = run_adaptive('推荐预算500的耳机')
+    assert result['terminal_reason'] == 'ADAPTIVE_CHECKPOINT_INCOMPATIBLE'
+    assert not result['autonomous_executed'] and not result['trace']

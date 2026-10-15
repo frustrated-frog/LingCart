@@ -86,3 +86,19 @@ def test_active_run_panel_accepts_steering_command():
     commands = ControlStore().commands('active-ui', claim['run_id'])
     assert commands[0]['kind'] == 'STEER'
     assert commands[0]['payload']['revision'] == 1
+
+
+def test_active_run_form_does_not_silently_upgrade_a_stale_revision():
+    from src.session_control import ControlStore
+    store = ControlStore()
+    claim = store.claim('stale-ui', 'one', '推荐耳机', {})
+    app = AppTest.from_string('from src.ui.pages import init_state, home_page\ninit_state()\nhome_page()')
+    app.session_state['conversation_id'] = 'stale-ui'
+    app.session_state['active_run_id'] = claim['run_id']
+    app.run(timeout=15)
+    store.enqueue('stale-ui', claim['run_id'], 'STEER', message='预算500', command_id='other-window', expected_revision=0)
+    app.text_input[0].set_value('预算300')
+    next(b for b in app.button if b.label == '发送补充要求').click().run(timeout=15)
+    assert not app.exception
+    assert len(store.commands('stale-ui', claim['run_id'])) == 1
+    assert any('版本已变化' in e.value for e in app.error)

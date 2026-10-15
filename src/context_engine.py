@@ -77,6 +77,89 @@ class ContextEngine:
             return [SystemMessage(content=policy), HumanMessage(content=messages)]
         return [SystemMessage(content=policy), *messages]
 
+    def decision_messages(self, prompt, state, plan, history, *, max_chars):
+        """Fit evidence by reference; never truncate the request or a product record.
+
+        The full archive is the persisted plan, not a model-authored summary.
+        Selection here controls context size only, never candidate eligibility.
+        """
+        from src.context_budget import ContextBudgetError, _text_length
+        from src.agents.base import as_text
+
+        def overview(step):
+            item = deepcopy(step.__dict__)
+            result = item['result']
+            if result is not None:
+                products = result.get('products') if isinstance(result, dict) else None
+                item['result'] = dict(archived=True, evidence_ref=step.step_id,
+                    observation=result.get('observation') if isinstance(result, dict) else None,
+                    product_ids=[p['product_id'] for p in products] if isinstance(products, list) else [],
+                    product_count=len(products) if isinstance(products, list) else None)
+            return item
+
+        payload = dict(request=state['request'], goal=state['goal'], goal_revision=state['goal_revision'],
+            next_steps=state['next_steps'], feedback=state.get('feedback'),
+            working_memory=state.get('working_memory'),
+            objective_ledger=state.get('objective_ledger', []),
+            observations=[overview(s) for s in plan.steps],
+            history=[{'role': getattr(m, 'type', 'unknown'), 'content': as_text(m.content)} for m in history or []],
+            context_manifest={'archived_refs': [], 'policy': 'FULL_RECORDS_OR_REFERENCES'})
+
+        def messages():
+            payload['context_manifest']['archived_refs'] = [o['step_id'] for o in payload['observations']
+                if isinstance(o['result'], dict) and o['result'].get('archived')]
+            return [SystemMessage(content=prompt), HumanMessage(content=json.dumps(payload, ensure_ascii=False, separators=(',', ':')))]
+
+        def fits():
+            # Runtime injects preferences later. Include their actual serialized
+            # size here, without injecting them twice into the returned messages.
+            return sum(_text_length(m) for m in self.model_messages(messages())) <= max_chars
+
+        if not fits():
+            raise ContextBudgetError()
+        # Latest observation has priority, then older records if they fit intact.
+        for index in reversed(range(len(plan.steps))):
+            summary = payload['observations'][index]
+            payload['observations'][index] = deepcopy(plan.steps[index].__dict__)
+            if not fits():
+                payload['observations'][index] = summary
+        result = messages()
+        access = state.setdefault('evidence_access', {})
+        read_refs = set(state.get('read_evidence_refs', []))
+        for observation in payload['observations']:
+            body = observation['result']
+            if body is not None and not (isinstance(body, dict) and body.get('archived')):
+                read_refs.add(observation['step_id'])
+            if isinstance(body, dict) and not body.get('archived'):
+                ids = [p['product_id'] for p in body.get('products', [])]
+                access[observation['step_id']] = sorted(set(access.get(observation['step_id'], []) + ids))
+        state['read_evidence_refs'] = sorted(read_refs)
+        return result, deepcopy(payload['context_manifest'])
+
+    @staticmethod
+    def read_evidence(plan, reference, *, offset=0, limit=1):
+        """Read only this run's completed archive. This does not refresh facts."""
+        step = next((s for s in plan.steps if s.step_id == reference), None)
+        if step is None or step.status not in {'SUCCEEDED', 'REUSED', 'REJECTED', 'FAILED'} or step.result is None:
+            raise AgentError('EVIDENCE_NOT_FOUND', '没有找到本次运行的已完成证据', retryable=False)
+        if type(offset) is not int or offset < 0 or type(limit) is not int or not 1 <= limit <= 3:
+            raise AgentError('INVALID_EVIDENCE_PAGE', '证据分页参数无效', retryable=False)
+        result = deepcopy(step.result)
+        products = result.get('products') if isinstance(result, dict) else None
+        if isinstance(products, list):
+            if offset > len(products):
+                raise AgentError('INVALID_EVIDENCE_PAGE', '证据分页超出范围', retryable=False)
+            page = products[offset:offset + limit]
+            result['products'] = page
+            result.pop('selected_product', None)  # Already present in products.
+            end = offset + len(page)
+            result['evidence_page'] = dict(source_step=reference, offset=offset,
+                next_offset=end if end < len(products) else None, total=len(products), refreshed=False)
+            return result
+        if offset:
+            raise AgentError('INVALID_EVIDENCE_PAGE', '这项证据不支持分页', retryable=False)
+        return result
+
     def effective_request(self):
         # 只给已明确属于选购的请求补缺省预算；不会改变订单、付款与售后动作。
         from src.intake import analyze_request, PRODUCT_SEARCH

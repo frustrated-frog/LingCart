@@ -91,7 +91,10 @@ def execute_claim(claim, *, store=None, runner=None):
                     context.context_engine = ContextEngine(effective, preferences=preferences,
                         observations=context.snapshot.get('context', {}).get('observations', []),
                         revision=context.snapshot.get('goal_revision', 0))
-                    effective = context.context_engine.effective_request()
+                    from src.adaptive import run_adaptive
+                    # Autonomous mode receives the actual request plus separate
+                    # preference data. Rules must not inject a synthetic hard budget.
+                    effective = context.context_engine.goal if runner is run_adaptive else context.context_engine.effective_request()
                     context.checkpoint(context=context.context_engine.payload())
                     if steering:
                         kwargs.pop("pending_action", None)

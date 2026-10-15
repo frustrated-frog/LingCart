@@ -38,7 +38,7 @@ def environment_manifest(dataset, execution_mode):
         revision = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip()
     except (OSError, subprocess.CalledProcessError):
         revision = None
-    prompt_files = sorted(set(['src/orchestrator.py', 'src/planner.py', 'src/adaptive.py'] +
+    prompt_files = sorted(set(['src/orchestrator.py', 'src/planner.py', 'src/adaptive.py', 'src/adaptive_decision.py', 'src/adaptive_goals.py'] +
                              [str(p.relative_to(ROOT)) for p in (ROOT / 'src/agents').glob('*.py')]))
     return {'source_revision': revision, 'dataset_sha256': fingerprint(dataset), 'execution_mode': execution_mode,
             'prompt_source_sha256': {name: fingerprint([ast.dump(node.value) for node in ast.walk(ast.parse((ROOT / name).read_text()))

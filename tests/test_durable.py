@@ -282,7 +282,7 @@ def test_cancel_after_committed_write_recovers_real_outcome(database):
     with pytest.raises(CrashAfterWrite):
         run_conversation('确认使用 card 支付', 'cancel-recovery', action_id=first['pending_action']['action_id'], store=CrashingStore())
     active = RunStore().conversation('cancel-recovery')['active_run_id']
-    ControlStore().enqueue('cancel-recovery', active, 'CANCEL')
+    ControlStore().enqueue('cancel-recovery', active, 'CANCEL', command_id='cancel-stop', expected_revision=0)
     result = resume_run('cancel-recovery', active)
     assert result['status'] == 'CANCELLED'
     assert tools.get_payment_status(1003)['status'] == 'paid'

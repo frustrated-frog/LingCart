@@ -257,8 +257,8 @@ class StartRunRequest(ChatRequest):
 class ControlRequest(BaseModel):
     session_id: str = Field(..., min_length=1, max_length=64)
     message: str = Field('', max_length=12000)
-    command_id: str | None = Field(None, min_length=1, max_length=64)
-    expected_revision: int | None = Field(None, ge=0)
+    command_id: str = Field(..., min_length=1, max_length=64, strict=True, pattern=r'\S')
+    expected_revision: int = Field(..., ge=0, strict=True)
 
 
 def _control_error(error):
