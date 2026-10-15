@@ -30,6 +30,7 @@ class ProviderConfig:
     api_key: str
     base_url: str | None = None
     slot: int = 1
+    thinking_mode: str | None = None
 
     def public_payload(self) -> dict:
         return {
@@ -37,6 +38,7 @@ class ProviderConfig:
             "model": self.model,
             "slot": self.slot,
             "custom_base_url": bool(self.base_url),
+            **({"thinking_mode": self.thinking_mode} if self.thinking_mode else {}),
         }
 
 
@@ -117,6 +119,9 @@ def _provider_configs(provider: str, *, primary: bool, model_override: str | Non
         return [ProviderConfig(provider, model, key, base_url=base_url)] if key else []
 
     if provider == "openai_compatible":
+        thinking_mode = _value("OPENAI_COMPATIBLE_THINKING_MODE")
+        if thinking_mode not in {None, "enabled", "disabled"}:
+            raise ModelGatewayConfigurationError("OPENAI_COMPATIBLE_THINKING_MODE 必须是 enabled 或 disabled")
         key = unified_key or _value("OPENAI_COMPATIBLE_API_KEY")
         model = unified_model or _value("OPENAI_COMPATIBLE_MODEL")
         base_url = unified_base_url or _value("OPENAI_COMPATIBLE_BASE_URL")
@@ -125,7 +130,7 @@ def _provider_configs(provider: str, *, primary: bool, model_override: str | Non
             raise ModelGatewayConfigurationError(
                 "OpenAI-compatible 接入必须同时配置 API Key、模型名称和 Base URL"
             )
-        return [ProviderConfig(provider, model, key, base_url=base_url)] if configured else []
+        return [ProviderConfig(provider, model, key, base_url=base_url, thinking_mode=thinking_mode)] if configured else []
 
     raise ModelGatewayConfigurationError(f"不支持的模型 Provider：{provider}")
 
@@ -192,6 +197,7 @@ def build_provider_client(config: ProviderConfig, *, temperature: float, timeout
     if config.provider in {"openai", "openai_compatible"}:
         from langchain_openai import ChatOpenAI
 
+        options = {"extra_body": {"thinking": {"type": config.thinking_mode}}} if config.thinking_mode else {}
         return ChatOpenAI(
             model=config.model,
             api_key=config.api_key,
@@ -199,6 +205,7 @@ def build_provider_client(config: ProviderConfig, *, temperature: float, timeout
             temperature=temperature,
             max_retries=0,
             timeout=timeout,
+            **options,
         )
     raise ModelGatewayConfigurationError(f"不支持的模型 Provider：{config.provider}")
 

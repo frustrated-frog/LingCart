@@ -23,6 +23,31 @@ def test_unconfigured_provider_is_not_a_successful_live_baseline():
     assert live.evaluate_gate(report)
 
 
+def test_dotenv_is_loaded_before_temporary_runtime_environment(monkeypatch):
+    import os
+    import dotenv
+    from unittest.mock import patch
+
+    monkeypatch.delenv('LLM_MODEL', raising=False)
+    def load(path):
+        assert path == live.ROOT / '.env'
+        monkeypatch.setenv('LLM_MODEL', 'test-flash')
+
+    original = live.offline._runtime
+    def isolated_runtime():
+        assert os.environ['LLM_MODEL'] == 'test-flash'
+        with patch.dict(os.environ, {'SUPPORT_AGENT_DB_URL': 'sqlite:///:memory:'}):
+            runtime = original()
+        assert os.environ['LLM_MODEL'] == 'test-flash'
+        return runtime
+
+    monkeypatch.setattr(dotenv, 'load_dotenv', load)
+    monkeypatch.setattr(live.offline, '_runtime', isolated_runtime)
+    report = live.evaluate(live.load_dataset(), readiness={'configured': False})
+    assert report['status'] == 'NOT_RUN'
+    assert os.environ['LLM_MODEL'] == 'test-flash'
+
+
 def test_stability_requires_all_repetitions_and_preserves_unknown_usage():
     def sample(passed):
         return dict(case_id='L01', passed=passed, latency_ms=1, model_attempts=1, tool_calls=2,

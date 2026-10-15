@@ -78,6 +78,9 @@ def evaluate(dataset, *, repeats=3, split='all', execution_mode='auto', runner=N
     suite = dataset.get('suite', 'support')
     if suite == 'adaptive' and execution_mode != 'adaptive':
         raise ValueError('自主专项任务必须使用 adaptive 入口')
+    # 在隔离数据库的临时环境之外加载配置，避免 patch.dict 恢复时丢弃密钥。
+    from dotenv import load_dotenv
+    load_dotenv(ROOT / '.env')
     runtime = offline._runtime()
     from src.durable import run_conversation
     from src.llm import get_model_status
@@ -87,13 +90,13 @@ def evaluate(dataset, *, repeats=3, split='all', execution_mode='auto', runner=N
               'execution_source': 'test_harness' if runner is not None else 'live_provider',
               'manifest': {**environment_manifest(dataset, execution_mode), 'suite': suite, 'split': split, 'repeats': repeats}, 'samples': []}
     status = readiness if readiness is not None else get_model_status()
-    report['providers'] = [{key: p.get(key) for key in ('provider', 'model', 'slot', 'custom_base_url')} for p in status.get('providers', [])]
+    report['providers'] = [{key: p.get(key) for key in ('provider', 'model', 'slot', 'custom_base_url', 'thinking_mode')} for p in status.get('providers', [])]
     from src.model_gateway import load_gateway_config, ModelGatewayConfigurationError
     report['manifest']['purpose_models'] = {}
     for purpose in ('router', 'planner', 'agent', 'final_response'):
         try:
             config = load_gateway_config(purpose=purpose)
-            report['manifest']['purpose_models'][purpose] = [{'provider': p.provider, 'model': p.model} for p in config.providers]
+            report['manifest']['purpose_models'][purpose] = [{'provider': p.provider, 'model': p.model, 'thinking_mode': p.thinking_mode} for p in config.providers]
         except ModelGatewayConfigurationError:
             report['manifest']['purpose_models'][purpose] = None
     if not status.get('configured') and runner is None:

@@ -262,6 +262,18 @@ LLM_BASE_URL=https://provider.example.com/v1
 
 API Key 不会出现在状态数据、事件或日志元数据中。完整模板见 `.env.example`。
 
+DeepSeek Flash 使用兼容服务配置：`LLM_PROVIDER=openai_compatible`、
+`LLM_MODEL=deepseek-flash`、`LLM_BASE_URL=https://api.deepseek.com`，
+并在被 Git 忽略的本地 `.env` 中设置 `LLM_API_KEY`。
+模型名以 [DeepSeek 官方文档](https://api-docs.deepseek.com/quick_start/pricing/) 为准。
+Flash 默认开启思考模式；当前短时限工作台可设置
+`OPENAI_COMPATIBLE_THINKING_MODE=disabled`，通过官方 `thinking` 参数关闭。
+该选项仅传递给兼容服务，使用其他服务前需确认其支持此参数。
+`LLM_REQUEST_TIMEOUT` 控制提供方请求超时；Agent 的单次调用与总运行预算另有上限，
+调高前者不会绕过运行预算。真实自主评测使用 `eval/run_adaptive_eval.py`，
+每个样本使用独立演示数据库，结果中的 `live_verified` 表示确实完成过模型调用，
+任务是否通过仍需查看 `samples` 和 `metrics`。
+
 接入后可先做零费用配置检查，再执行一次真实请求：
 
 ```bash

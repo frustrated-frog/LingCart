@@ -35,6 +35,7 @@ _MODEL_ENV = {
     "OPENAI_COMPATIBLE_API_KEY",
     "OPENAI_COMPATIBLE_MODEL",
     "OPENAI_COMPATIBLE_BASE_URL",
+    "OPENAI_COMPATIBLE_THINKING_MODE",
 }
 
 
@@ -85,6 +86,26 @@ def test_unconfigured_status_has_stable_code_and_chinese_message():
     assert status["ready"] is False
     assert status["error_code"] == "MODEL_UNAVAILABLE"
     assert status["message"].startswith("未配置可用模型")
+
+
+def test_compatible_thinking_mode_is_explicit_and_scoped(monkeypatch):
+    monkeypatch.setenv('OPENAI_COMPATIBLE_THINKING_MODE', 'disabled')
+    monkeypatch.setenv('LLM_PROVIDER', 'openai_compatible')
+    monkeypatch.setenv('LLM_API_KEY', 'test-secret')
+    monkeypatch.setenv('LLM_MODEL', 'deepseek-flash')
+    monkeypatch.setenv('LLM_BASE_URL', 'https://api.deepseek.com')
+    compatible = model_gateway.load_gateway_config().providers[0]
+    client = model_gateway.build_provider_client(compatible, temperature=0, timeout=10)
+    assert client.extra_body == {'thinking': {'type': 'disabled'}}
+    assert compatible.public_payload()['thinking_mode'] == 'disabled'
+    monkeypatch.setenv('LLM_PROVIDER', 'openai')
+    official = model_gateway.load_gateway_config().providers[0]
+    assert official.thinking_mode is None
+    assert not model_gateway.build_provider_client(official, temperature=0, timeout=10).extra_body
+    monkeypatch.setenv('LLM_PROVIDER', 'openai_compatible')
+    monkeypatch.setenv('OPENAI_COMPATIBLE_THINKING_MODE', 'invalid')
+    with pytest.raises(ModelGatewayConfigurationError, match='THINKING_MODE'):
+        model_gateway.load_gateway_config()
 
 
 def test_purpose_override_only_changes_primary_auto_provider(monkeypatch):

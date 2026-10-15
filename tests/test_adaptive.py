@@ -117,6 +117,19 @@ def test_no_model_does_not_run_an_autonomous_workflow():
     assert not result['plan']['verification']['all_goals_satisfied']
 
 
+def test_model_receives_action_validation_reason_and_repairs_protocol(monkeypatch):
+    malformed = {**search(first=True), 'objective_id': 'shopping'}
+    def corrected(payload):
+        feedback = payload['feedback']
+        assert feedback['code'] == 'MODEL_FORMAT_ERROR'
+        assert 'Only a recommendation can select a product' in feedback['message']
+        return search(first=True)
+    model(monkeypatch, malformed, corrected, recommendation)
+    result = run_adaptive('推荐预算500的耳机')
+    assert result['status'] == 'SUCCEEDED'
+    assert sum(e['type'] == 'decision_rejected' for e in result['events']) == 1
+
+
 def test_model_decides_after_each_observation_and_can_choose_more_expensive(monkeypatch):
     def compare(payload):
         return dict(action='tool', reason='比较候选的规格差异', tool='compare_products',

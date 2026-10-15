@@ -6,7 +6,7 @@ import math
 import re
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from src.agents.base import as_text
 from src.errors import AgentError
@@ -169,6 +169,9 @@ Incomplete/invalid claims return feedback; choose how to resolve them. Final com
 finish means unable to complete, never success. Partial progress must not be described as all done.
 Payments/refunds require the separate approval path; these actions cannot authorize a write.
 Return only JSON (no tool calls), with this contract; omit unused fields:
+Action-specific fields are exclusive: tool/args ONLY for action=tool;
+product_id/objective_id/evidence_refs ONLY for action=recommend (omit even when a tool serves an objective);
+claims ONLY for action=complete; evidence_ref/offset/limit ONLY for action=inspect.
 {action:"tool|inspect|revise_plan|clarify|recommend|complete|finish",reason:string,
  goal?:{summary:string,objectives:[{id:string,description:string,source_quote:exact user quote,
  kind:"recommend|get_order_status|get_order_details|track_shipment|check_refund_eligibility|get_payment_status|answer_faq|compare_products|unresolved",
@@ -213,6 +216,11 @@ def decide(context, state, plan, history):
         if getattr(response, 'tool_calls', []):
             raise ValueError('Decision protocol does not accept model tool calls')
         return Decision.model_validate(json.loads(as_text(response.content)))
+    except ValidationError as error:
+        # 返回字段路径与验证原因，避免模型只能对着笼统的格式错误重复原响应。
+        issues = [{'path': '.'.join(map(str, e['loc'])), 'message': e['msg']}
+                  for e in error.errors(include_input=False, include_url=False)[:8]]
+        raise AgentError('MODEL_FORMAT_ERROR', '自主决策协议校验失败：' + json.dumps(issues, ensure_ascii=False), retryable=False) from error
     except (ValueError, TypeError) as error:
         raise AgentError('MODEL_FORMAT_ERROR', '自主模型未返回有效决策', retryable=False) from error
 
