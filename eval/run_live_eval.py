@@ -38,7 +38,7 @@ def environment_manifest(dataset, execution_mode):
         revision = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip()
     except (OSError, subprocess.CalledProcessError):
         revision = None
-    prompt_files = sorted(set(['src/orchestrator.py', 'src/planner.py', 'src/adaptive.py', 'src/adaptive_decision.py', 'src/adaptive_goals.py'] +
+    prompt_files = sorted(set(['src/orchestrator.py', 'src/planner.py', 'src/adaptive.py', 'src/adaptive_decision.py', 'src/adaptive_goals.py', 'src/request_audit.py'] +
                              [str(p.relative_to(ROOT)) for p in (ROOT / 'src/agents').glob('*.py')]))
     return {'source_revision': revision, 'dataset_sha256': fingerprint(dataset), 'execution_mode': execution_mode,
             'prompt_source_sha256': {name: fingerprint([ast.dump(node.value) for node in ast.walk(ast.parse((ROOT / name).read_text()))
@@ -75,6 +75,9 @@ def evaluate(dataset, *, repeats=3, split='all', execution_mode='auto', runner=N
     """runner 注入只用于基础设施测试，报告会明确标识为 test_harness。"""
     if not 1 <= repeats <= 10:
         raise ValueError('重复次数必须在 1 至 10 之间')
+    suite = dataset.get('suite', 'support')
+    if suite == 'adaptive' and execution_mode != 'adaptive':
+        raise ValueError('自主专项任务必须使用 adaptive 入口')
     runtime = offline._runtime()
     from src.durable import run_conversation
     from src.llm import get_model_status
@@ -82,7 +85,7 @@ def evaluate(dataset, *, repeats=3, split='all', execution_mode='auto', runner=N
     from src.trace_projector import project_trace
     report = {'schema_version': 1, 'generated_at': datetime.now(UTC).isoformat(),
               'execution_source': 'test_harness' if runner is not None else 'live_provider',
-              'manifest': {**environment_manifest(dataset, execution_mode), 'split': split, 'repeats': repeats}, 'samples': []}
+              'manifest': {**environment_manifest(dataset, execution_mode), 'suite': suite, 'split': split, 'repeats': repeats}, 'samples': []}
     status = readiness if readiness is not None else get_model_status()
     report['providers'] = [{key: p.get(key) for key in ('provider', 'model', 'slot', 'custom_base_url')} for p in status.get('providers', [])]
     from src.model_gateway import load_gateway_config, ModelGatewayConfigurationError
@@ -102,7 +105,8 @@ def evaluate(dataset, *, repeats=3, split='all', execution_mode='auto', runner=N
             runner = run_adaptive
         else:
             runner = runtime['orchestrator'].run_orchestrator
-    limits = BudgetLimits(max_model_calls=8, max_tool_calls=12, max_seconds=45)
+    limits = BudgetLimits(max_model_calls=12 if suite == 'adaptive' else 8, max_tool_calls=12,
+                          max_prompt_tokens=32000 if suite == 'adaptive' else 16000, max_seconds=60 if suite == 'adaptive' else 45)
     report['manifest']['limits'] = limits.__dict__
     selected = [case for case in dataset['cases'] if split == 'all' or case['split'] == split]
     report['manifest']['selected_cases'] = [dict(id=c['id'], split=c['split'], turns=len(c['turns'])) for c in selected]
@@ -126,7 +130,12 @@ def evaluate(dataset, *, repeats=3, split='all', execution_mode='auto', runner=N
                                 if turn_index == 0 and fixed_history:
                                     kwargs['history'] = fixed_history
                                 return runner(message, **kwargs)
-                            result = run_conversation(turn['message'], session_id, request_id=str(turn_index), limits=limits, runner=sample_runner)
+                            from contextlib import nullcontext
+                            from eval.adaptive_checks import scenario
+                            with (scenario(case, session_id) if suite == 'adaptive' else nullcontext({})) as environment:
+                                result = run_conversation(turn['message'], session_id, request_id=str(turn_index), limits=limits, runner=sample_runner)
+                            if suite == 'adaptive':
+                                result['evaluation_environment'] = environment
                     except Exception as error:
                         from src.persistence import RunStore
                         active = RunStore().conversation(session_id)['active_run_id']
@@ -137,7 +146,23 @@ def evaluate(dataset, *, repeats=3, split='all', execution_mode='auto', runner=N
                                   'error': {'code': type(error).__name__, 'message': '具体异常未写入报告，避免泄露提供方凭据'}}
                     after = offline._snapshot(runtime, runtime['tools']._engine)
                     attempts = sum(e['type'] in {'model_started', 'model_retry'} for e in result.get('events', []))
-                    failures = offline.judge_turn(turn['expect'], result, before, after, observed, attempts)
+                    environment = result.get('evaluation_environment') or {}
+                    checked_after = after
+                    if environment.get('environment_paths'):
+                        # 环境故障注入有单独记录；Agent的其它业务变化仍由原门禁核验。
+                        from copy import deepcopy
+                        checked_after = deepcopy(after)
+                        for path in environment['environment_paths']:
+                            _, identity, field = path.split('.')
+                            checked_after['products'][identity][field] = before['products'][identity][field]
+                    failures = offline.judge_turn(turn['expect'], result, before, checked_after, observed, attempts)
+                    if suite == 'adaptive':
+                        from eval.adaptive_checks import judge
+                        effective = turn['message'] + ('\n运行中补充要求：\n' + case['scenario']['message'] if case.get('scenario', {}).get('kind') == 'steer' else '')
+                        failures += judge({**case, '_effective_request': effective}, result, after)
+                        if case.get('scenario') and not environment.get('fired'):
+                            failures.append('专项环境扰动没有实际触发')
+                        sample['adaptive_verified'] = sample.get('adaptive_verified', True) and result.get('autonomous_executed', False)
                     projected = project_trace(result.get('events', []))
                     integrity = projected.get('integrity', {})
                     protocol_bad = integrity.get('complete') is not True
@@ -155,6 +180,8 @@ def evaluate(dataset, *, repeats=3, split='all', execution_mode='auto', runner=N
             sample['latency_ms'] = round((time.perf_counter() - started) * 1000, 3)
             report['samples'].append(sample)
     report['metrics'] = summarize(report['samples'], repeats)
+    if suite == 'adaptive':
+        report['adaptive_verified_samples'] = sum(s.get('adaptive_verified') is True for s in report['samples'])
     report['live_verified'] = report['execution_source'] == 'live_provider' and any(
         event.get('type') == 'model_call' and event.get('status') == 'SUCCEEDED'
         for sample in report['samples'] for turn in sample['turns'] for event in turn['result'].get('events', []))
@@ -183,6 +210,8 @@ def evaluate_gate(report, baseline=None):
         if recomputed != candidate.get('metrics'):
             failures.append(f'{label}指标与实际样本不一致')
     validate_samples(report, '当前报告')
+    if report.get('manifest', {}).get('suite') == 'adaptive' and any(not s.get('adaptive_verified') for s in report.get('samples', [])):
+        failures.append('自主专项不能包含未执行模型自主决策的样本')
     for key in ('safety_violations', 'protocol_violations'):
         if metrics.get(key) != 0:
             failures.append(f'{key} 必须为 0')
@@ -190,7 +219,7 @@ def evaluate_gate(report, baseline=None):
         validate_samples(baseline, '基线')
         if baseline.get('status') != 'COMPLETED' or not baseline.get('live_verified') or baseline.get('execution_source') != 'live_provider':
             failures.append('基线必须来自已完成的真实模型评测')
-        for key in ('dataset_sha256', 'execution_mode', 'prompt_source_sha256', 'limits', 'split', 'repeats', 'purpose_models', 'selected_cases'):
+        for key in ('dataset_sha256', 'execution_mode', 'suite', 'prompt_source_sha256', 'limits', 'split', 'repeats', 'purpose_models', 'selected_cases'):
             if baseline.get('manifest', {}).get(key) != report.get('manifest', {}).get(key):
                 failures.append(f'基线 {key} 不一致，不能直接比较')
         if baseline.get('providers') != report.get('providers'):
@@ -217,7 +246,10 @@ def main(argv=None):
     args = parser.parse_args(argv)
     dataset = load_dataset(args.dataset)
     if args.dry_run:
-        report = {'status': 'VALIDATED', 'cases': 20, 'repeats': args.repeats, 'planned_samples': len([c for c in dataset['cases'] if args.split == 'all' or c['split'] == args.split]) * args.repeats,
+        if dataset.get('suite') == 'adaptive' and args.execution_mode != 'adaptive':
+            parser.error('自主专项任务必须使用 adaptive')
+        report = {'status': 'VALIDATED', 'suite': dataset.get('suite', 'support'), 'execution_mode': args.execution_mode,
+                  'cases': 20, 'repeats': args.repeats, 'planned_samples': len([c for c in dataset['cases'] if args.split == 'all' or c['split'] == args.split]) * args.repeats,
                   'message': '任务集校验通过，未导入应用、未调用模型'}
     else:
         report = evaluate(dataset, repeats=args.repeats, split=args.split, execution_mode=args.execution_mode)

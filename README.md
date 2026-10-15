@@ -293,3 +293,9 @@ For durable API request retries, supply a stable `request_id`. Read saved state 
 `GET /conversations/{session_id}` and restore a task with
 `POST /runs/{run_id}/resume`, body `{"session_id":"..."}`. Approval clients should echo
 the current `action_id` so stale UI confirmations are rejected.
+
+### 原始需求审查与自主专项评测
+
+自主模式在接受目标前独立核对用户要求是否漏项、约束语义是否被反转，在最终完成前复核原始需求和证据。审查失败反馈模型受限修复，不能降级为成功；这仍是模型审查，不保证模型不会误判。FAQ必须返回有政策 ID/版本的依据，无依据不算完成。人工请求只登记持久的本地演示工单，尚未接入真人及通知。
+
+运行 `venv/bin/python eval/run_adaptive_eval.py --dry-run` 校验独立的20项自主任务集；通用 `auto` 结果和 `adaptive` 专项分开报告。未配置模型时真实执行为 `NOT_RUN`；当前未调用真实提供方。详见 [自主计划与审查边界](docs/adaptive-planning.md)。
