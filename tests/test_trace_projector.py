@@ -35,3 +35,12 @@ def test_trace_projector_reports_broken_integrity_without_hiding_events():
     assert projected["integrity"]["sequential"] is False
     assert projected["integrity"]["single_run"] is False
     assert len(projected["timeline"]) == 2
+
+
+def test_trace_projector_exposes_harness_selection_as_a_first_class_phase():
+    projected = project_trace([
+        {"run_id": "one", "sequence": 1, "type": "harness_profile_selected", "profile_id": "baseline-v1"},
+        {"run_id": "one", "sequence": 2, "type": "terminal", "status": "SUCCEEDED", "reason": "COMPLETED"},
+    ])
+    assert projected["timeline"][0]["phase"] == "HARNESS"
+    assert projected["timeline"][0]["label"] == "已选择 Harness Profile"

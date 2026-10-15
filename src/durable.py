@@ -46,7 +46,7 @@ def run_conversation(message, session_id, *, request_id=None, action_id=None, li
                      store=None, runner=None):
     if limits is None and runner is not None:
         from src.adaptive import run_adaptive
-        if runner is run_adaptive:
+        if runner is run_adaptive or getattr(runner, "execution_mode", None) == "adaptive":
             limits = BudgetLimits.adaptive()
     store = store or RunStore()
     claim = store.claim(session_id, request_id or uuid.uuid4().hex, message,
@@ -98,7 +98,8 @@ def execute_claim(claim, *, store=None, runner=None):
                     from src.adaptive import run_adaptive
                     # Autonomous mode receives the actual request plus separate
                     # preference data. Rules must not inject a synthetic hard budget.
-                    effective = context.context_engine.goal if runner is run_adaptive else context.context_engine.effective_request()
+                    adaptive_runner = runner is run_adaptive or getattr(runner, "execution_mode", None) == "adaptive"
+                    effective = context.context_engine.goal if adaptive_runner else context.context_engine.effective_request()
                     context.checkpoint(context=context.context_engine.payload())
                     if steering:
                         kwargs.pop("pending_action", None)

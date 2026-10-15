@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "profile_id": "adaptive-v1",
+  "version": "1.0.0",
+  "display_name": "自主消费 Agent 基线",
+  "description": "冻结当前模型逐步决策、证据读取、目标账本、受限重规划与独立审查路径。",
+  "engine": {
+    "id": "adaptive",
+    "version": "1"
+  },
+  "mechanisms": [
+    {"slot": "planning", "id": "bounded-model-loop", "version": "1"},
+    {"slot": "context", "id": "evidence-reference-context", "version": "1"},
+    {"slot": "memory", "id": "objective-ledger", "version": "1"},
+    {"slot": "verification", "id": "independent-request-audit", "version": "1"},
+    {"slot": "tool_protocol", "id": "native-strict-tools", "version": "1"}
+  ],
+  "capabilities": [
+    "model_directed_planning",
+    "bounded_replanning",
+    "evidence_retrieval",
+    "goal_verification",
+    "durable_resume",
+    "runtime_steering"
+  ],
+  "research": {
+    "status": "baseline",
+    "source_type": "native",
+    "paper_id": null,
+    "hypothesis": null
+  }
+}

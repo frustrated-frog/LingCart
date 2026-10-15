@@ -3,6 +3,7 @@ from __future__ import annotations
 
 
 _PHASES = {
+    "harness_profile_selected": "HARNESS",
     "constraint_bindings_refined": "PLAN",
     "request_audited": "VERIFY",
     "context_compacted": "CONTEXT",
@@ -23,6 +24,7 @@ _PHASES = {
 }
 
 _LABELS = {
+    "harness_profile_selected": "已选择 Harness Profile",
     "constraint_bindings_refined": "已依据证据修订执行映射",
     "request_audited": "原始需求与证据审查完成",
     "context_compacted": "上下文已压缩",

@@ -33,6 +33,16 @@ def test_request_retry_returns_same_run_and_one_answer(database):
         run_conversation("另一个请求", "session", request_id="same")
 
 
+def test_profile_runner_provenance_is_persisted_with_the_run(database):
+    from src.harness import get_runner
+
+    result = run_conversation("查询订单 1002 的状态", "profile", runner=get_runner("baseline-v1"))
+    stored = RunStore().run(result["run_id"])["result"]
+    assert result["events"][0]["type"] == "harness_profile_selected"
+    assert result["harness"]["profile_id"] == "baseline-v1"
+    assert stored["harness"] == result["harness"]
+
+
 def test_completed_run_keeps_a_versioned_terminal_checkpoint(database):
     result = run_conversation("查询订单 1002 的物流", "versioned")
 
