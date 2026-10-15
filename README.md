@@ -269,10 +269,19 @@ DeepSeek Flash 使用兼容服务配置：`LLM_PROVIDER=openai_compatible`、
 Flash 默认开启思考模式；当前短时限工作台可设置
 `OPENAI_COMPATIBLE_THINKING_MODE=disabled`，通过官方 `thinking` 参数关闭。
 该选项仅传递给兼容服务，使用其他服务前需确认其支持此参数。
+需要更强的语义理解时，可单独设置 `OPENAI_COMPATIBLE_GOAL_THINKING_MODE=enabled`
+及 `OPENAI_COMPATIBLE_GOAL_REASONING_EFFORT=low`；独立审查对应
+`OPENAI_COMPATIBLE_FINAL_RESPONSE_THINKING_MODE` / `OPENAI_COMPATIBLE_FINAL_RESPONSE_REASONING_EFFORT`。
+目标理解使用 `goal` 用途，后续工具决策使用 `planner`；这些设置不会改变选用的 Flash 模型。
+推理用量计入同一输出预算，模型配置和推理设置进入评测清单。
 `LLM_REQUEST_TIMEOUT` 控制提供方请求超时；Agent 的单次调用与总运行预算另有上限，
 调高前者不会绕过运行预算。真实自主评测使用 `eval/run_adaptive_eval.py`，
 每个样本使用独立演示数据库，结果中的 `live_verified` 表示确实完成过模型调用，
 任务是否通过仍需查看 `samples` 和 `metrics`。
+
+自主模式将用户原意与执行谓词分开保存。Agent 发现目录字段与初始假设不同时，可通过
+`refine_constraints` 引用已读证据修订映射；独立审查核对原意后才生效，旧推荐必须重新核验。
+详细契约、预算与验证范围见 [自主决策说明](docs/adaptive-planning.md)。
 
 接入后可先做零费用配置检查，再执行一次真实请求：
 

@@ -41,6 +41,8 @@ def environment_manifest(dataset, execution_mode):
     prompt_files = sorted(set(['src/orchestrator.py', 'src/planner.py', 'src/adaptive.py', 'src/adaptive_decision.py', 'src/adaptive_goals.py', 'src/request_audit.py'] +
                              [str(p.relative_to(ROOT)) for p in (ROOT / 'src/agents').glob('*.py')]))
     return {'source_revision': revision, 'dataset_sha256': fingerprint(dataset), 'execution_mode': execution_mode,
+            'source_tree_sha256': fingerprint({str(p.relative_to(ROOT)): p.read_text()
+                for p in sorted([*(ROOT / 'src').rglob('*.py'), *(ROOT / 'eval').glob('*.py')])}),
             'prompt_source_sha256': {name: fingerprint([ast.dump(node.value) for node in ast.walk(ast.parse((ROOT / name).read_text()))
                 if isinstance(node, (ast.Assign, ast.AnnAssign)) and any('prompt' in getattr(target, 'id', '').lower() for target in (node.targets if isinstance(node, ast.Assign) else [node.target]))])
                 for name in prompt_files if (ROOT / name).exists()},
@@ -90,13 +92,14 @@ def evaluate(dataset, *, repeats=3, split='all', execution_mode='auto', runner=N
               'execution_source': 'test_harness' if runner is not None else 'live_provider',
               'manifest': {**environment_manifest(dataset, execution_mode), 'suite': suite, 'split': split, 'repeats': repeats}, 'samples': []}
     status = readiness if readiness is not None else get_model_status()
-    report['providers'] = [{key: p.get(key) for key in ('provider', 'model', 'slot', 'custom_base_url', 'thinking_mode')} for p in status.get('providers', [])]
+    report['providers'] = [{key: p.get(key) for key in ('provider', 'model', 'slot', 'custom_base_url', 'thinking_mode', 'reasoning_effort')} for p in status.get('providers', [])]
     from src.model_gateway import load_gateway_config, ModelGatewayConfigurationError
     report['manifest']['purpose_models'] = {}
-    for purpose in ('router', 'planner', 'agent', 'final_response'):
+    for purpose in ('router', 'goal', 'planner', 'agent', 'final_response'):
         try:
             config = load_gateway_config(purpose=purpose)
-            report['manifest']['purpose_models'][purpose] = [{'provider': p.provider, 'model': p.model, 'thinking_mode': p.thinking_mode} for p in config.providers]
+            report['manifest']['purpose_models'][purpose] = [{'provider': p.provider, 'model': p.model,
+                'thinking_mode': p.thinking_mode, 'reasoning_effort': p.reasoning_effort} for p in config.providers]
         except ModelGatewayConfigurationError:
             report['manifest']['purpose_models'][purpose] = None
     if not status.get('configured') and runner is None:
@@ -108,8 +111,7 @@ def evaluate(dataset, *, repeats=3, split='all', execution_mode='auto', runner=N
             runner = run_adaptive
         else:
             runner = runtime['orchestrator'].run_orchestrator
-    limits = BudgetLimits(max_model_calls=12 if suite == 'adaptive' else 8, max_tool_calls=12,
-                          max_prompt_tokens=32000 if suite == 'adaptive' else 16000, max_seconds=60 if suite == 'adaptive' else 45)
+    limits = BudgetLimits.adaptive() if suite == 'adaptive' else BudgetLimits(max_seconds=45)
     report['manifest']['limits'] = limits.__dict__
     selected = [case for case in dataset['cases'] if split == 'all' or case['split'] == split]
     report['manifest']['selected_cases'] = [dict(id=c['id'], split=c['split'], turns=len(c['turns'])) for c in selected]
@@ -222,7 +224,7 @@ def evaluate_gate(report, baseline=None):
         validate_samples(baseline, '基线')
         if baseline.get('status') != 'COMPLETED' or not baseline.get('live_verified') or baseline.get('execution_source') != 'live_provider':
             failures.append('基线必须来自已完成的真实模型评测')
-        for key in ('dataset_sha256', 'execution_mode', 'suite', 'prompt_source_sha256', 'limits', 'split', 'repeats', 'purpose_models', 'selected_cases'):
+        for key in ('dataset_sha256', 'execution_mode', 'suite', 'prompt_source_sha256', 'source_tree_sha256', 'limits', 'split', 'repeats', 'purpose_models', 'selected_cases'):
             if baseline.get('manifest', {}).get(key) != report.get('manifest', {}).get(key):
                 failures.append(f'基线 {key} 不一致，不能直接比较')
         if baseline.get('providers') != report.get('providers'):

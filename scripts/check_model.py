@@ -81,7 +81,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="检查 Model Gateway 配置和实时模型调用")
     parser.add_argument(
         "--purpose",
-        choices=("default", "router", "planner", "agent", "final_response"),
+        choices=("default", "router", "goal", "planner", "agent", "final_response"),
         default="default",
         help="选择要验证的模型用途",
     )

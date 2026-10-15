@@ -105,6 +105,11 @@ class ContextEngine:
             history=[{'role': getattr(m, 'type', 'unknown'), 'content': as_text(m.content)} for m in history or []],
             context_manifest={'archived_refs': [], 'policy': 'FULL_RECORDS_OR_REFERENCES',
                               'history_total': len(history or []), 'omitted_history_indices': []})
+        if state.get('constraint_bindings') and not (state.get('feedback') or {}).get('audit_phase'):
+            from src.constraint_bindings import effective_goal
+            payload['goal'] = effective_goal(state)
+            payload.update(binding_revision=state.get('binding_revision', 0),
+                           constraint_bindings=deepcopy(state['constraint_bindings']))
 
         def messages():
             payload['context_manifest']['archived_refs'] = [o['step_id'] for o in payload['observations']
@@ -127,8 +132,19 @@ class ContextEngine:
         for index in reversed(range(len(plan.steps))):
             summary = payload['observations'][index]
             payload['observations'][index] = deepcopy(plan.steps[index].__dict__)
+            saved_history = list(payload['history'])
+            saved_omitted = list(payload['context_manifest']['omitted_history_indices'])
+            # 新获取的完整记录先于旧历史。否则 inspect 的每一页都可能立即被归档，
+            # 模型永远只看到索引，无法读到刚刚请求的证据。
+            if index == len(plan.steps) - 1:
+                while not fits() and payload['history']:
+                    omitted = len(history or []) - len(payload['history'])
+                    payload['history'].pop(0)
+                    payload['context_manifest']['omitted_history_indices'].append(omitted)
             if not fits():
                 payload['observations'][index] = summary
+                payload['history'] = saved_history
+                payload['context_manifest']['omitted_history_indices'] = saved_omitted
         result = messages()
         access = state.setdefault('evidence_access', {})
         read_refs = set(state.get('read_evidence_refs', []))

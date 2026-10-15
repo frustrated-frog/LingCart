@@ -3,6 +3,8 @@ from __future__ import annotations
 
 
 _PHASES = {
+    "constraint_bindings_refined": "PLAN",
+    "request_audited": "VERIFY",
     "context_compacted": "CONTEXT",
     "model_started": "MODEL",
     "model_call": "MODEL",
@@ -21,6 +23,8 @@ _PHASES = {
 }
 
 _LABELS = {
+    "constraint_bindings_refined": "已依据证据修订执行映射",
+    "request_audited": "原始需求与证据审查完成",
     "context_compacted": "上下文已压缩",
     "model_started": "模型调用开始",
     "model_call": "模型调用完成",

@@ -5,13 +5,14 @@ import hashlib
 import json
 from typing import Literal
 
-from pydantic import Field, model_validator
+from pydantic import Field, ValidationError, model_validator
 from src.adaptive_decision import StrictModel, ShoppingGoal
 from src.agents.base import as_text
 from src.context_engine import ContextEngine
 from src.errors import AgentError
 from src.llm import get_llm
 from src.task_plan import TaskPlan
+from src.constraint_bindings import constraint_refs, effective_goal, fingerprint, require_bindings_approved
 
 
 class RequirementCoverage(StrictModel):
@@ -49,6 +50,12 @@ outcomes and constraints faithfully cover the request BEFORE any tools execute. 
 unknown catalog field names and absent completion evidence are NOT goal coverage failures: tools will
 establish these facts later. Do not invent a required recommendation quantity when none was requested.
 Equivalent descriptions or redundant faithful constraints alone do not justify REVISE.
+In phase=bindings, review the EFFECTIVE predicates after a proposed catalog mapping update. The original
+conditions in feedback.intent_constraints and the ORIGINAL user text remain authoritative. Check that each
+changed field/operator/value expresses the SAME requirement using the observed catalog representation.
+Allow correcting a guessed or unbound field or value encoding. Reject omitted conditions, weakened bounds,
+reversed exclusions, stricter invented requirements, unproven semantic equivalence or unrelated evidence.
+Do not assume a mapping is correct because the candidate happens to satisfy it or the planner says so.
 For completion, additionally check that ALL original outcomes have substantive evidence. A successful
 function return, a policy NOT_FOUND, a contact suggestion or a queued DEMO ticket is not a resolved task.
 Archived references without readable contents cannot prove completion. If evidence is missing say so.
@@ -65,20 +72,20 @@ def binding(request, goal, revision):
     return hashlib.sha256(json.dumps([request, goal, revision], sort_keys=True, ensure_ascii=False).encode()).hexdigest()
 
 
-def constraint_refs(goal):
-    return {**{f'global:{i}': c for i, c in enumerate(goal.get('hard_constraints', []))},
-            **{f"objective:{o['id']}:{i}": c for o in goal['objectives'] for i, c in enumerate(o.get('hard_constraints', []))}}
-
-
 def review_request(context, state, plan, history, *, phase):
     """独立调用无规划对话历史，所有调用计入同一预算，异常不降级为通过。"""
-    goal = ShoppingGoal.model_validate(state['goal']).model_dump()
+    goal = ShoppingGoal.model_validate(effective_goal(state)).model_dump()
     review_state = {**state, 'goal': goal, 'next_steps': None, 'working_memory': None,
                     'feedback': {'audit_phase': phase, 'constraint_refs': constraint_refs(goal)}}
+    if state.get('constraint_bindings'):
+        review_state['feedback'].update(intent_constraints=constraint_refs(state['goal']),
+            proposed_bindings=state['constraint_bindings'])
+    if (state.get('feedback') or {}).get('code') == 'AUDIT_FORMAT_ERROR':
+        review_state['feedback']['audit_format_error'] = state['feedback']['message']
     engine = context.context_engine or ContextEngine(state['request'])
     prompt = _PROMPT + '\n' + json.dumps(RequestAudit.model_json_schema(), ensure_ascii=False)
     messages, manifest = engine.decision_messages(prompt, deepcopy(review_state),
-        plan if phase == 'completion' else TaskPlan([], []), history, max_chars=context.limits.max_context_chars)
+        plan if phase in {'completion', 'bindings'} else TaskPlan([], []), history, max_chars=context.limits.max_context_chars)
     # 确认偏好是辅助数据，不能把审查原始请求改写为偏好或先前的模型结论。
     response = context.model_call(get_llm(purpose='final_response'), messages,
         purpose='request_' + phase + '_audit', agent='request_auditor', allow_tools=False)
@@ -100,9 +107,14 @@ def review_request(context, state, plan, history, *, phase):
             if {c for r in audit.requirements for c in r.constraint_refs} != constraints:
                 raise ValueError('Audit did not account for every proposed constraint')
     except (ValueError, TypeError) as error:
-        raise AgentError('AUDIT_FORMAT_ERROR', '独立需求审查未提供有效、完整的审查结果', retryable=False) from error
-    record = dict(phase=phase, binding=binding(state['request'], goal, state['goal_revision']),
+        details = ([{'path': '.'.join(map(str, e['loc'])), 'message': e['msg']}
+                    for e in error.errors(include_input=False, include_url=False)[:8]]
+                   if isinstance(error, ValidationError) else str(error))
+        raise AgentError('AUDIT_FORMAT_ERROR', '独立审查响应需修正：' + json.dumps(details, ensure_ascii=False), retryable=False) from error
+    record = dict(phase=phase, binding=binding(state['request'], state['goal'], state['goal_revision']),
                   goal_revision=state['goal_revision'], **audit.model_dump(), history_manifest=manifest)
+    record.update(binding_revision=state.get('binding_revision', 0),
+                  bindings_sha256=fingerprint(state.get('constraint_bindings', {})))
     if phase == 'completion':
         record['evidence_sha256'] = evidence_fingerprint(plan)
     event = context.record('request_audited', **record)
@@ -116,11 +128,14 @@ def evidence_fingerprint(plan):
 
 
 def require_approved(state, plan=None):
+    require_bindings_approved(state)
     audit = state.get('request_audit') or {}
     if audit.get('verdict') != 'APPROVED' or audit.get('binding') != binding(state['request'], state['goal'], state['goal_revision']):
         raise AgentError('REQUEST_NOT_AUDITED', '原始需求覆盖与语义尚未通过独立审查，不能声称任务已完成', retryable=False)
     if plan is not None:
         final = state.get('completion_audit') or {}
         if (final.get('verdict') != 'APPROVED' or final.get('binding') != audit['binding']
-                or final.get('evidence_sha256') != evidence_fingerprint(plan)):
+                or final.get('evidence_sha256') != evidence_fingerprint(plan)
+                or final.get('binding_revision') != state.get('binding_revision', 0)
+                or final.get('bindings_sha256') != fingerprint(state.get('constraint_bindings', {}))):
             raise AgentError('COMPLETION_NOT_AUDITED', '最终证据尚未通过独立需求审查，不能声称全部完成', retryable=False)

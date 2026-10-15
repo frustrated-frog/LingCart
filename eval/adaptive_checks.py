@@ -28,6 +28,18 @@ def judge(case, result, database):
             audit = result.get(key) or {}
             if audit.get('verdict') != 'APPROVED' or audit.get('binding') != expected_binding:
                 errors.append('缺少与原始需求绑定的独立审查：' + key)
+        from src.constraint_bindings import fingerprint
+        bindings = result['plan'].get('constraint_bindings', {})
+        if bindings:
+            audit = result.get('binding_audit') or {}
+            final = result.get('completion_audit') or {}
+            revision = result['plan'].get('binding_revision', 0)
+            if (audit.get('verdict') != 'APPROVED' or audit.get('binding') != expected_binding
+                    or audit.get('bindings_sha256') != fingerprint(bindings)
+                    or audit.get('binding_revision') != revision
+                    or final.get('bindings_sha256') != fingerprint(bindings)
+                    or final.get('binding_revision') != revision):
+                errors.append('执行映射缺少与原始需求及最终完成绑定的独立审查')
         steps = {s['step_id']: s for s in result['plan']['steps']}
         rows = result['plan'].get('objective_ledger', [])
         if not rows or not result['plan']['verification'].get('all_goals_satisfied'):

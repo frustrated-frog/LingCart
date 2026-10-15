@@ -86,3 +86,18 @@ def test_long_history_is_evicted_before_failing_required_context():
     assert payload['history'][-1]['content'] == '最近的短消息'
     assert manifest['history_total'] == 3
     assert manifest['omitted_history_indices'] == [0, 1]
+
+
+def test_newly_requested_evidence_page_takes_priority_over_old_history():
+    from langchain_core.messages import HumanMessage
+    state, plan = fixture()
+    page = ContextEngine.read_evidence(plan, 'step-1', offset=3, limit=1)
+    plan.steps.append(TaskStep('step-2', 'shopping', 'read_evidence', {'reference': 'step-1'},
+                               status='SUCCEEDED', result=page))
+    messages, manifest = ContextEngine(state['request']).decision_messages('system', state, plan,
+        [HumanMessage(content='旧历史' * 700), HumanMessage(content='更近历史' * 500)], max_chars=3500)
+    payload = json.loads(messages[-1].content)
+    assert payload['observations'][-1]['result']['products'] == page['products']
+    assert manifest['omitted_history_indices']
+    assert state['evidence_access']['step-2'] == [page['products'][0]['product_id']]
+    assert sum(_text_length(m) for m in messages) <= 3500

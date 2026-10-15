@@ -44,6 +44,10 @@ def load_conversation(session_id, store=None):
 
 def run_conversation(message, session_id, *, request_id=None, action_id=None, limits=None, resume_id=None,
                      store=None, runner=None):
+    if limits is None and runner is not None:
+        from src.adaptive import run_adaptive
+        if runner is run_adaptive:
+            limits = BudgetLimits.adaptive()
     store = store or RunStore()
     claim = store.claim(session_id, request_id or uuid.uuid4().hex, message,
                         (limits or BudgetLimits()).__dict__, resume_id=resume_id, action_id=action_id)

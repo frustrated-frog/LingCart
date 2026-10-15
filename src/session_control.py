@@ -142,6 +142,12 @@ class SessionController:
     def start(self, session_id, message, *, request_id=None, action_id=None, limits=None, runner=None, resume_id=None, execution_mode='auto'):
         if execution_mode not in {'auto', 'adaptive'}:
             raise AgentError('INVALID_EXECUTION_MODE', '不支持该执行方式', retryable=False)
+        if runner is not None:
+            from src.adaptive import run_adaptive
+            if runner is run_adaptive:
+                execution_mode = 'adaptive'
+        if limits is None and execution_mode == 'adaptive':
+            limits = BudgetLimits.adaptive()
         if not _slots.acquire(blocking=False):
             raise AgentError('WORKER_CAPACITY_EXHAUSTED', '当前运行任务较多，请稍后重试', retryable=True)
         try:

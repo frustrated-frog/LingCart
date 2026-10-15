@@ -117,6 +117,15 @@ def test_no_model_does_not_run_an_autonomous_workflow():
     assert not result['plan']['verification']['all_goals_satisfied']
 
 
+def test_uncertain_initial_intent_can_be_clarified_without_fabricating_a_goal(monkeypatch):
+    model(monkeypatch, dict(action='clarify', reason='用户未说明要处理的消费事项', message='你希望处理哪件消费事项？'))
+    result = run_adaptive('帮我处理一下')
+    assert result['status'] == 'WAITING_CLARIFICATION'
+    assert result['plan']['goal'] is None
+    assert not result['trace']
+    assert not result['plan']['verification']['all_goals_satisfied']
+
+
 def test_model_receives_action_validation_reason_and_repairs_protocol(monkeypatch):
     malformed = {**search(first=True), 'objective_id': 'shopping'}
     def corrected(payload):
@@ -128,6 +137,123 @@ def test_model_receives_action_validation_reason_and_repairs_protocol(monkeypatc
     result = run_adaptive('推荐预算500的耳机')
     assert result['status'] == 'SUCCEEDED'
     assert sum(e['type'] == 'decision_rejected' for e in result['events']) == 1
+
+
+def refine(ref='global:1', field='specs.降噪', op='not_contains', value='主动降噪', evidence='step-1'):
+    return dict(action='refine_constraints', reason='按已读目录字段修正验证映射，保留用户原意',
+        bindings=[dict(constraint_ref=ref, field=field, op=op, value=value,
+                       evidence_refs=[evidence], reason='真实目录字段与此前的猜测不同')])
+
+
+def negated_search(*, unknown=False):
+    first = search(first=True)
+    first['goal']['hard_constraints'].append(dict(description='排除主动降噪耳机', source_quote='不要主动降噪',
+        field=None if unknown else 'specs.noise_cancellation', op='not_contains', value='主动降噪'))
+    return first
+
+
+@pytest.mark.parametrize('unknown', [False, True])
+def test_agent_refines_observed_catalog_mapping_without_mutating_user_goal(monkeypatch, unknown):
+    first = negated_search(unknown=unknown)
+    original = deepcopy(first['goal'])
+    script = model(monkeypatch, first, refine(), recommendation)
+    result = run_adaptive('推荐预算500的耳机，不要主动降噪')
+    assert result['status'] == 'SUCCEEDED', result
+    assert result['plan']['goal']['hard_constraints'] == original['hard_constraints']
+    assert result['plan']['binding_revision'] == 1
+    assert result['plan']['constraint_bindings']['global:1']['field'] == 'specs.降噪'
+    assert selected(result)['specs']['降噪'] != '主动降噪'
+    assert result['binding_audit']['verdict'] == 'APPROVED'
+    assert result['completion_audit']['binding_revision'] == 1
+    assert script.inputs[-1]['constraint_bindings']['global:1']['evidence_refs'] == ['step-1']
+
+
+@pytest.mark.parametrize('patch,code', [
+    (refine(ref='global:99'), 'INVALID_CONSTRAINT_BINDING'),
+    (refine(field='specs.invented'), 'UNOBSERVED_BINDING_FIELD'),
+    (refine(evidence='step-999'), 'UNREAD_BINDING_EVIDENCE'),
+])
+def test_invalid_mapping_is_repairable_but_never_accepted(monkeypatch, patch, code):
+    script = model(monkeypatch, negated_search(), patch, clarification)
+    result = run_adaptive('推荐预算500的耳机，不要主动降噪')
+    assert result['status'] == 'WAITING_CLARIFICATION'
+    assert result['plan']['binding_revision'] == 0
+    assert not result['plan']['constraint_bindings']
+    assert script.inputs[-1]['feedback']['code'] == code
+    assert not result['plan']['verification']['all_goals_satisfied']
+
+
+def test_mapping_review_cannot_silently_weaken_budget(monkeypatch):
+    script = model(monkeypatch, search(first=True), refine('global:0', 'price', 'lte', 9999), clarification)
+    audit_sequence(monkeypatch, None, dict(verdict='REVISE', issues=['将预算500放宽到9999，改变了用户要求'], requirements=[
+        dict(source_quote='预算500', interpretation='价格上限仍是500', objective_ids=['shopping'],
+             constraint_refs=['global:0'], status='MISINTERPRETED')]))
+    result = run_adaptive('推荐预算500的耳机')
+    assert result['status'] == 'WAITING_CLARIFICATION'
+    assert script.inputs[-1]['feedback']['code'] == 'BINDING_AUDIT_REJECTED'
+    assert result['plan']['goal']['hard_constraints'][0]['value'] == 500
+    assert not result['plan']['constraint_bindings']
+
+
+def test_mapping_revision_invalidates_old_recommendation_claims(monkeypatch):
+    first = compound_search()
+    first['goal']['hard_constraints'].append(dict(description='排除主动降噪', source_quote='不要主动降噪',
+        field='specs.降噪', op='not_contains', value='主动降噪'))
+    script = model(monkeypatch, first, recommendation, refine(op='ne'),
+                   order_query(), complete(('shopping', ['step-2']), ('order', ['step-3'])), clarification)
+    result = run_adaptive(COMPOUND_REQUEST + '，不要主动降噪')
+    assert result['status'] == 'WAITING_CLARIFICATION', result
+    assert script.inputs[-1]['feedback']['failures'] == [dict(objective_id='shopping', code='RECOMMENDATION_BINDING_STALE')]
+    assert result['plan']['objective_ledger'][1]['status'] == 'VERIFIED'
+
+
+def test_repeated_current_binding_does_not_consume_audit_or_change_revision(monkeypatch):
+    script = model(monkeypatch, search(first=True), refine('global:0', 'price', 'lte', 500), recommendation)
+    result = run_adaptive('推荐预算500的耳机')
+    assert result['status'] == 'SUCCEEDED', result
+    assert script.inputs[-1]['feedback']['code'] == 'BINDING_ALREADY_CURRENT'
+    assert result['plan']['binding_revision'] == 0
+    assert not any(e['type'] == 'request_audited' and e['phase'] == 'bindings' for e in result['events'])
+
+
+def test_mapping_and_independent_audit_survive_resume(monkeypatch):
+    class CrashAfterBinding(RunStore):
+        def save_checkpoint(self, run_id, token, snapshot, event=None):
+            super().save_checkpoint(run_id, token, snapshot, event)
+            if event and event.get('type') == 'adaptive_decision' and event['decision']['action'] == 'refine_constraints':
+                raise Crash()
+    script = model(monkeypatch, negated_search(), refine(), recommendation)
+    with pytest.raises(Crash):
+        run_conversation('推荐预算500的耳机，不要主动降噪', 'binding-resume', runner=run_adaptive, store=CrashAfterBinding())
+    store = RunStore()
+    active = store.conversation('binding-resume')['active_run_id']
+    result = resume_run('binding-resume', active, runner=run_adaptive)
+    assert result['status'] == 'SUCCEEDED', result
+    assert len(script.inputs) == 3
+    assert sum(e['type'] == 'request_audited' and e['phase'] == 'bindings' for e in result['events']) == 1
+    assert result['plan']['binding_revision'] == 1
+
+
+def test_steering_during_binding_audit_discards_old_mapping(monkeypatch):
+    from src.session_control import ControlStore
+    revised = negated_search()
+    revised['goal']['hard_constraints'][0].update(source_quote='预算改为200', description='预算200', value=200)
+    script = model(monkeypatch, negated_search(), refine(), revised, refine(evidence='step-2'), recommendation)
+    import src.request_audit as auditing
+    from langchain_core.messages import HumanMessage
+    fallback = auditing.get_llm()
+    def interrupting_audit(payload):
+        active = RunStore().conversation('binding-steer')['active_run_id']
+        ControlStore().enqueue('binding-steer', active, 'STEER', message='预算改为200',
+                               command_id='binding-steer-change', expected_revision=0)
+        return json.loads(fallback.invoke([HumanMessage(content=json.dumps(payload, ensure_ascii=False))]).content)
+    audit_sequence(monkeypatch, None, interrupting_audit)
+    result = run_conversation('推荐预算500的耳机，不要主动降噪', 'binding-steer', runner=run_adaptive)
+    assert result['status'] == 'SUCCEEDED', result
+    assert result['plan']['goal_revision'] == 1
+    assert selected(result)['price'] <= 200
+    assert script.inputs[2]['goal'] is None and 'constraint_bindings' not in script.inputs[2]
+    assert sum(e['type'] == 'constraint_bindings_refined' for e in result['events']) == 1
 
 
 def test_model_decides_after_each_observation_and_can_choose_more_expensive(monkeypatch):

@@ -37,6 +37,10 @@ _MODEL_ENV = {
     "OPENAI_COMPATIBLE_BASE_URL",
     "OPENAI_COMPATIBLE_THINKING_MODE",
 }
+_MODEL_ENV.update({'OPENAI_COMPATIBLE_REASONING_EFFORT', 'LLM_GOAL_MODEL'})
+_MODEL_ENV.update(f'OPENAI_COMPATIBLE_{purpose}_{option}'
+                  for purpose in ('DEFAULT', 'ROUTER', 'GOAL', 'PLANNER', 'AGENT', 'FINAL_RESPONSE')
+                  for option in ('THINKING_MODE', 'REASONING_EFFORT'))
 
 
 @pytest.fixture(autouse=True)
@@ -106,6 +110,25 @@ def test_compatible_thinking_mode_is_explicit_and_scoped(monkeypatch):
     monkeypatch.setenv('OPENAI_COMPATIBLE_THINKING_MODE', 'invalid')
     with pytest.raises(ModelGatewayConfigurationError, match='THINKING_MODE'):
         model_gateway.load_gateway_config()
+
+
+def test_goal_reasoning_is_configurable_without_changing_execution_model(monkeypatch):
+    monkeypatch.setenv('LLM_PROVIDER', 'openai_compatible')
+    monkeypatch.setenv('LLM_API_KEY', 'test-secret')
+    monkeypatch.setenv('LLM_MODEL', 'deepseek-flash')
+    monkeypatch.setenv('LLM_BASE_URL', 'https://api.deepseek.com')
+    monkeypatch.setenv('OPENAI_COMPATIBLE_THINKING_MODE', 'disabled')
+    monkeypatch.setenv('OPENAI_COMPATIBLE_GOAL_THINKING_MODE', 'enabled')
+    monkeypatch.setenv('OPENAI_COMPATIBLE_GOAL_REASONING_EFFORT', 'low')
+    config = model_gateway.load_gateway_config(purpose='goal').providers[0]
+    assert config.model == 'deepseek-flash' and config.thinking_mode == 'enabled' and config.reasoning_effort == 'low'
+    planner = model_gateway.load_gateway_config(purpose='planner').providers[0]
+    assert planner.thinking_mode == 'disabled' and planner.reasoning_effort is None
+    client = model_gateway.build_provider_client(config, temperature=0, timeout=15)
+    assert client.reasoning_effort == 'low'
+    monkeypatch.setenv('OPENAI_COMPATIBLE_GOAL_REASONING_EFFORT', 'invalid')
+    with pytest.raises(ModelGatewayConfigurationError, match='推理强度'):
+        model_gateway.load_gateway_config(purpose='goal')
 
 
 def test_purpose_override_only_changes_primary_auto_provider(monkeypatch):

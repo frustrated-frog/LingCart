@@ -7,7 +7,7 @@ import time
 
 
 SUPPORTED_PROVIDERS = {"auto", "gemini", "groq", "openai", "openai_compatible"}
-MODEL_PURPOSES = {"router", "planner", "agent", "final_response", "default"}
+MODEL_PURPOSES = {"router", "goal", "planner", "agent", "final_response", "default"}
 DEFAULT_MODELS = {
     "gemini": "gemini-2.5-flash",
     "groq": "llama-3.3-70b-versatile",
@@ -31,6 +31,7 @@ class ProviderConfig:
     base_url: str | None = None
     slot: int = 1
     thinking_mode: str | None = None
+    reasoning_effort: str | None = None
 
     def public_payload(self) -> dict:
         return {
@@ -39,6 +40,7 @@ class ProviderConfig:
             "slot": self.slot,
             "custom_base_url": bool(self.base_url),
             **({"thinking_mode": self.thinking_mode} if self.thinking_mode else {}),
+            **({"reasoning_effort": self.reasoning_effort} if self.reasoning_effort else {}),
         }
 
 
@@ -163,6 +165,14 @@ def load_gateway_config(*, purpose: str = "default", model: str | None = None) -
             "未配置可用模型：请配置 Gemini、Groq、OpenAI 或 OpenAI-compatible 模型 API",
             code="MODEL_UNAVAILABLE",
         )
+    for index, item in enumerate(providers):
+        if item.provider != 'openai_compatible':
+            continue
+        thinking = _value(f'OPENAI_COMPATIBLE_{normalized_purpose.upper()}_THINKING_MODE') or item.thinking_mode
+        effort = _value(f'OPENAI_COMPATIBLE_{normalized_purpose.upper()}_REASONING_EFFORT') or _value('OPENAI_COMPATIBLE_REASONING_EFFORT')
+        if thinking not in {None, 'enabled', 'disabled'} or effort not in {None, 'low', 'high', 'max'}:
+            raise ModelGatewayConfigurationError('兼容服务的思考模式或推理强度配置无效')
+        providers[index] = replace(item, thinking_mode=thinking, reasoning_effort=effort)
     return ModelGatewayConfig(
         providers=tuple(providers),
         purpose=normalized_purpose,
@@ -198,6 +208,8 @@ def build_provider_client(config: ProviderConfig, *, temperature: float, timeout
         from langchain_openai import ChatOpenAI
 
         options = {"extra_body": {"thinking": {"type": config.thinking_mode}}} if config.thinking_mode else {}
+        if config.reasoning_effort:
+            options['reasoning_effort'] = config.reasoning_effort
         return ChatOpenAI(
             model=config.model,
             api_key=config.api_key,

@@ -18,6 +18,7 @@ from src.errors import AgentError, classify_exception
 from src.intake import DIRECT, PAYMENT_PROCESS, PRODUCT_SEARCH, REFUND_REQUEST, TaskIntake, analyze_request
 from src.runtime import BudgetLimits, RunRuntime, ToolEffect, ToolExecutor, TraceRecorder, current_runtime, runtime_scope, tool_spec
 from src.task_plan import TaskPlan, TaskStep, verify_observation
+from src.constraint_bindings import effective_goal, propose_bindings, fingerprint, require_bindings_approved, constraint_refs
 
 MAX_REPLANS = 2
 MAX_DECISION_REPAIRS = 2
@@ -142,7 +143,10 @@ def _present(context, recorder, intake, state, plan, *, reason, message, error=N
         goal_revision=state['goal_revision'], replan_count=state['replans'],
         journal=deepcopy(state['journal']), goal=deepcopy(state['goal']), next_steps=state['next_steps'],
         working_memory=deepcopy(state.get('working_memory')), objective_ledger=deepcopy(state.get('objective_ledger', []))))
+    result['plan'].update(constraint_bindings=deepcopy(state.get('constraint_bindings', {})),
+                          binding_revision=state.get('binding_revision', 0))
     result['request_audit'] = deepcopy(state.get('request_audit'))
+    result['binding_audit'] = deepcopy(state.get('binding_audit'))
     result['completion_audit'] = deepcopy(state.get('completion_audit'))
     return result
 
@@ -174,8 +178,17 @@ def _validate_tool(decision, state, plan, history):
 def _accept(context, recorder, state, plan, decision, history):
     if state['goal'] is None:
         if decision.goal is None:
+            if decision.action == 'clarify':
+                state['pending'] = dict(decision=decision.model_dump(), step_id=None)
+                state['model_cursor'] = context.model_cursor
+                _save(context, state, plan)
+                recorder.record('adaptive_decision', source='model', decision=decision.model_dump(),
+                                goal_revision=state['goal_revision'], step_id=None)
+                return
             raise AgentError('MODEL_FORMAT_ERROR', '首次决策必须包含目标及约束', retryable=False)
         validate_goal(decision.goal, state['request'], history)
+        if decision.goal.uncertainties and decision.action != 'clarify':
+            raise AgentError('MODEL_FORMAT_ERROR', '目标声明仍有用户意图歧义时应提交 clarify；目录编码待发现或可选偏好未指定不属于用户意图歧义。请重新核对原文。', retryable=False)
         if decision.action != 'clarify':
             from src.request_audit import review_request
             proposed = {**state, 'goal': decision.goal.model_dump()}
@@ -191,6 +204,29 @@ def _accept(context, recorder, state, plan, decision, history):
         plan.goals = [o['id'] for o in state['goal']['objectives']]
     elif decision.goal is not None and decision.goal.model_dump() != state['goal']:
         raise AgentError('GOAL_CHANGE_REQUIRES_USER', '没有新用户指令时不能修改目标或硬约束', retryable=False)
+    if decision.action == 'refine_constraints':
+        from src.request_audit import review_request
+        proposed = {**state, 'constraint_bindings': propose_bindings(state, plan, decision.bindings),
+                    'binding_revision': state.get('binding_revision', 0) + 1}
+        audit = review_request(context, proposed, plan, history, phase='bindings')
+        from src.session_control import apply_controls
+        apply_controls(context)
+        if audit['verdict'] != 'APPROVED':
+            state['feedback'] = dict(code='BINDING_AUDIT_REJECTED', audit=audit,
+                message='执行映射未通过原意核对；保留原约束，请修正映射或澄清。')
+            raise AgentError('BINDING_AUDIT_REJECTED', '字段映射没有忠实保留用户条件', retryable=False)
+        before = deepcopy(state.get('constraint_bindings', {}))
+        state.update(constraint_bindings=proposed['constraint_bindings'], binding_revision=proposed['binding_revision'],
+                     binding_audit=audit, completion_audit=None)
+        # 已验证推荐只证明旧执行映射；服务查询证据不受字段映射修订影响。
+        recommendation_ids = {o['id'] for o in state['goal']['objectives'] if o['kind'] == 'recommend'}
+        for row in state['objective_ledger']:
+            if row['objective_id'] in recommendation_ids:
+                row.update(status='PENDING', evidence_refs=[], failures=['CONSTRAINT_BINDING_CHANGED'])
+        state['journal'].append(dict(reason='CONSTRAINT_BINDING_REFINED', binding_revision=state['binding_revision'],
+                                     before=before, after=deepcopy(state['constraint_bindings'])))
+        recorder.record('constraint_bindings_refined', binding_revision=state['binding_revision'],
+            before=before, after=state['constraint_bindings'], audit_reference=audit['reference'])
     if state['goal']['uncertainties'] and decision.action != 'clarify':
         raise AgentError('CLARIFICATION_REQUIRED', '存在未解决的目标歧义，必须先澄清', retryable=False)
     if decision.working_memory is not None:
@@ -248,9 +284,11 @@ def _selection_step(state, plan, decision):
 def _repair(context, recorder, state, plan, error):
     state['repair_count'] = state.get('repair_count', 0) + 1
     state['model_cursor'] = context.model_cursor
-    if error.code != 'REQUEST_AUDIT_REJECTED':
+    if error.code not in {'REQUEST_AUDIT_REJECTED', 'BINDING_AUDIT_REJECTED'}:
         state['feedback'] = dict(code=error.code, message=str(error),
                                 instruction='修复协议或参数后提交下一次决策；不要放宽用户目标或审批条件。')
+        if error.code == 'AUDIT_FORMAT_ERROR':
+            state['feedback']['instruction'] = '审查响应格式无效不代表原提案被语义否定。可重提同一目标或映射，让审查模型修正协议；不要为此改变用户原意。'
     state['pending'] = None
     _save(context, state, plan)
     recorder.record('decision_rejected', code=error.code, repair_count=state['repair_count'])
@@ -280,6 +318,7 @@ def _review_completion(context, recorder, state, plan, history):
 
 
 def _verify_recommendation(context, recorder, state, plan, decision, step):
+    require_bindings_approved(state)
     # A new scope on EVERY attempt, including process resume. Historical ledger
     # replay must never satisfy the final freshness gate.
     executor = ToolExecutor(_READ_ONLY_TOOLS, recorder, max_calls=context.limits.max_tool_calls,
@@ -305,7 +344,7 @@ def _verify_recommendation(context, recorder, state, plan, decision, step):
     else:
         if fresh['stock'] <= 0:
             failures.append('OUT_OF_STOCK')
-        goal = ShoppingGoal.model_validate(state['goal'])
+        goal = ShoppingGoal.model_validate(effective_goal(state))
         objective = next(o for o in goal.objectives if o.id == decision.objective_id)
         constraints = [*goal.hard_constraints, *objective.hard_constraints]
         failures.extend('HARD_CONSTRAINT: ' + c.description for c in constraints if not predicate_holds(fresh, c))
@@ -314,7 +353,9 @@ def _verify_recommendation(context, recorder, state, plan, decision, step):
             if any(old.get(key) != fresh.get(key) for key in ('price', 'stock', 'category', 'specs', 'name', 'summary')):
                 failures.append('STALE_EVIDENCE: ' + ref)
     step.result = _observation(dict(products=[fresh] if fresh else [], failures=failures,
-        evidence_refs=decision.evidence_refs, rationale=decision.reason), event)
+        evidence_refs=decision.evidence_refs, rationale=decision.reason,
+        binding_revision=state.get('binding_revision', 0),
+        bindings_sha256=fingerprint(state.get('constraint_bindings', {}))), event)
     if failures:
         step.status = 'REJECTED'
         state['feedback'] = dict(code='RECOMMENDATION_VERIFICATION_FAILED', failures=failures, evidence_ref=step.step_id)
@@ -377,9 +418,13 @@ def _run(context, user_message, history, pending_action):
     recorder = TraceRecorder(context.run_id)
     revision = context.snapshot.get('goal_revision', 0)
     if saved:
-        if saved.get('schema_version') != 4:
+        if saved.get('schema_version') not in {4, 5}:
             raise AgentError('ADAPTIVE_CHECKPOINT_INCOMPATIBLE', '旧检查点缺少独立需求审查记录，不能安全恢复，请新建任务；已完成操作记录保留', retryable=False)
         state = deepcopy(saved)
+        state.update(schema_version=5)
+        state.setdefault('constraint_bindings', {})
+        state.setdefault('binding_revision', 0)
+        state.setdefault('binding_audit', None)
         plan = _restore_plan(state['plan'])
         if revision == state['goal_revision'] and user_message != state['request']:
             raise AgentError('CHECKPOINT_CONFLICT', '恢复请求与已保存目标不一致', retryable=False)
@@ -392,6 +437,7 @@ def _run(context, user_message, history, pending_action):
             state.update(goal_revision=revision, goal=None, request=user_message, pending=None,
                          model_cursor=0, feedback=None, working_memory=None, objective_ledger=[],
                          next_steps=None, request_audit=None, completion_audit=None,
+                         constraint_bindings={}, binding_revision=0, binding_audit=None,
                          version=state['version'] + 1)
             plan.goals = []
             plan.verification = {}
@@ -399,10 +445,11 @@ def _run(context, user_message, history, pending_action):
         context.model_cursor = state['model_cursor']
     else:
         plan = TaskPlan([], [])
-        state = dict(schema_version=4, version=1, replans=0, goal_revision=revision, request=user_message,
+        state = dict(schema_version=5, version=1, replans=0, goal_revision=revision, request=user_message,
                      goal=None, next_steps=None, working_memory=None, journal=[], pending=None,
                      objective_ledger=[], feedback=None, repair_count=0, request_audit=None,
-                     completion_audit=None, model_cursor=context.model_cursor)
+                     completion_audit=None, constraint_bindings={}, binding_revision=0, binding_audit=None,
+                     model_cursor=context.model_cursor)
         _save(context, state, plan)
         recorder.record('plan_created', source='adaptive_model', plan=plan.payload())
     intake = TaskIntake(user_message, (PRODUCT_SEARCH,), {}, execution_mode='adaptive', reason='模型逐步决策')
@@ -419,10 +466,11 @@ def _run(context, user_message, history, pending_action):
                     _accept(context, recorder, state, plan, decision, history)
                     apply_controls(context)
                 except AgentError as error:
-                    if error.code in {'MODEL_FORMAT_ERROR', 'INVALID_TOOL_ARGUMENTS', 'REQUEST_AUDIT_REJECTED', 'AUDIT_FORMAT_ERROR'}:
+                    if error.code in {'MODEL_FORMAT_ERROR', 'INVALID_TOOL_ARGUMENTS', 'REQUEST_AUDIT_REJECTED', 'AUDIT_FORMAT_ERROR',
+                                      'INVALID_CONSTRAINT_BINDING', 'UNREAD_BINDING_EVIDENCE', 'UNOBSERVED_BINDING_FIELD', 'BINDING_AUDIT_REJECTED'}:
                         _repair(context, recorder, state, plan, error)
                         continue
-                    if error.code not in {'UNREAD_RECOMMENDATION_EVIDENCE', 'INVALID_RECOMMENDATION_OBJECTIVE'}:
+                    if error.code not in {'UNREAD_RECOMMENDATION_EVIDENCE', 'INVALID_RECOMMENDATION_OBJECTIVE', 'BINDING_ALREADY_CURRENT'}:
                         raise
                     # An index is not sufficient evidence. Let the model choose
                     # which original records to inspect, within its remaining budget.
@@ -532,7 +580,7 @@ def _run(context, user_message, history, pending_action):
 def run_adaptive(user_message, history=None, pending_action=None, *, limits=None):
     context = current_runtime()
     if context is None:
-        context = RunRuntime(uuid.uuid4().hex, limits or BudgetLimits())
+        context = RunRuntime(uuid.uuid4().hex, limits or BudgetLimits.adaptive())
         with runtime_scope(context):
             return run_adaptive(user_message, history, pending_action)
     started = time.perf_counter()

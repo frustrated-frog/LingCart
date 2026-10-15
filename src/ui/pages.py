@@ -340,7 +340,8 @@ def lab_page():
     with st.expander("任务理解结果"):
         st.json(run["result"].get("intake", {}))
     with st.expander('原始需求与最终证据的独立审查'):
-        st.json({'需求审查': run['result'].get('request_audit'), '完成审查': run['result'].get('completion_audit')})
+        st.json({'需求审查': run['result'].get('request_audit'), '映射审查': run['result'].get('binding_audit'),
+                 '完成审查': run['result'].get('completion_audit')})
     saved = RunStore().run(chosen)
     if saved:
         with st.expander('结构化上下文与证据引用'):
@@ -353,6 +354,8 @@ def lab_page():
         with st.expander('逐项目标与完成证据'):
             adaptive = saved['checkpoint'].get('adaptive', {})
             st.json({'goal': adaptive.get('goal'), 'objective_ledger': adaptive.get('objective_ledger', []),
+                     'binding_revision': adaptive.get('binding_revision', 0),
+                     'constraint_bindings': adaptive.get('constraint_bindings', {}),
                      'verification': run['result'].get('plan', {}).get('verification', {})})
         with st.expander('运行控制与计划版本'):
             st.json(ControlStore().commands(saved['session_id'], chosen))

@@ -26,6 +26,11 @@ def _claim_error(state, objective, step, indexed):
                 or step.args.get('goal_revision') != state['goal_revision']
                 or not step.result.get('selected_product') or step.result.get('failures')):
             return 'RECOMMENDATION_NOT_VERIFIED'
+        from src.constraint_bindings import fingerprint
+        if (step.result.get('binding_revision', 0) != state.get('binding_revision', 0)
+                or (state.get('constraint_bindings') and
+                    step.result.get('bindings_sha256') != fingerprint(state['constraint_bindings']))):
+            return 'RECOMMENDATION_BINDING_STALE'
         return None
     if step.step_id not in state.get('read_evidence_refs', []):
         return 'EVIDENCE_NOT_READ'
