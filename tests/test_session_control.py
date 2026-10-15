@@ -10,7 +10,7 @@ from src.backend.seed import seed
 from src.durable import run_conversation, resume_run
 from src.errors import AgentError
 from src.orchestrator import run_orchestrator
-from src.runtime import current_runtime, ToolExecutor, TraceRecorder
+from src.runtime import BudgetLimits, current_runtime, ToolExecutor, TraceRecorder
 from src.session_control import ControlStore, SessionController
 from src.trace_projector import project_trace
 
@@ -47,6 +47,21 @@ def test_steer_changes_target_and_only_one_terminal(database):
     assert len([e for e in result['events'] if e['type'] == 'terminal']) == 1
     assert store.commands('s', result['run_id'])[0]['status'] == 'APPLIED'
     assert project_trace(result['events'])['integrity']['complete'] is True
+
+
+def test_async_adaptive_profile_and_explicit_budget_reach_runtime(database):
+    observed = []
+    def runner(message, **kwargs):
+        observed.append(current_runtime().limits)
+        return run_orchestrator(message, **kwargs)
+    controller = SessionController()
+    first = controller.start('adaptive-profile', '查询订单1002', execution_mode='adaptive', runner=runner)
+    assert wait_result(first['run_id'])['status'] == 'SUCCEEDED'
+    assert observed[-1] == BudgetLimits.adaptive()
+    explicit = BudgetLimits(max_model_calls=1, max_seconds=5)
+    second = controller.start('explicit-profile', '查询订单1002', execution_mode='adaptive', runner=runner, limits=explicit)
+    assert wait_result(second['run_id'])['status'] == 'SUCCEEDED'
+    assert observed[-1] == explicit
 
 
 def test_cancel_keeps_completed_observation_and_prevents_next_tool(database):

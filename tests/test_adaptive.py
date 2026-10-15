@@ -451,6 +451,31 @@ def test_resume_replays_committed_observation_but_refreshes_recommendation(monke
     assert result['budget']['consumed']['model_calls'] == len(script.inputs) + sum(e['type'] == 'request_audited' for e in result['events'])
 
 
+def test_version_four_resume_preserves_goal_and_initializes_empty_bindings(monkeypatch):
+    from src.backend.db import Checkpoint
+    from src.runtime_state import seal_runtime_snapshot
+    script = model(monkeypatch, search(first=True), recommendation)
+    with pytest.raises(Crash):
+        run_conversation('推荐预算500的耳机', 'v4-resume', runner=run_adaptive, store=CrashAfterSearch())
+    store = RunStore()
+    active = store.conversation('v4-resume')['active_run_id']
+    with tools._session() as session:
+        checkpoint = session.get(Checkpoint, active)
+        payload = deepcopy(checkpoint.payload)
+        original_goal = deepcopy(payload['adaptive']['goal'])
+        payload['adaptive']['schema_version'] = 4
+        for field in ('constraint_bindings', 'binding_revision', 'binding_audit'):
+            payload['adaptive'].pop(field)
+        checkpoint.payload = seal_runtime_snapshot(payload, active)
+        session.commit()
+    result = resume_run('v4-resume', active, runner=run_adaptive)
+    assert result['status'] == 'SUCCEEDED', result
+    assert result['plan']['goal'] == original_goal
+    assert result['plan']['constraint_bindings'] == {} and result['plan']['binding_revision'] == 0
+    assert store.run(active)['checkpoint']['adaptive']['schema_version'] == 5
+    assert len(script.inputs) == 2
+
+
 def test_steering_reinterprets_goal_in_model_and_keeps_previous_evidence(monkeypatch):
     from src.session_control import ControlStore
     def steer(p):
