@@ -12,3 +12,4 @@ fastapi
 uvicorn[standard]
 httpx
 pytest
+jsonschema>=4,<5

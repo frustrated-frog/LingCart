@@ -38,6 +38,7 @@ _MODEL_ENV = {
     "OPENAI_COMPATIBLE_THINKING_MODE",
 }
 _MODEL_ENV.update({'OPENAI_COMPATIBLE_REASONING_EFFORT', 'LLM_GOAL_MODEL'})
+_MODEL_ENV.add('OPENAI_COMPATIBLE_STRICT_TOOLS')
 _MODEL_ENV.update(f'OPENAI_COMPATIBLE_{purpose}_{option}'
                   for purpose in ('DEFAULT', 'ROUTER', 'GOAL', 'PLANNER', 'AGENT', 'FINAL_RESPONSE')
                   for option in ('THINKING_MODE', 'REASONING_EFFORT'))
@@ -150,6 +151,34 @@ def test_json_mode_preserves_provider_and_does_not_change_unsupported_clients():
     assert not first.options
     assert encoded.invoke('json').content.startswith('{')
     assert encoded.last_call['model'] == 'flash'
+
+
+def test_strict_native_tools_are_explicit_and_thinking_uses_auto_choice(monkeypatch):
+    monkeypatch.setenv('LLM_PROVIDER', 'openai_compatible')
+    monkeypatch.setenv('LLM_API_KEY', 'test-secret')
+    monkeypatch.setenv('LLM_MODEL', 'deepseek-flash')
+    monkeypatch.setenv('LLM_BASE_URL', 'https://api.deepseek.com/beta')
+    monkeypatch.setenv('OPENAI_COMPATIBLE_STRICT_TOOLS', 'true')
+    config = model_gateway.load_gateway_config().providers[0]
+    assert config.strict_tools and config.public_payload()['strict_tools']
+    choices = []
+    class NativeClient:
+        def bind_tools(self, declarations, **options):
+            choices.append(options['tool_choice'])
+            return self
+    for thinking, choice in [('disabled', 'required'), ('enabled', 'auto')]:
+        from dataclasses import replace
+        candidate = replace(config, thinking_mode=thinking)
+        model = RotatingChatModel([ModelCandidate(candidate, NativeClient())])
+        assert model.native_protocol
+        assert model.native_tools([]).native_protocol
+        assert choices[-1] == choice
+    mixed = RotatingChatModel([ModelCandidate(config, NativeClient()),
+        ModelCandidate(ProviderConfig('openai', 'test', 'test'), NativeClient())])
+    assert not mixed.native_protocol
+    monkeypatch.setenv('OPENAI_COMPATIBLE_STRICT_TOOLS', 'invalid')
+    with pytest.raises(ModelGatewayConfigurationError, match='STRICT_TOOLS'):
+        model_gateway.load_gateway_config()
 
 
 def test_purpose_override_only_changes_primary_auto_provider(monkeypatch):

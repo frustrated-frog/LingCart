@@ -32,6 +32,7 @@ class ProviderConfig:
     slot: int = 1
     thinking_mode: str | None = None
     reasoning_effort: str | None = None
+    strict_tools: bool = False
 
     def public_payload(self) -> dict:
         return {
@@ -41,6 +42,7 @@ class ProviderConfig:
             "custom_base_url": bool(self.base_url),
             **({"thinking_mode": self.thinking_mode} if self.thinking_mode else {}),
             **({"reasoning_effort": self.reasoning_effort} if self.reasoning_effort else {}),
+            **({"strict_tools": True} if self.strict_tools else {}),
         }
 
 
@@ -121,6 +123,9 @@ def _provider_configs(provider: str, *, primary: bool, model_override: str | Non
         return [ProviderConfig(provider, model, key, base_url=base_url)] if key else []
 
     if provider == "openai_compatible":
+        strict = _value('OPENAI_COMPATIBLE_STRICT_TOOLS') or 'false'
+        if strict.lower() not in {'true', 'false'}:
+            raise ModelGatewayConfigurationError('OPENAI_COMPATIBLE_STRICT_TOOLS 必须是 true 或 false')
         thinking_mode = _value("OPENAI_COMPATIBLE_THINKING_MODE")
         if thinking_mode not in {None, "enabled", "disabled"}:
             raise ModelGatewayConfigurationError("OPENAI_COMPATIBLE_THINKING_MODE 必须是 enabled 或 disabled")
@@ -132,7 +137,8 @@ def _provider_configs(provider: str, *, primary: bool, model_override: str | Non
             raise ModelGatewayConfigurationError(
                 "OpenAI-compatible 接入必须同时配置 API Key、模型名称和 Base URL"
             )
-        return [ProviderConfig(provider, model, key, base_url=base_url, thinking_mode=thinking_mode)] if configured else []
+        return [ProviderConfig(provider, model, key, base_url=base_url, thinking_mode=thinking_mode,
+                               strict_tools=strict.lower() == 'true')] if configured else []
 
     raise ModelGatewayConfigurationError(f"不支持的模型 Provider：{provider}")
 
@@ -287,6 +293,14 @@ class RotatingChatModel:
         return self._clone([c.client.bind(response_format={'type': 'json_object'})
                             if c.config.provider in {'openai', 'openai_compatible'} else c.client
                             for c in self._candidates])
+
+    @property
+    def native_protocol(self):
+        return all(c.config.strict_tools for c in self._candidates)
+
+    def native_tools(self, declarations):
+        return self._clone([c.client.bind_tools(declarations,
+            tool_choice='auto' if c.config.thinking_mode == 'enabled' else 'required') for c in self._candidates])
 
     @staticmethod
     def _health_key(candidate: ModelCandidate) -> str:

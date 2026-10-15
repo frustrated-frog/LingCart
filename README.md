@@ -263,7 +263,8 @@ LLM_BASE_URL=https://provider.example.com/v1
 API Key 不会出现在状态数据、事件或日志元数据中。完整模板见 `.env.example`。
 
 DeepSeek Flash 使用兼容服务配置：`LLM_PROVIDER=openai_compatible`、
-`LLM_MODEL=deepseek-flash`、`LLM_BASE_URL=https://api.deepseek.com`，
+`LLM_MODEL=deepseek-flash`、`LLM_BASE_URL=https://api.deepseek.com/beta`、
+`OPENAI_COMPATIBLE_STRICT_TOOLS=true`，
 并在被 Git 忽略的本地 `.env` 中设置 `LLM_API_KEY`。
 模型名以 [DeepSeek 官方文档](https://api-docs.deepseek.com/quick_start/pricing/) 为准。
 Flash 默认开启思考模式；当前短时限工作台可设置
@@ -274,6 +275,10 @@ Flash 默认开启思考模式；当前短时限工作台可设置
 `OPENAI_COMPATIBLE_FINAL_RESPONSE_THINKING_MODE` / `OPENAI_COMPATIBLE_FINAL_RESPONSE_REASONING_EFFORT`。
 目标理解使用 `goal` 用途，后续工具决策使用 `planner`；这些设置不会改变选用的 Flash 模型。
 推理用量计入同一输出预算，模型配置和推理设置进入评测清单。
+自主决策使用官方原生严格函数调用，业务工具直接作为函数声明交给模型。
+模型可批量提出独立查询或不同目标的推荐；执行层逐项执行、核验并保存检查点。
+任一失败或用户插话会取消未执行动作，再交给模型决策。详情见
+[DeepSeek 工具调用协议](https://api-docs.deepseek.com/guides/tool_calls/)。
 `LLM_REQUEST_TIMEOUT` 控制提供方请求超时；Agent 的单次调用与总运行预算另有上限，
 调高前者不会绕过运行预算。真实自主评测使用 `eval/run_adaptive_eval.py`，
 每个样本使用独立演示数据库，结果中的 `live_verified` 表示确实完成过模型调用，

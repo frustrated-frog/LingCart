@@ -42,9 +42,9 @@ class BudgetLimits:
     @classmethod
     def adaptive(cls):
         """逐步决策、证据映射审查与复合完成共用的有界预算。"""
-        return cls(max_model_calls=16, max_tool_calls=16, max_prompt_tokens=128000,
-                   max_completion_tokens=12000, max_seconds=90, call_timeout=30,
-                   max_steps=16, max_context_chars=18000)
+        return cls(max_model_calls=16, max_tool_calls=16, max_prompt_tokens=256000,
+                   max_completion_tokens=12000, max_seconds=90, call_timeout=45,
+                   max_steps=16, max_context_chars=32000)
 
     def __post_init__(self):
         for key, value in self.__dict__.items():

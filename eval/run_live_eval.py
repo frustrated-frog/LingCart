@@ -92,14 +92,14 @@ def evaluate(dataset, *, repeats=3, split='all', execution_mode='auto', runner=N
               'execution_source': 'test_harness' if runner is not None else 'live_provider',
               'manifest': {**environment_manifest(dataset, execution_mode), 'suite': suite, 'split': split, 'repeats': repeats}, 'samples': []}
     status = readiness if readiness is not None else get_model_status()
-    report['providers'] = [{key: p.get(key) for key in ('provider', 'model', 'slot', 'custom_base_url', 'thinking_mode', 'reasoning_effort')} for p in status.get('providers', [])]
+    report['providers'] = [{key: p.get(key) for key in ('provider', 'model', 'slot', 'custom_base_url', 'thinking_mode', 'reasoning_effort', 'strict_tools')} for p in status.get('providers', [])]
     from src.model_gateway import load_gateway_config, ModelGatewayConfigurationError
     report['manifest']['purpose_models'] = {}
     for purpose in ('router', 'goal', 'planner', 'agent', 'final_response'):
         try:
             config = load_gateway_config(purpose=purpose)
             report['manifest']['purpose_models'][purpose] = [{'provider': p.provider, 'model': p.model,
-                'thinking_mode': p.thinking_mode, 'reasoning_effort': p.reasoning_effort} for p in config.providers]
+                'thinking_mode': p.thinking_mode, 'reasoning_effort': p.reasoning_effort, 'strict_tools': p.strict_tools} for p in config.providers]
         except ModelGatewayConfigurationError:
             report['manifest']['purpose_models'][purpose] = None
     if not status.get('configured') and runner is None:

@@ -54,6 +54,10 @@ through tools, not missing human intent. Do not require search results, selectio
 Equivalent descriptions/redundant faithful conditions alone do not justify rejection.
 Relevant prior HUMAN conditions remain in effect until revised; source quotes may come from human history.
 Do not demand that a follow-up repeat its established category or prior applicable conditions verbatim.
+Related outcomes share established applicable conditions unless HUMAN wording explicitly narrows scope.
+Omitting a repeated condition alone does not authorize relaxation or prove it was scoped exclusively to one outcome.
+uncertainties are advisory notes, not proof of a contradiction. Check their substance against the complete request;
+discoverable facts and optional unspecified preferences do not require clarification before tools.
 '''
 
 _BINDINGS_AUDIT_PROMPT = '''PHASE: EXECUTION MAPPING ONLY, NOT COMPLETION.
@@ -107,20 +111,46 @@ def review_request(context, state, plan, history, *, phase, _protocol_retry=0):
     if repair.get('phase') == phase:
         review_state['feedback']['audit_format_error'] = repair['message']
     engine = context.context_engine or ContextEngine(state['request'])
+    model = get_llm(purpose='goal' if phase == 'goal' else 'final_response')
+    native = getattr(model, 'native_protocol', False)
     phase_prompt = {'goal': _GOAL_AUDIT_PROMPT, 'bindings': _BINDINGS_AUDIT_PROMPT, 'completion': _COMPLETION_AUDIT_PROMPT}[phase]
     prompt = _PROMPT + phase_prompt + '\n' + json.dumps(RequestAudit.model_json_schema(), ensure_ascii=False)
+    declarations = None
+    max_chars = context.limits.max_context_chars
+    if native:
+        from src.native_protocol import audit_function, size
+        declarations = [audit_function(RequestAudit.model_json_schema(), state, history)]
+        prompt = _PROMPT.replace('Return only JSON conforming to the schema.', 'Call submit_audit exactly once; return no prose or schema.') + phase_prompt
+        max_chars -= size(declarations)
+        if max_chars < 1:
+            from src.context_budget import ContextBudgetError
+            raise ContextBudgetError()
     messages, manifest = engine.decision_messages(prompt, deepcopy(review_state),
-        plan if phase == 'completion' else TaskPlan([], []), history, max_chars=context.limits.max_context_chars)
+        plan if phase == 'completion' else TaskPlan([], []), history, max_chars=max_chars)
+    if native:
+        manifest.update(wire_schema_chars=size(declarations), wire_source_quote_catalog=True,
+                        history_omission_scope='HISTORY_ROWS_ONLY')
     # 确认偏好是辅助数据，不能把审查原始请求改写为偏好或先前的模型结论。
-    model = get_llm(purpose='goal' if phase == 'goal' else 'final_response')
-    if hasattr(model, 'json_mode'):
+    if native:
+        model = model.native_tools(declarations)
+    elif hasattr(model, 'json_mode'):
         model = model.json_mode()
     response = context.model_call(model, messages,
-        purpose='request_' + phase + '_audit', agent='request_auditor', allow_tools=False)
+        purpose='request_' + phase + '_audit', agent='request_auditor', allow_tools=False, schemas=declarations)
     try:
-        if getattr(response, 'tool_calls', []):
-            raise ValueError('Audit cannot request tools')
-        audit = RequestAudit.model_validate(json.loads(as_text(response.content)))
+        if native:
+            from src.native_protocol import one_call
+            if getattr(response, 'tool_calls', []):
+                name, payload, submission = one_call(response, {'submit_audit'})
+                context.record('native_submission', phase=phase, function=name, submission_id=submission, transport='native_function')
+            else:
+                payload = json.loads(as_text(response.content))
+                context.record('native_submission', phase=phase, function='submit_audit', submission_id=None, transport='validated_json_fallback')
+        else:
+            if getattr(response, 'tool_calls', []):
+                raise ValueError('Audit cannot request tools')
+            payload = json.loads(as_text(response.content))
+        audit = RequestAudit.model_validate(payload)
         sources = [state['request'], *(as_text(m.content) for m in history or [] if getattr(m, 'type', None) == 'human')]
         objectives = {o['id'] for o in goal['objectives']}
         constraints = set(constraint_refs(goal))

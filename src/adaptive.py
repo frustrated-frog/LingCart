@@ -118,10 +118,17 @@ def _observation(result, event):
         digest=hashlib.sha256(json.dumps(result, sort_keys=True, ensure_ascii=False).encode()).hexdigest()))
 
 
+def _discard_native_queue(context, state, reason):
+    for queued in state.get('native_queue', []):
+        context.record('native_batch_cancelled', reason=reason, **queued['submission'])
+    state['native_queue'] = []
+
+
 def _present(context, recorder, intake, state, plan, *, reason, message, error=None, success=False):
     if success:
         from src.request_audit import require_approved
         require_approved(state, plan)
+    _discard_native_queue(context, state, reason)
     plan.verification = verification(state, complete=success)
     success = plan.verification['all_goals_satisfied']
     if not success and state.get('objective_ledger'):
@@ -187,8 +194,6 @@ def _accept(context, recorder, state, plan, decision, history):
                 return
             raise AgentError('MODEL_FORMAT_ERROR', '首次决策必须包含目标及约束', retryable=False)
         validate_goal(decision.goal, state['request'], history)
-        if decision.goal.uncertainties and decision.action != 'clarify':
-            raise AgentError('MODEL_FORMAT_ERROR', '目标声明仍有用户意图歧义时应提交 clarify；目录编码待发现或可选偏好未指定不属于用户意图歧义。请重新核对原文。', retryable=False)
         if decision.action != 'clarify':
             from src.request_audit import review_request
             proposed = {**state, 'goal': decision.goal.model_dump()}
@@ -229,8 +234,6 @@ def _accept(context, recorder, state, plan, decision, history):
                                      before=before, after=deepcopy(state['constraint_bindings'])))
         recorder.record('constraint_bindings_refined', binding_revision=state['binding_revision'],
             before=before, after=state['constraint_bindings'], audit_reference=audit['reference'])
-    if state['goal']['uncertainties'] and decision.action != 'clarify':
-        raise AgentError('CLARIFICATION_REQUIRED', '存在未解决的目标歧义，必须先澄清', retryable=False)
     if decision.working_memory is not None:
         completed = {s.step_id for s in plan.steps if s.status in _DONE and s.result is not None}
         if not set(decision.working_memory.evidence_refs) <= completed:
@@ -274,7 +277,8 @@ def _accept(context, recorder, state, plan, decision, history):
     state['feedback'] = None
     _save(context, state, plan)
     recorder.record('adaptive_decision', source='model', decision=decision.model_dump(),
-                    goal_revision=state['goal_revision'], step_id=step.step_id if step else None)
+                    goal_revision=state['goal_revision'], step_id=step.step_id if step else None,
+                    native_submission=state.get('active_native_submission'))
 
 
 def _selection_step(state, plan, decision):
@@ -291,6 +295,7 @@ def _selection_step(state, plan, decision):
 
 
 def _repair(context, recorder, state, plan, error):
+    _discard_native_queue(context, state, error.code)
     state['repair_count'] = state.get('repair_count', 0) + 1
     state['model_cursor'] = context.model_cursor
     if error.code not in {'REQUEST_AUDIT_REJECTED', 'BINDING_AUDIT_REJECTED'}:
@@ -301,7 +306,7 @@ def _repair(context, recorder, state, plan, error):
             state['feedback']['instruction'] = '审查响应格式无效不代表原提案被语义否定。可重提同一目标或映射，让审查模型修正协议；不要为此改变用户原意。'
     state['pending'] = None
     _save(context, state, plan)
-    recorder.record('decision_rejected', code=error.code, repair_count=state['repair_count'])
+    recorder.record('decision_rejected', code=error.code, message=str(error), repair_count=state['repair_count'])
     if state['repair_count'] > MAX_DECISION_REPAIRS:
         raise AgentError('DECISION_REPAIR_BUDGET_EXHAUSTED', '模型决策修复次数已耗尽：' + str(error), retryable=False)
 
@@ -452,10 +457,12 @@ def _run(context, user_message, history, pending_action):
         state.setdefault('constraint_bindings', {})
         state.setdefault('binding_revision', 0)
         state.setdefault('binding_audit', None)
+        state.setdefault('native_queue', [])
         plan = _restore_plan(state['plan'])
         if revision == state['goal_revision'] and user_message != state['request']:
             raise AgentError('CHECKPOINT_CONFLICT', '恢复请求与已保存目标不一致', retryable=False)
         if revision != state['goal_revision']:
+            _discard_native_queue(context, state, 'USER_CONSTRAINT_CHANGED')
             for step in plan.steps:
                 if step.status == 'PENDING':
                     step.status = 'CANCELLED'
@@ -466,6 +473,7 @@ def _run(context, user_message, history, pending_action):
                          next_steps=None, request_audit=None, completion_audit=None,
                          constraint_bindings={}, binding_revision=0, binding_audit=None,
                          audit_format_feedback=None,
+                         native_queue=[], active_native_submission=None,
                          version=state['version'] + 1)
             plan.goals = []
             plan.verification = {}
@@ -477,6 +485,7 @@ def _run(context, user_message, history, pending_action):
                      goal=None, next_steps=None, working_memory=None, journal=[], pending=None,
                      objective_ledger=[], feedback=None, repair_count=0, request_audit=None,
                      completion_audit=None, constraint_bindings={}, binding_revision=0, binding_audit=None,
+                     native_queue=[], active_native_submission=None,
                      model_cursor=context.model_cursor)
         _save(context, state, plan)
         recorder.record('plan_created', source='adaptive_model', plan=plan.payload())
@@ -488,7 +497,12 @@ def _run(context, user_message, history, pending_action):
             context.require()
             if state['pending'] is None:
                 try:
-                    decision = decide(context, state, plan, history)
+                    if state.get('native_queue'):
+                        queued = state['native_queue'].pop(0)
+                        decision = Decision.model_validate(queued['decision'])
+                        state['active_native_submission'] = queued['submission']
+                    else:
+                        decision = decide(context, state, plan, history)
                     # 插话也使审查中的旧目标失效，执行任何动作前再次检查。
                     apply_controls(context)
                     _accept(context, recorder, state, plan, decision, history)
@@ -502,6 +516,7 @@ def _run(context, user_message, history, pending_action):
                         raise
                     # An index is not sufficient evidence. Let the model choose
                     # which original records to inspect, within its remaining budget.
+                    _discard_native_queue(context, state, error.code)
                     state['feedback'] = dict(code=error.code, message=str(error))
                     state['model_cursor'] = context.model_cursor
                     _save(context, state, plan)
@@ -599,6 +614,8 @@ def _run(context, user_message, history, pending_action):
                     step.error = dict(code=error.code, message=str(error))
                     state['feedback'] = dict(step_id=step.step_id, **step.error)
             state['pending'] = None
+            if state.get('feedback') and state['feedback'].get('code') != 'OBJECTIVES_REQUIRE_COMPLETION':
+                _discard_native_queue(context, state, state['feedback'].get('code', 'OBSERVATION_CHANGED'))
             _save(context, state, plan)
             if step:
                 recorder.record('step_completed', step_id=step.step_id, specialist='shopping', status=step.status)
