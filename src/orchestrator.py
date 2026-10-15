@@ -139,12 +139,12 @@ def _escalate(run_id, request, reason, terminal_reason, usage=None):
     executor = ToolExecutor({"escalate_to_human": escalate_to_human}, recorder, max_calls=1)
     args = {"reason": reason, "context": request}
     result, event = executor.execute("escalate_to_human", args)
-    recorder.record("terminal", status="ESCALATED", reason=terminal_reason)
-    return dict(run_id=run_id, reply=f"已转交人工客服（工单 #{result['ticket_id']}），处理进展会在后续通知你。",
+    recorder.record("terminal", status="WAITING_HUMAN", reason=terminal_reason)
+    return dict(run_id=run_id, reply=f"人工请求 #{result['ticket_id']} 已保存到本地演示队列。尚未接入真人客服或通知服务，请勿视为已经转交。",
                 trace=[dict(run_id=run_id, agent="escalate", tool="escalate_to_human", args=args,
                             result=result, status=event["status"], duration_ms=event["duration_ms"])],
                 events=recorder.events, agent="escalate", route="ESCALATE", usage=usage or {},
-                status="ESCALATED", terminal_reason=terminal_reason, pending_action=None, error=None)
+                status="WAITING_HUMAN", terminal_reason=terminal_reason, pending_action=None, error=None)
 
 
 def escalate_node(state: SupportState) -> dict:

@@ -295,7 +295,7 @@ def orders_page():
 def tasks_page():
     page_header("任务记录", "每一次处理都有记录，查看结果或重新核验当前业务状态。")
     runs = list_runs()
-    status = st.selectbox("处理状态", ["全部", "SUCCEEDED", "PARTIAL", "INTERRUPTED", "RUNNING", "WAITING_APPROVAL", "WAITING_CLARIFICATION", "FAILED", "ESCALATED", "CANCELLED"], format_func=lambda v: STATUSES.get(v, v), key="task_status")
+    status = st.selectbox("处理状态", ["全部", "SUCCEEDED", "PARTIAL", "INTERRUPTED", "RUNNING", "WAITING_APPROVAL", "WAITING_CLARIFICATION", "FAILED", "WAITING_HUMAN", "ESCALATED", "CANCELLED"], format_func=lambda v: STATUSES.get(v, v), key="task_status")
     filtered = [run for run in runs if status == "全部" or run["result"].get("status") == status]
     st.caption("演示工作空间最近 100 次真实执行记录；历史中的等待状态表示当次运行状态。")
     if not filtered:
@@ -339,6 +339,8 @@ def lab_page():
         render_run(run["result"], detailed=True)
     with st.expander("任务理解结果"):
         st.json(run["result"].get("intake", {}))
+    with st.expander('原始需求与最终证据的独立审查'):
+        st.json({'需求审查': run['result'].get('request_audit'), '完成审查': run['result'].get('completion_audit')})
     saved = RunStore().run(chosen)
     if saved:
         with st.expander('结构化上下文与证据引用'):

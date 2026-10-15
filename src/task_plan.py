@@ -87,7 +87,7 @@ def _facts(step):
     if step.status in {"FAILED", "SKIPPED"}:
         return f"{step.specialist} 步骤未完成：{(step.error or {}).get('message', '前置查询未完成')}"
     if name == "answer_faq":
-        return str(result)
+        return result['answer']
     if name == "get_order_details":
         return f"订单 {order_id} 的商品是 {result['item']}，金额 ¥{result['amount']:.2f}，当前{_STATUS_ZH.get(result['status'], result['status'])}。"
     if name == "get_order_status":
@@ -120,7 +120,13 @@ def verify_observation(step):
         "get_payment_status": {"order_id", "status", "amount", "method"},
         "search_products": {"products", "total"}, "compare_products": {"products"},
     }
-    valid = isinstance(result, str) and bool(result.strip()) if name == "answer_faq" else isinstance(result, dict) and required.get(name, set()) <= result.keys()
+    valid = isinstance(result, dict) and required.get(name, set()) <= result.keys()
+    if name == 'answer_faq':
+        if not isinstance(result, dict) or result.get('status') != 'ANSWERED':
+            raise AgentError('INSUFFICIENT_POLICY_EVIDENCE', '政策没有回答当前问题，不能标记完成', retryable=False)
+        valid = (result.get('question') == step.args.get('question') and bool(result.get('answer'))
+                 and isinstance(result.get('policies'), list) and bool(result['policies'])
+                 and all(isinstance(p, dict) and all(p.get(k) for k in ('policy_id', 'version', 'text', 'source')) for p in result['policies']))
     if valid and step.args.get("order_id") is not None:
         valid = result.get("order_id") == step.args["order_id"]
     if valid and name in {"get_order_status", "get_order_details", "track_shipment"}:

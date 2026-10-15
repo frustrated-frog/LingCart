@@ -189,3 +189,13 @@ class RunControl(Base):
     run_id: Mapped[str] = mapped_column(ForeignKey('agent_runs.run_id'), primary_key=True)
     revision: Mapped[int] = mapped_column(Integer, default=0)
     closed: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
+class SupportTicket(Base):
+    __tablename__ = 'support_tickets'
+    ticket_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    request_key: Mapped[str] = mapped_column(String(64), unique=True)
+    reason: Mapped[str] = mapped_column(Text)
+    context: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(32))
+    created_at: Mapped[datetime] = mapped_column(DateTime)

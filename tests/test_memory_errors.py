@@ -55,7 +55,7 @@ def test_call_with_retry_escalates_after_exhausting_attempts():
         escalate_context="test message",
     )
     assert result is None
-    assert escalation["escalated"] is True
+    assert escalation['escalated'] is False and escalation['mode'] == 'DEMO'
     assert "ticket_id" in escalation
     assert attempts["count"] == 2
 

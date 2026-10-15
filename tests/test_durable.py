@@ -258,7 +258,8 @@ def test_structured_intake_clarification_survives_service_restart(database, monk
     assert RunStore().conversation("model-slots")["state"]["clarification"]["missing_slots"] == ["order_id"]
     tools.configure_db(get_engine(f"sqlite:///{database}"))
     second = run_conversation("1002", "model-slots")
-    assert second["status"] == "SUCCEEDED"
+    assert second["status"] == "PARTIAL"
+    assert second['terminal_reason'] == 'INSUFFICIENT_POLICY_EVIDENCE'
     assert {entry["tool"] for entry in second["trace"]} == {"get_order_status", "answer_faq"}
 
 

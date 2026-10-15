@@ -242,6 +242,16 @@ def _run_loop(agent_name, system_prompt, agent_tools, user_message, history, max
         errors.append({"code": reason, "message": reply, "retryable": False})
     if not reply:
         reply = _serialize_tool_result(successes[-1]["result"]) if successes else "任务没有产生可验证的结果。"
+    for entry in trace:
+        if entry['tool'] == 'answer_faq':
+            from src.task_plan import TaskStep, verify_observation
+            try:
+                verify_observation(TaskStep('faq-check', agent_name, 'answer_faq', entry['args'], result=entry['result']))
+            except AgentError as error:
+                status, reason = 'WAITING_CLARIFICATION', error.code
+                reply = '当前演示政策没有足够依据回答该问题，需要补充政策或由人工核实；问题尚未解决。'
+                errors.append(dict(code=error.code, message=str(error), retryable=False))
+                break
     recorder.record("terminal", status=status, reason=reason, error=errors[-1] if errors else None)
     return dict(run_id=run_id, reply=reply, trace=trace, events=list(context.events[event_start:]), messages=messages,
                 agent=agent_name, usage=usage, status=status, terminal_reason=reason,

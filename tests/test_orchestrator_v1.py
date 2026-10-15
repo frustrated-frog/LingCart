@@ -105,7 +105,7 @@ def test_missing_order_id_clarifies_instead_of_escalating():
 
 def test_explicit_human_request_creates_a_traceable_ticket():
     result = orchestrator.run_orchestrator("请直接转人工客服")
-    assert result["status"] == "ESCALATED"
+    assert result["status"] == "WAITING_HUMAN"
     assert result["terminal_reason"] == "USER_REQUESTED_ESCALATION"
     assert result["trace"][0]["tool"] == "escalate_to_human"
     assert result["trace"][0]["result"]["ticket_id"]

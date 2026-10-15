@@ -271,27 +271,36 @@ _FAQ_ZH = {
 }
 
 
-def answer_faq(question: str) -> str:
-    """Answer a general policy question (shipping, returns, cancellations, refunds, contact info)."""
+def answer_faq(question: str) -> dict:
+    """检索演示政策，返回有版本的依据；NOT_FOUND 不代表问题已经解决。"""
     q = question.lower()
+    policies = []
+    ids = {'配送': 'shipping', '发货': 'shipping', '退货': 'return', '取消': 'cancel', '退款': 'refund', '联系': 'contact'}
     for keyword, answer in _FAQ_ZH.items():
-        if keyword in question:
-            return answer
-    for keyword, answer in _FAQ.items():
-        if keyword in q:
-            return answer
-    return (
-        "I don't have a specific policy answer for that. "
-        "You can reach human support at support@example.com for more detail."
-    )
+        if keyword in question and ids[keyword] not in [p['policy_id'] for p in policies]:
+            policies.append(dict(policy_id=ids[keyword], version='demo-v1', text=answer, source='DEMO_POLICY'))
+    if not policies:
+        for keyword, answer in _FAQ.items():
+            if keyword in q:
+                policies.append(dict(policy_id=keyword, version='demo-v1', text=answer, source='DEMO_POLICY'))
+    return dict(status='ANSWERED' if policies else 'NOT_FOUND', question=question, policies=policies,
+                answer='\n'.join(p['text'] for p in policies) if policies else '本地演示政策没有相关依据，当前问题尚未解决。',
+                data_source='DEMO_POLICY')
 
 
 def escalate_to_human(reason: str, context: str) -> dict:
     """Escalate the conversation to a human agent when the request can't be resolved automatically."""
-    ticket_id = uuid.uuid4().hex[:8]
-    logger.warning("ESCALATION ticket=%s reason=%s context=%s", ticket_id, reason, context)
-    return {
-        "escalated": True,
-        "ticket_id": ticket_id,
-        "message": f"This has been escalated to a human agent (ticket #{ticket_id}). They'll follow up shortly.",
-    }
+    from src.backend.db import SupportTicket
+    from src.runtime import current_runtime
+    runtime = current_runtime()
+    request_key = runtime.run_id if runtime else uuid.uuid4().hex
+    with _session() as session:
+        ticket = session.scalar(select(SupportTicket).where(SupportTicket.request_key == request_key))
+        if ticket is None:
+            from datetime import UTC, datetime
+            ticket = SupportTicket(ticket_id=uuid.uuid4().hex, request_key=request_key, reason=reason,
+                context=context, status='QUEUED', created_at=datetime.now(UTC).replace(tzinfo=None))
+            session.add(ticket)
+            _commit(session)
+        return dict(escalated=False, ticket_id=ticket.ticket_id, status=ticket.status, mode='DEMO',
+                    delivered=False, message='人工请求已保存到本地演示队列；尚未接入真人客服或通知服务。')

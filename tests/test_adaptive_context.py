@@ -73,3 +73,16 @@ def test_invalid_page_or_foreign_reference_cannot_read(reference, offset, limit)
     _, plan = fixture()
     with pytest.raises(AgentError):
         ContextEngine.read_evidence(plan, reference, offset=offset, limit=limit)
+
+
+def test_long_history_is_evicted_before_failing_required_context():
+    from langchain_core.messages import HumanMessage, AIMessage
+    state, plan = fixture()
+    messages, manifest = ContextEngine(state['request']).decision_messages('system', state, plan,
+        [HumanMessage(content='很久以前的对话' * 5000), AIMessage(content='旧回复' * 5000),
+         HumanMessage(content='最近的短消息')], max_chars=1800)
+    payload = json.loads(messages[-1].content)
+    assert payload['request'] == state['request'] and payload['goal'] == state['goal']
+    assert payload['history'][-1]['content'] == '最近的短消息'
+    assert manifest['history_total'] == 3
+    assert manifest['omitted_history_indices'] == [0, 1]

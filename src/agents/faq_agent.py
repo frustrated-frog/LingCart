@@ -5,7 +5,7 @@ from src.agents.base import run_tool_agent
 
 
 @tool
-def answer_faq(question: str) -> str:
+def answer_faq(question: str) -> dict:
     """Answer a general policy question (shipping, returns, cancellations, refunds, contact info)."""
     return backend_tools.answer_faq(question)
 

@@ -83,15 +83,19 @@ def test_process_payment_refuses_when_already_paid():
 
 def test_answer_faq_shipping():
     answer = tools.answer_faq("How long does shipping take?")
-    assert "3-5 business days" in answer
+    assert answer['status'] == 'ANSWERED'
+    assert "3-5 business days" in answer['answer']
+    assert answer['policies'][0]['policy_id'] == 'shipping'
 
 
 def test_answer_faq_fallback():
     answer = tools.answer_faq("What is the meaning of life?")
-    assert "support@example.com" in answer
+    assert answer['status'] == 'NOT_FOUND'
+    assert not answer['policies']
 
 
 def test_escalate_to_human():
     result = tools.escalate_to_human("agent could not resolve", "user asked about order 9999")
-    assert result["escalated"] is True
+    assert result['escalated'] is False and result['delivered'] is False
+    assert result['mode'] == 'DEMO'
     assert "ticket_id" in result

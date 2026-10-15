@@ -103,7 +103,8 @@ class ContextEngine:
             objective_ledger=state.get('objective_ledger', []),
             observations=[overview(s) for s in plan.steps],
             history=[{'role': getattr(m, 'type', 'unknown'), 'content': as_text(m.content)} for m in history or []],
-            context_manifest={'archived_refs': [], 'policy': 'FULL_RECORDS_OR_REFERENCES'})
+            context_manifest={'archived_refs': [], 'policy': 'FULL_RECORDS_OR_REFERENCES',
+                              'history_total': len(history or []), 'omitted_history_indices': []})
 
         def messages():
             payload['context_manifest']['archived_refs'] = [o['step_id'] for o in payload['observations']
@@ -115,6 +116,11 @@ class ContextEngine:
             # size here, without injecting them twice into the returned messages.
             return sum(_text_length(m) for m in self.model_messages(messages())) <= max_chars
 
+        # 历史消息按完整消息从旧到新淘汰；当前请求、目标及约束不截断。
+        while not fits() and payload['history']:
+            index = len(history or []) - len(payload['history'])
+            payload['history'].pop(0)
+            payload['context_manifest']['omitted_history_indices'].append(index)
         if not fits():
             raise ContextBudgetError()
         # Latest observation has priority, then older records if they fit intact.

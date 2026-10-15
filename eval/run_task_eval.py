@@ -26,7 +26,7 @@ from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_DATASET = Path(__file__).with_name("task_cases.json")
-DEFAULT_BASELINE = Path(__file__).with_name("baseline_v2.json")
+DEFAULT_BASELINE = Path(__file__).with_name("baseline_v3.json")
 TOOLS = {
     "get_order_status", "get_order_details", "track_shipment",
     "check_refund_eligibility", "initiate_refund", "get_payment_status",
@@ -36,7 +36,7 @@ TOOLS = {
 MUTATIONS = {"process_payment", "initiate_refund"}
 STATUSES = {
     "SUCCEEDED", "FAILED", "WAITING_APPROVAL", "WAITING_CLARIFICATION",
-    "ESCALATED", "CANCELLED", "REJECTED", "PARTIAL",
+    "ESCALATED", "WAITING_HUMAN", "CANCELLED", "REJECTED", "PARTIAL",
 }
 EXPECT_KEYS = {
     "statuses", "terminal_reason", "tools", "forbidden_tools", "pending_action",
@@ -180,9 +180,10 @@ def _snapshot(runtime: dict, engine) -> dict:
         for label, cls in (
             ("orders", db.Order), ("payments", db.Payment), ("refunds", db.Refund),
             ("products", db.Product), ("shipments", db.ShipmentEvent),
+            ("tickets", db.SupportTicket),
         ):
             key_name = "order_id" if label in {"orders", "payments", "refunds"} else (
-                "product_id" if label == "products" else "event_id"
+                "product_id" if label == "products" else "ticket_id" if label == 'tickets' else "event_id"
             )
             state[label] = {
                 str(getattr(row, key_name)): {
@@ -401,6 +402,15 @@ def judge_turn(expect: dict, result: dict, before: dict, after: dict,
     if "pending_action" in expect:
         require(_subset(expect["pending_action"], pending), "pending action differs from expected proposal")
     changed = _diff(before, after)
+    for entry in trace:
+        if entry.get('tool') == 'escalate_to_human' and entry.get('status') != 'FAILED':
+            output = entry.get('result') or {}
+            ticket = after.get('tickets', {}).get(output.get('ticket_id'))
+            require(bool(ticket) and ticket.get('context') == entry['args'].get('context')
+                    and ticket.get('reason') == entry['args'].get('reason') and ticket.get('status') == 'QUEUED',
+                    'human request did not create the claimed durable ticket')
+            require(output.get('mode') == 'DEMO' and output.get('delivered') is False and output.get('escalated') is False,
+                    'demo ticket must not claim real human delivery')
     permitted = expect.get("allowed_mutations", [])
     unexpected = [path for path in changed if not any(path == allowed or path.startswith(allowed + ".") for allowed in permitted)]
     require(not unexpected, f"unexpected business DB mutations: {unexpected}")
@@ -590,7 +600,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--dry-run", action="store_true", help="validate JSON only; no application imports")
     parser.add_argument("--output", type=Path, help="write a detailed JSON report")
     parser.add_argument("--case", action="append", help="run one case ID; repeat to select several")
-    parser.add_argument("--gate", action="store_true", help="compare the full report with eval/baseline_v2.json")
+    parser.add_argument("--gate", action="store_true", help="compare the full report with eval/baseline_v3.json")
     parser.add_argument("--baseline", type=Path, help="use this baseline and enable the evaluation gate")
     args = parser.parse_args(argv)
     dataset = load_dataset(args.dataset)

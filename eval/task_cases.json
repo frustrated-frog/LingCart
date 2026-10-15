@@ -943,13 +943,16 @@
           "message": "请直接转人工客服",
           "expect": {
             "statuses": [
-              "ESCALATED"
+              "WAITING_HUMAN"
             ],
             "tools": [
               {
                 "name": "escalate_to_human",
                 "result": {
-                  "escalated": true
+                  "escalated": false,
+                  "mode": "DEMO",
+                  "delivered": false,
+                  "status": "QUEUED"
                 }
               }
             ],
@@ -959,7 +962,10 @@
             ],
             "pending_present": false,
             "max_model_invocations": 0,
-            "terminal_reason": "USER_REQUESTED_ESCALATION"
+            "terminal_reason": "USER_REQUESTED_ESCALATION",
+            "allowed_mutations": [
+              "tickets"
+            ]
           }
         }
       ]
@@ -974,13 +980,16 @@
           "message": "I want to talk to a human agent.",
           "expect": {
             "statuses": [
-              "ESCALATED"
+              "WAITING_HUMAN"
             ],
             "tools": [
               {
                 "name": "escalate_to_human",
                 "result": {
-                  "escalated": true
+                  "escalated": false,
+                  "mode": "DEMO",
+                  "delivered": false,
+                  "status": "QUEUED"
                 }
               }
             ],
@@ -990,7 +999,10 @@
             ],
             "pending_present": false,
             "max_model_invocations": 0,
-            "terminal_reason": "USER_REQUESTED_ESCALATION"
+            "terminal_reason": "USER_REQUESTED_ESCALATION",
+            "allowed_mutations": [
+              "tickets"
+            ]
           }
         }
       ]
@@ -1005,13 +1017,16 @@
           "message": "订单 1003 我不想自动支付，请转人工客服",
           "expect": {
             "statuses": [
-              "ESCALATED"
+              "WAITING_HUMAN"
             ],
             "tools": [
               {
                 "name": "escalate_to_human",
                 "result": {
-                  "escalated": true
+                  "escalated": false,
+                  "mode": "DEMO",
+                  "delivered": false,
+                  "status": "QUEUED"
                 }
               }
             ],
@@ -1024,7 +1039,10 @@
             "terminal_reason": "USER_REQUESTED_ESCALATION",
             "db": {
               "payments.1003.status": "pending"
-            }
+            },
+            "allowed_mutations": [
+              "tickets"
+            ]
           }
         }
       ]

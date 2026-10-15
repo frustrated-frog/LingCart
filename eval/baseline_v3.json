@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "name": "baseline-v3",
+  "description": "保留V1/V2；人工请求必须明确DEMO且delivered=false，FAQ完成必须有版本化政策证据。",
+  "dataset_sha256": "66a1286cad5759883a7f764f9305f5075acd1965bfccec297491d16f422819f8",
+  "expected": {
+    "cases_passed": 60,
+    "cases_total": 60,
+    "turns_passed": 71,
+    "turns_total": 71
+  },
+  "maximums": {
+    "model_invocations": 12,
+    "tool_calls": 73,
+    "physical_tool_calls": 74
+  }
+}

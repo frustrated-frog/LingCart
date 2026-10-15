@@ -88,7 +88,8 @@ def test_structured_model_plan_dispatches_multiple_specialists(monkeypatch):
             ]}))
     monkeypatch.setattr(planner, "get_llm", lambda **_kwargs: PlannerModel())
     result = run_orchestrator("订单 1002 的包裹怎么样，另外讲讲售后保障")
-    assert result["status"] == "SUCCEEDED"
+    assert result["status"] == "PARTIAL"
+    assert result["terminal_reason"] == "INSUFFICIENT_POLICY_EVIDENCE"
     assert {t["agent"] for t in result["trace"]} == {"order", "faq"}
     assert result["budget"]["consumed"]["model_calls"] == 1
     assert any(e["type"] == "verification" for e in result["events"])

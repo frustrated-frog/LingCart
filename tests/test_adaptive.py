@@ -26,6 +26,7 @@ def database(tmp_path, monkeypatch):
     def unavailable(**kwargs):
         raise AgentError('MODEL_UNAVAILABLE', '未配置模型', retryable=False)
     monkeypatch.setattr('src.adaptive_decision.get_llm', unavailable)
+    monkeypatch.setattr('src.request_audit.get_llm', unavailable)
     yield
     engine.dispose()
 
@@ -69,6 +70,22 @@ class Script:
 def model(monkeypatch, *decisions):
     script = Script(decisions)
     monkeypatch.setattr('src.adaptive_decision.get_llm', lambda **kwargs: script)
+    class AuditModel:
+        def invoke(self, messages):
+            payload = json.loads(messages[-1].content)
+            current = payload['goal']
+            requirements = [dict(source_quote=o['source_quote'], interpretation=o['description'],
+                objective_ids=[o['id']], constraint_refs=[], status='COVERED') for o in current['objectives']]
+            for i, c in enumerate(current['hard_constraints']):
+                requirements.append(dict(source_quote=c['source_quote'], interpretation=c['description'],
+                    objective_ids=[o['id'] for o in current['objectives']], constraint_refs=[f'global:{i}'], status='COVERED'))
+            for o in current['objectives']:
+                for i, c in enumerate(o['hard_constraints']):
+                    requirements.append(dict(source_quote=c['source_quote'], interpretation=c['description'],
+                        objective_ids=[o['id']], constraint_refs=[f"objective:{o['id']}:{i}"], status='COVERED'))
+            return AIMessage(content=json.dumps(dict(verdict='APPROVED', requirements=requirements, issues=[])),
+                usage_metadata={'input_tokens': 100, 'output_tokens': 80, 'total_tokens': 180})
+    monkeypatch.setattr('src.request_audit.get_llm', lambda **kwargs: AuditModel())
     return script
 
 
@@ -107,7 +124,7 @@ def test_model_decides_after_each_observation_and_can_choose_more_expensive(monk
     script = model(monkeypatch, search(first=True), compare, lambda p: recommendation(p, 1))
     result = run_adaptive('推荐预算500的耳机')
     assert result['status'] == 'SUCCEEDED', result
-    assert result['budget']['consumed']['model_calls'] == 3
+    assert result['budget']['consumed']['model_calls'] == len(script.inputs) + sum(e['type'] == 'request_audited' for e in result['events'])
     assert [t['tool'] for t in result['trace']] == ['search_products', 'compare_products', 'search_products']
     assert selected(result)['price'] > script.inputs[1]['observations'][0]['result']['products'][0]['price']
     assert script.inputs[2]['observations'][-1]['tool'] == 'compare_products'
@@ -122,7 +139,7 @@ def test_model_can_change_query_after_empty_search_without_forced_compare(monkey
     assert result['status'] == 'SUCCEEDED', result
     assert script.inputs[1]['observations'][0]['result']['products'] == []
     assert [t['tool'] for t in result['trace']] == ['search_products'] * 3
-    assert result['budget']['consumed']['model_calls'] == 4
+    assert result['budget']['consumed']['model_calls'] == 6
 
 
 def test_negative_scope_is_model_supplied_without_substring_expansion(monkeypatch):
@@ -292,7 +309,7 @@ def test_resume_replays_committed_observation_but_refreshes_recommendation(monke
     assert result['trace'][0]['status'] == 'REUSED'
     assert script.inputs[-1]['observations'][-1]['result']['products'][0]['price'] == 9999
     assert len(script.inputs) == 3  # Initial decision wasn't rerun.
-    assert result['budget']['consumed']['model_calls'] == 3
+    assert result['budget']['consumed']['model_calls'] == len(script.inputs) + sum(e['type'] == 'request_audited' for e in result['events'])
 
 
 def test_steering_reinterprets_goal_in_model_and_keeps_previous_evidence(monkeypatch):
@@ -504,7 +521,7 @@ def test_index_only_recommendation_is_rejected_then_model_reads_evidence(monkeyp
     model(monkeypatch, large_search(), premature, repair, recommendation)
     result = run_adaptive('推荐预算500的耳机', limits=BudgetLimits(max_context_chars=9000))
     assert result['status'] == 'SUCCEEDED', result
-    assert result['budget']['consumed']['model_calls'] == 4
+    assert result['budget']['consumed']['model_calls'] == 6
     assert len([s for s in result['plan']['steps'] if s['tool'] == 'select_product']) == 1
 
 
@@ -733,10 +750,10 @@ def test_objective_contract_rejects_missing_or_ungrounded_goals(monkeypatch, mut
         first['goal']['objectives'].append(first['goal']['objectives'][0])
     else:
         first['goal']['objectives'][1]['order_id'] = 7777
-    model(monkeypatch, first)
+    model(monkeypatch, first, first, first)
     result = run_adaptive(COMPOUND_REQUEST)
     assert result['status'] == 'FAILED', result
-    assert result['terminal_reason'] == ('UNGROUNDED_GOAL' if mutation == 'invented_order' else 'MODEL_FORMAT_ERROR')
+    assert result['terminal_reason'] == ('UNGROUNDED_GOAL' if mutation == 'invented_order' else 'DECISION_REPAIR_BUDGET_EXHAUSTED')
     assert not result['trace']
 
 
@@ -851,3 +868,163 @@ def test_old_goal_checkpoint_cannot_skip_new_objective_contract():
         result = run_adaptive('推荐预算500的耳机')
     assert result['terminal_reason'] == 'ADAPTIVE_CHECKPOINT_INCOMPATIBLE'
     assert not result['autonomous_executed'] and not result['trace']
+
+
+def audit_sequence(monkeypatch, *responses):
+    import src.request_audit as audit
+    fallback = audit.get_llm()
+    pending = iter(responses)
+    seen = []
+    class Auditor:
+        def invoke(self, messages):
+            payload = json.loads(messages[-1].content)
+            seen.append(payload)
+            reply = next(pending, None)
+            if reply is None:
+                return fallback.invoke(messages)
+            reply = reply(payload) if callable(reply) else reply
+            return AIMessage(content=json.dumps(reply, ensure_ascii=False),
+                usage_metadata={'input_tokens': 100, 'output_tokens': 80, 'total_tokens': 180})
+    monkeypatch.setattr(audit, 'get_llm', lambda **kwargs: Auditor())
+    return seen
+
+
+def test_independent_audit_catches_initially_omitted_order_before_tools(monkeypatch):
+    corrected = compound_search()
+    script = model(monkeypatch, search(first=True), corrected, order_query(),
+        lambda p: recommendation(p, ref='step-1'), complete(('shopping', ['step-3']), ('order', ['step-2'])))
+    seen = audit_sequence(monkeypatch, dict(verdict='REVISE', issues=['漏掉用户要求的订单1001状态查询'], requirements=[
+        dict(source_quote='订单1001', interpretation='需要另一个订单状态目标', objective_ids=[], constraint_refs=[], status='MISSING')]))
+    result = run_adaptive(COMPOUND_REQUEST)
+    assert result['status'] == 'SUCCEEDED', result
+    assert script.inputs[1]['feedback']['code'] == 'REQUEST_AUDIT_REJECTED'
+    assert len([e for e in result['events'] if e['type'] == 'tool_call' and e['tool'] == 'search_products']) == 3
+    assert result['request_audit']['verdict'] == 'APPROVED'
+    assert result['completion_audit']['verdict'] == 'APPROVED'
+    assert seen[0]['request'] == COMPOUND_REQUEST
+    assert any(t['tool'] == 'get_order_status' for t in result['trace'])
+
+
+def test_independent_audit_rejects_reversed_negation_then_model_corrects(monkeypatch):
+    wrong = search(first=True)
+    wrong['goal']['hard_constraints'].append(dict(description='必须主动降噪', source_quote='不要主动降噪',
+        field='specs.降噪', op='contains', value='主动降噪'))
+    corrected = deepcopy(wrong)
+    corrected['goal']['hard_constraints'][-1].update(description='排除主动降噪', op='not_contains')
+    model(monkeypatch, wrong, corrected, recommendation)
+    audit_sequence(monkeypatch, dict(verdict='REVISE', issues=['否定极性理解反了，应排除主动降噪'], requirements=[
+        dict(source_quote='不要主动降噪', interpretation='排除主动降噪', objective_ids=['shopping'],
+             constraint_refs=['global:1'], status='MISINTERPRETED')]))
+    result = run_adaptive('推荐预算500的耳机，不要主动降噪')
+    assert result['status'] == 'SUCCEEDED', result
+    assert selected(result)['specs']['降噪'] != '主动降噪'
+    assert result['plan']['goal']['hard_constraints'][-1]['op'] == 'not_contains'
+    assert len([t for t in result['trace'] if t['tool'] == 'search_products']) == 2
+
+
+def test_model_can_repair_protocol_error_without_losing_budget(monkeypatch):
+    def corrected(payload):
+        assert payload['feedback']['code'] == 'MODEL_FORMAT_ERROR'
+        return search(first=True)
+    model(monkeypatch, {'action': 'invented-action'}, corrected, recommendation)
+    result = run_adaptive('推荐预算500的耳机')
+    assert result['status'] == 'SUCCEEDED', result
+    assert result['budget']['consumed']['model_calls'] == 5
+    assert sum(e['type'] == 'decision_rejected' for e in result['events']) == 1
+
+
+def test_malformed_auditor_response_never_falls_back_to_approval(monkeypatch):
+    model(monkeypatch, search(first=True), search(first=True), search(first=True))
+    audit_sequence(monkeypatch, {}, {}, {})
+    result = run_adaptive('推荐预算500的耳机')
+    assert result['status'] == 'FAILED' and not result['trace']
+    assert result['terminal_reason'] == 'DECISION_REPAIR_BUDGET_EXHAUSTED'
+    assert result.get('request_audit') is None
+
+
+def test_final_semantic_rejection_returns_feedback_instead_of_success(monkeypatch):
+    def ask(payload):
+        assert payload['feedback']['code'] == 'COMPLETION_SEMANTIC_REJECTED'
+        return clarification()
+    model(monkeypatch, search(first=True), recommendation, ask)
+    # 初审通过，最终审查发现证据不足；不能让工具的成功代替用户需求完成。
+    audit_sequence(monkeypatch, None, dict(verdict='CLARIFY', issues=['现有证据未说明用户关心的佩戴取舍'], requirements=[
+        dict(source_quote='耳机', interpretation='需要说明选购取舍', objective_ids=['shopping'], constraint_refs=[], status='UNCERTAIN')]))
+    result = run_adaptive('推荐预算500的耳机')
+    assert result['status'] == 'WAITING_CLARIFICATION', result
+    assert not result['plan']['verification']['all_goals_satisfied']
+    assert result['completion_audit']['verdict'] == 'CLARIFY'
+
+
+def test_unknown_invoice_policy_cannot_complete_an_objective(monkeypatch):
+    first = search(first=True)
+    question = '能否开具增值税专用发票'
+    first['goal']['objectives'].append(dict(id='invoice', description=question, source_quote=question,
+                                          kind='answer_faq', question=question))
+    script = model(monkeypatch, first,
+        dict(action='tool', reason='检索发票政策', tool='answer_faq', args={'question': question}),
+        lambda p: recommendation(p, ref='step-1'),
+        complete(('shopping', ['step-3']), ('invoice', ['step-2'])), clarification)
+    result = run_adaptive('推荐预算500的耳机，' + question)
+    assert result['status'] == 'WAITING_CLARIFICATION'
+    assert not result['plan']['verification']['all_goals_satisfied']
+    assert script.inputs[-1]['feedback']['failures'] == [dict(objective_id='invoice', code='EVIDENCE_NOT_SUCCESSFUL')]
+
+
+def test_tool_parameter_repair_does_not_execute_the_invalid_call(monkeypatch):
+    first = search(first=True)
+    first['args']['unexpected'] = '不得传入工具'
+    def correction(payload):
+        assert payload['feedback']['code'] == 'INVALID_TOOL_ARGUMENTS'
+        return search()
+    model(monkeypatch, first, correction, recommendation)
+    result = run_adaptive('推荐预算500的耳机')
+    assert result['status'] == 'SUCCEEDED'
+    assert len(result['trace']) == 2
+    assert all('unexpected' not in t['args'] for t in result['trace'])
+
+
+def test_audit_must_account_for_every_hard_predicate(monkeypatch):
+    model(monkeypatch, search(first=True), search(first=True), search(first=True))
+    incomplete = dict(verdict='APPROVED', issues=[], requirements=[dict(source_quote='耳机', interpretation='推荐耳机',
+                        objective_ids=['shopping'], constraint_refs=[], status='COVERED')])
+    audit_sequence(monkeypatch, incomplete, incomplete, incomplete)
+    result = run_adaptive('推荐预算500的耳机')
+    assert result['status'] == 'FAILED' and not result['trace']
+    assert result['terminal_reason'] == 'DECISION_REPAIR_BUDGET_EXHAUSTED'
+
+
+def test_steering_during_request_audit_prevents_old_action(monkeypatch):
+    from src.session_control import ControlStore
+    revised = search(max_price=200)
+    revised['goal'] = goal(hard_constraints=[dict(description='新预算200', source_quote='预算改为200', field='price',op='lte',value=200)])
+    model(monkeypatch, search(first=True, max_price=500), revised, recommendation)
+    def steer_in_audit(payload):
+        store=ControlStore()
+        run=store.conversation('audit-steer')['active_run_id']
+        store.enqueue('audit-steer',run,'STEER',message='预算改为200',command_id='audit-steer-command',expected_revision=0)
+        return dict(verdict='APPROVED', issues=[], requirements=[dict(source_quote='预算500',interpretation='预算500元推荐耳机',
+            objective_ids=['shopping'],constraint_refs=['global:0'],status='COVERED')])
+    audit_sequence(monkeypatch, steer_in_audit)
+    result=run_conversation('推荐预算500的耳机','audit-steer',runner=run_adaptive)
+    assert result['status']=='SUCCEEDED', result
+    assert result['plan']['goal_revision']==1
+    assert len(result['trace'])==2
+    assert not any(t['args'].get('max_price')==500 for t in result['trace'])
+
+
+def test_unavailable_final_audit_cannot_turn_a_recommendation_into_success(monkeypatch):
+    model(monkeypatch, search(first=True), recommendation)
+    import src.request_audit as auditing
+    fallback = auditing.get_llm()
+    count = []
+    def getter(**kwargs):
+        count.append(1)
+        if len(count)>1:
+            raise AgentError('MODEL_UNAVAILABLE','审查模型不可用',retryable=False)
+        return fallback
+    monkeypatch.setattr(auditing,'get_llm',getter)
+    result=run_adaptive('推荐预算500的耳机')
+    assert result['status']=='PARTIAL'
+    assert result['terminal_reason']=='MODEL_UNAVAILABLE'
+    assert not result['plan']['verification']['all_goals_satisfied']

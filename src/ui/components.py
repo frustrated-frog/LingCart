@@ -12,7 +12,8 @@ ORDER_LABELS = {"Wireless Headphones": "无线耳机", "Mechanical Keyboard": "�
 STATUSES = {"placed": "已下单", "shipped": "运输中", "delivered": "已送达", "cancelled": "已取消",
             "pending": "待支付", "paid": "已支付", "refunded": "已退款", "none": "暂无退款",
             "requested": "退款申请中", "approved": "退款已批准", "completed": "退款完成",
-            "SUCCEEDED": "已完成", "FAILED": "执行失败", "ESCALATED": "已转人工", "WAITING_APPROVAL": "等待确认",
+            "SUCCEEDED": "已完成", "FAILED": "执行失败", "ESCALATED": "已登记人工请求（演示）", "WAITING_APPROVAL": "等待确认",
+            "WAITING_HUMAN": "人工请求待处理（演示）",
             "WAITING_CLARIFICATION": "需要补充信息", "CANCELLED": "已取消", "PARTIAL": "部分完成",
             "INTERRUPTED": "等待恢复", "RUNNING": "执行中", "REUSED": "复用已保存结果", "SKIPPED": "已跳过", "REJECTED": "无需执行",
             "NOT_NEEDED": "无需对比", "BUSINESS_ERROR": "业务查询失败", "BUSINESS_REJECTED": "业务条件不满足"}
@@ -30,7 +31,7 @@ def esc(value) -> str:
 
 def status_badge(status: str) -> str:
     kind = "ok" if status in {"SUCCEEDED", "delivered", "paid", "completed"} else (
-        "bad" if status == "FAILED" else "warn" if status in {"WAITING_APPROVAL", "WAITING_CLARIFICATION", "ESCALATED", "pending", "requested"} else "")
+        "bad" if status == "FAILED" else "warn" if status in {"WAITING_APPROVAL", "WAITING_CLARIFICATION", "WAITING_HUMAN", "ESCALATED", "pending", "requested"} else "")
     return f'<span class="ws-status {kind}">{esc(STATUSES.get(status, status))}</span>'
 
 
@@ -135,6 +136,10 @@ def render_run(result: dict, detailed: bool = False) -> None:
             items.append(('当前候选未通过核验', event.get('reason', '将检查后续步骤')))
         elif kind == 'hook_failed':
             items.append(('领域规则未通过', event.get('code', '扩展执行失败')))
+        elif kind == 'request_audited':
+            title = '核对原始需求' if event.get('phase') == 'goal' else '复核最终完成证据'
+            verdict = {'APPROVED':'审查通过', 'REVISE':'需要修正', 'CLARIFY':'需要澄清'}.get(event.get('verdict'), '尚未确认')
+            items.append((title, verdict + ('：' + '；'.join(event.get('issues', [])) if event.get('issues') else '')))
     if items:
         timeline(items)
     if detailed:
@@ -168,7 +173,7 @@ def business_results(result: dict) -> None:
             name = ORDER_LABELS.get(output["item"], output["item"])
             st.caption(f"订单 #{output['order_id']} · {name} · ¥{output['amount']:.2f} · {STATUSES.get(output['status'], output['status'])}")
         elif output.get("ticket_id"):
-            st.info(f"人工处理工单 #{output['ticket_id']}")
+            st.info(f"本地演示工单 #{output['ticket_id']} · 尚未接入真人客服或通知服务")
 
 
 def comparison_table(products: list[dict]) -> None:

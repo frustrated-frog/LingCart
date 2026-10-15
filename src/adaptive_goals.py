@@ -17,6 +17,8 @@ def record_outcome(state, objective_id, step):
 
 
 def _claim_error(state, objective, step, indexed):
+    if step is not None and objective['question'] is not None and step.tool == 'answer_faq' and step.args.get('question') != objective['question']:
+        return 'EVIDENCE_TARGET_MISMATCH'
     if step is None or step.status not in {'SUCCEEDED', 'REUSED'} or step.result is None:
         return 'EVIDENCE_NOT_SUCCESSFUL'
     if objective['kind'] == 'recommend':
@@ -46,7 +48,13 @@ def _claim_error(state, objective, step, indexed):
         actual = {p['product_id'] for p in step.result.get('products', [])}
         if expected != actual:
             return 'EVIDENCE_TARGET_MISMATCH'
-    verify_observation(source)
+    try:
+        verify_observation(source)
+    except Exception as error:
+        from src.errors import AgentError
+        if not isinstance(error, AgentError):
+            raise
+        return error.code
     return None
 
 

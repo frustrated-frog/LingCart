@@ -20,6 +20,7 @@ from src.runtime import BudgetLimits, RunRuntime, ToolEffect, ToolExecutor, Trac
 from src.task_plan import TaskPlan, TaskStep, verify_observation
 
 MAX_REPLANS = 2
+MAX_DECISION_REPAIRS = 2
 _SELECT = "select_product"
 _DONE = {"SUCCEEDED", "REUSED", "NOT_NEEDED", "REJECTED", "WAITING_APPROVAL", "FAILED"}
 
@@ -117,6 +118,9 @@ def _observation(result, event):
 
 
 def _present(context, recorder, intake, state, plan, *, reason, message, error=None, success=False):
+    if success:
+        from src.request_audit import require_approved
+        require_approved(state, plan)
     plan.verification = verification(state, complete=success)
     success = plan.verification['all_goals_satisfied']
     if not success and state.get('objective_ledger'):
@@ -138,6 +142,8 @@ def _present(context, recorder, intake, state, plan, *, reason, message, error=N
         goal_revision=state['goal_revision'], replan_count=state['replans'],
         journal=deepcopy(state['journal']), goal=deepcopy(state['goal']), next_steps=state['next_steps'],
         working_memory=deepcopy(state.get('working_memory')), objective_ledger=deepcopy(state.get('objective_ledger', []))))
+    result['request_audit'] = deepcopy(state.get('request_audit'))
+    result['completion_audit'] = deepcopy(state.get('completion_audit'))
     return result
 
 
@@ -148,6 +154,8 @@ def _validate_tool(decision, state, plan, history):
     if spec.effect != ToolEffect.READ:
         raise AgentError('TOOL_POLICY_REJECTED', '自主选购只能执行只读工具', retryable=False)
     try:
+        if set(decision.args) - set(spec.schema.model_fields):
+            raise ValueError('Unknown tool argument')
         args = spec.schema.model_validate(decision.args, strict=True).model_dump()
     except ValueError as error:
         raise AgentError('INVALID_TOOL_ARGUMENTS', '模型提交的工具参数无效', retryable=False) from error
@@ -168,6 +176,16 @@ def _accept(context, recorder, state, plan, decision, history):
         if decision.goal is None:
             raise AgentError('MODEL_FORMAT_ERROR', '首次决策必须包含目标及约束', retryable=False)
         validate_goal(decision.goal, state['request'], history)
+        if decision.action != 'clarify':
+            from src.request_audit import review_request
+            proposed = {**state, 'goal': decision.goal.model_dump()}
+            audit = review_request(context, proposed, plan, history, phase='goal')
+            state['audit_attempts'] = [*state.get('audit_attempts', []), audit]
+            if audit['verdict'] != 'APPROVED':
+                state['feedback'] = dict(code='REQUEST_AUDIT_REJECTED', audit=audit,
+                    message='对照用户原文修复全部目标和约束；不确定则澄清。')
+                raise AgentError('REQUEST_AUDIT_REJECTED', '独立审查未确认需求覆盖与语义，不能执行当前目标', retryable=False)
+            state['request_audit'] = audit
         state['goal'] = decision.goal.model_dump()
         state['objective_ledger'] = new_ledger(state['goal'])
         plan.goals = [o['id'] for o in state['goal']['objectives']]
@@ -225,6 +243,40 @@ def _selection_step(state, plan, decision):
     return TaskStep(f'step-{len(plan.steps) + 1}', 'shopping', _SELECT,
         dict(product_id=decision.product_id, objective_id=decision.objective_id,
              goal_revision=state['goal_revision']), decision.evidence_refs)
+
+
+def _repair(context, recorder, state, plan, error):
+    state['repair_count'] = state.get('repair_count', 0) + 1
+    state['model_cursor'] = context.model_cursor
+    if error.code != 'REQUEST_AUDIT_REJECTED':
+        state['feedback'] = dict(code=error.code, message=str(error),
+                                instruction='修复协议或参数后提交下一次决策；不要放宽用户目标或审批条件。')
+    state['pending'] = None
+    _save(context, state, plan)
+    recorder.record('decision_rejected', code=error.code, repair_count=state['repair_count'])
+    if state['repair_count'] > MAX_DECISION_REPAIRS:
+        raise AgentError('DECISION_REPAIR_BUDGET_EXHAUSTED', '模型决策修复次数已耗尽：' + str(error), retryable=False)
+
+
+def _review_completion(context, recorder, state, plan, history):
+    from src.request_audit import require_approved, review_request
+    require_approved(state)
+    # 恢复后的最终核验已经重新读取事实，不能复用基于旧观察的审查响应。
+    cached = context.models.get(str(context.model_cursor + 1))
+    if cached and json.loads(cached['input'])[0] == 'request_completion_audit':
+        context.models.pop(str(context.model_cursor + 1))
+        context.record('audit_invalidated', reason='FRESH_COMPLETION_EVIDENCE')
+    audit = review_request(context, state, plan, history, phase='completion')
+    state['completion_audit'] = audit
+    state['model_cursor'] = context.model_cursor
+    _save(context, state, plan)
+    if audit['verdict'] != 'APPROVED':
+        error = AgentError('COMPLETION_SEMANTIC_REJECTED', '最终证据未完整回应用户原始需求', retryable=False)
+        _repair(context, recorder, state, plan, error)
+        state['feedback']['audit'] = audit
+        _save(context, state, plan)
+        return False
+    return True
 
 
 def _verify_recommendation(context, recorder, state, plan, decision, step):
@@ -325,8 +377,8 @@ def _run(context, user_message, history, pending_action):
     recorder = TraceRecorder(context.run_id)
     revision = context.snapshot.get('goal_revision', 0)
     if saved:
-        if saved.get('schema_version') != 3:
-            raise AgentError('ADAPTIVE_CHECKPOINT_INCOMPATIBLE', '旧检查点缺少逐项目标契约，不能安全恢复，请新建任务', retryable=False)
+        if saved.get('schema_version') != 4:
+            raise AgentError('ADAPTIVE_CHECKPOINT_INCOMPATIBLE', '旧检查点缺少独立需求审查记录，不能安全恢复，请新建任务；已完成操作记录保留', retryable=False)
         state = deepcopy(saved)
         plan = _restore_plan(state['plan'])
         if revision == state['goal_revision'] and user_message != state['request']:
@@ -339,16 +391,18 @@ def _run(context, user_message, history, pending_action):
                                          previous_goal=state['goal']))
             state.update(goal_revision=revision, goal=None, request=user_message, pending=None,
                          model_cursor=0, feedback=None, working_memory=None, objective_ledger=[],
-                         next_steps=None, version=state['version'] + 1)
+                         next_steps=None, request_audit=None, completion_audit=None,
+                         version=state['version'] + 1)
             plan.goals = []
             plan.verification = {}
             _save(context, state, plan)
         context.model_cursor = state['model_cursor']
     else:
         plan = TaskPlan([], [])
-        state = dict(schema_version=3, version=1, replans=0, goal_revision=revision, request=user_message,
+        state = dict(schema_version=4, version=1, replans=0, goal_revision=revision, request=user_message,
                      goal=None, next_steps=None, working_memory=None, journal=[], pending=None,
-                     objective_ledger=[], feedback=None, model_cursor=context.model_cursor)
+                     objective_ledger=[], feedback=None, repair_count=0, request_audit=None,
+                     completion_audit=None, model_cursor=context.model_cursor)
         _save(context, state, plan)
         recorder.record('plan_created', source='adaptive_model', plan=plan.payload())
     intake = TaskIntake(user_message, (PRODUCT_SEARCH,), {}, execution_mode='adaptive', reason='模型逐步决策')
@@ -358,13 +412,16 @@ def _run(context, user_message, history, pending_action):
             apply_controls(context)
             context.require()
             if state['pending'] is None:
-                decision = decide(context, state, plan, history)
-                # A steering command arriving during model inference invalidates
-                # that decision before any action or completion is accepted.
-                apply_controls(context)
                 try:
+                    decision = decide(context, state, plan, history)
+                    # 插话也使审查中的旧目标失效，执行任何动作前再次检查。
+                    apply_controls(context)
                     _accept(context, recorder, state, plan, decision, history)
+                    apply_controls(context)
                 except AgentError as error:
+                    if error.code in {'MODEL_FORMAT_ERROR', 'INVALID_TOOL_ARGUMENTS', 'REQUEST_AUDIT_REJECTED', 'AUDIT_FORMAT_ERROR'}:
+                        _repair(context, recorder, state, plan, error)
+                        continue
                     if error.code not in {'UNREAD_RECOMMENDATION_EVIDENCE', 'INVALID_RECOMMENDATION_OBJECTIVE'}:
                         raise
                     # An index is not sufficient evidence. Let the model choose
@@ -404,8 +461,10 @@ def _run(context, user_message, history, pending_action):
                     context.require()
                     if context.hook_error:
                         raise context.hook_error
-                    return _present(context, recorder, intake, state, plan, reason='COMPLETED', message=message, success=True)
-                if message is not None:
+                    if _review_completion(context, recorder, state, plan, history):
+                        apply_controls(context)
+                        return _present(context, recorder, intake, state, plan, reason='COMPLETED', message=message, success=True)
+                if message is not None and len(state['objective_ledger']) > 1:
                     state['feedback'] = dict(code='OBJECTIVES_REQUIRE_COMPLETION',
                         message='此选购项已核验，请继续处理剩余目标，再逐项提交 complete 证据。')
             elif decision.action == 'complete':
@@ -417,7 +476,9 @@ def _run(context, user_message, history, pending_action):
                         raise context.hook_error
                     # Preserve the pending completion across the durable commit;
                     # replay verifies current business facts again after a crash.
-                    return _present(context, recorder, intake, state, plan, reason='COMPLETED', message=message, success=True)
+                    if _review_completion(context, recorder, state, plan, history):
+                        apply_controls(context)
+                        return _present(context, recorder, intake, state, plan, reason='COMPLETED', message=message, success=True)
             elif decision.action == 'inspect':
                 from src.context_engine import ContextEngine
                 try:
@@ -436,6 +497,10 @@ def _run(context, user_message, history, pending_action):
                     step.result = result
                     if event['status'] == 'BUSINESS_ERROR':
                         step.status = 'FAILED'
+                    elif step.tool == 'answer_faq' and result.get('status') != 'ANSWERED':
+                        step.status = 'REJECTED'
+                        state['feedback'] = dict(code='INSUFFICIENT_POLICY_EVIDENCE',
+                                                message='政策库未提供有效答案，该目标未完成。')
                     else:
                         if step.tool in {'search_products', 'compare_products'}:
                             _verify_products(step)
