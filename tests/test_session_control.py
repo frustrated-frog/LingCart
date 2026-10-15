@@ -174,3 +174,34 @@ def test_drain_continues_after_cached_followup_from_restart(database):
     assert wait_result(handle['run_id'])['status'] == 'SUCCEEDED'
     commands = store.commands('restart-queue', parent['run_id'])
     assert all(command['status'] == 'APPLIED' for command in commands)
+
+
+def test_recovery_does_not_reuse_an_old_observation_scope(database):
+    from src.runtime import ToolSpec
+    class Crash(BaseException): pass
+    class CrashOnSecondRead(ControlStore):
+        calls = 0
+        def save_checkpoint(self, run_id, token, snapshot, event=None):
+            super().save_checkpoint(run_id, token, snapshot, event)
+            if event and event['type'] == 'tool_call':
+                self.calls += 1
+                if self.calls == 2:
+                    raise Crash()
+    reads = []
+    def read(value: str):
+        reads.append(value)
+        return {'value': len(reads)}
+    def runner(message, **kwargs):
+        context = current_runtime()
+        for scope in ['old', 'new']:
+            ToolExecutor({'read': ToolSpec(read)}, TraceRecorder(context.run_id), observation_scope=scope).execute('read', {'value': 'stock'})
+    with pytest.raises(Crash):
+        run_conversation('核验库存', 'scope-recovery', runner=runner, store=CrashOnSecondRead())
+    active = ControlStore().conversation('scope-recovery')['active_run_id']
+    ControlStore().enqueue('scope-recovery', active, 'CANCEL')
+    result = resume_run('scope-recovery', active, runner=runner)
+    assert result['status'] == 'CANCELLED'
+    assert reads == ['stock']
+    assert len([e for e in result['events'] if e['type'] == 'tool_result']) == 1
+    assert any(e.get('code') == 'INTERRUPTED_TOOL_CALL' for e in result['events'])
+    assert project_trace(result['events'])['integrity']['complete'] is True

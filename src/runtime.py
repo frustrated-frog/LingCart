@@ -529,6 +529,7 @@ class ToolExecutor:
                     finished_ids = {e.get('execution_id') for e in context.events if e['type'] in {'tool_result', 'error'}}
                     unfinished = next((e.get('execution_id') for e in reversed(context.events)
                         if e['type'] == 'tool_call' and e.get('action_fingerprint') == fingerprint
+                        and e.get('ledger_key', key) == key
                         and e.get('execution_id') not in finished_ids), None)
                 event = self.recorder.record("tool_result", tool=name, args=args, result=cached,
                     status="BUSINESS_ERROR" if isinstance(cached, dict) and cached.get("error") else "REUSED",
@@ -559,7 +560,7 @@ class ToolExecutor:
                 self._fail(error, name, args)
             execution_id = uuid.uuid4().hex
             self.recorder.record("tool_call", tool=name, args=args, call_index=self.call_count, attempt=attempt + 1,
-                                 policy=policy, action_fingerprint=fingerprint, execution_id=execution_id)
+                                 policy=policy, action_fingerprint=fingerprint, execution_id=execution_id, ledger_key=key)
             started = time.monotonic()
             deadline = started + min(context.limits.call_timeout, context.remaining_seconds) if context else None
 

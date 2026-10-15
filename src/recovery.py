@@ -13,6 +13,7 @@ def recover_evidence(context):
             continue
         fingerprint = call.get('action_fingerprint')
         saved = next((r for r in outcomes if r['tool'] == call['tool'] and
+                      (not call.get('ledger_key') or r['call_key'] == call['ledger_key']) and
                       ToolExecutor.fingerprint(r['tool'], r['args']) == fingerprint and r['status'] == 'SUCCEEDED'), None)
         common = dict(tool=call['tool'], args=call.get('args', {}), action_fingerprint=fingerprint, execution_id=identity)
         if saved:
