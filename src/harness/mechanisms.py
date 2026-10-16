@@ -65,8 +65,9 @@ class ContextMechanism(EmbeddedMechanism):
 
     def build_context(self, goal, *, preferences=None, observations=None, revision=0):
         from src.context_engine import ContextEngine
+        from src.runtime import current_runtime
 
-        return ContextEngine(
+        engine = ContextEngine(
             goal,
             preferences=preferences,
             observations=observations,
@@ -74,6 +75,17 @@ class ContextMechanism(EmbeddedMechanism):
             selection_strategy=self.selection_strategy,
             mechanism_id=self.mechanism_id,
         )
+        runtime = current_runtime()
+        if runtime is not None:
+            runtime.record(
+                "mechanism_applied",
+                slot=self.slot,
+                mechanism_id=self.mechanism_id,
+                mechanism_version=self.mechanism_version,
+                configuration={"selection_strategy": self.selection_strategy},
+                goal_revision=revision,
+            )
+        return engine
 
 
 def built_in_mechanisms() -> tuple[HarnessMechanism, ...]:

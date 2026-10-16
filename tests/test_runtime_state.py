@@ -1,7 +1,7 @@
 import pytest
 
 from src.errors import AgentError
-from src.runtime_state import advance_runtime_snapshot, new_runtime_snapshot, restore_runtime_snapshot
+from src.runtime_state import _sealed, advance_runtime_snapshot, new_runtime_snapshot, restore_runtime_snapshot
 
 
 def test_runtime_snapshot_is_versioned_checksummed_and_advances():
@@ -41,3 +41,16 @@ def test_terminal_runtime_snapshot_cannot_return_to_execution():
     with pytest.raises(AgentError) as transition_error:
         advance_runtime_snapshot(terminal, "run-3", current_node="MODEL_CALL", status="RUNNING")
     assert transition_error.value.code == "INVALID_STATE_TRANSITION"
+
+
+def test_execution_contract_cannot_diverge_from_runtime_fields():
+    snapshot = new_runtime_snapshot("run", conversation={}, history=[], execution_contract={
+        "execution_mode": "adaptive", "harness": {"profile_id": "adaptive-v1"},
+    })
+    snapshot["execution_mode"] = "auto"
+    snapshot = _sealed(snapshot)
+
+    with pytest.raises(AgentError) as error:
+        restore_runtime_snapshot(snapshot, "run")
+
+    assert error.value.code == "CHECKPOINT_CONTRACT_CORRUPT"

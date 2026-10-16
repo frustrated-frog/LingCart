@@ -6,7 +6,9 @@ from collections import defaultdict
 from datetime import UTC, datetime
 import hashlib
 import json
+import os
 from pathlib import Path
+import platform
 import statistics
 import subprocess
 import time
@@ -21,10 +23,22 @@ except ModuleNotFoundError:
 
 ROOT = Path(__file__).resolve().parents[1]
 DATASET = Path(__file__).with_name('live_tasks.json')
-KERNEL_FILES = {
-    'src/runtime.py', 'src/runtime_state.py', 'src/persistence.py', 'src/durable.py',
-    'src/session_control.py', 'src/direct_executor.py', 'src/tools.py', 'src/backend/db.py',
+KERNEL_BOUNDARIES = {
+    'state_and_side_effects': {
+        'src/runtime.py', 'src/direct_executor.py', 'src/tools.py', 'src/backend/db.py',
+    },
+    'persistence_and_recovery': {
+        'src/runtime_state.py', 'src/persistence.py', 'src/durable.py', 'src/recovery.py',
+        'src/session_control.py',
+    },
+    'model_call_protocol': {
+        'src/model_gateway.py', 'src/llm.py', 'src/native_protocol.py', 'src/context_budget.py',
+    },
+    'harness_assembly': {
+        'src/harness/contracts.py', 'src/harness/profile.py', 'src/harness/registry.py',
+    },
 }
+KERNEL_FILES = frozenset().union(*KERNEL_BOUNDARIES.values())
 
 
 def load_dataset(path=DATASET):
@@ -76,15 +90,24 @@ def environment_manifest(dataset, execution_mode, dataset_path=DATASET):
     source_files = sorted([*(ROOT / 'src').rglob('*.py'), *(ROOT / 'eval').glob('*.py'),
                            *(ROOT / 'configs/harness').glob('*.json')])
     file_hashes = _source_files_manifest(source_files)
+    dependency_lock = ROOT / 'requirements.lock'
+    boundary_hashes = {name: fingerprint({path: file_hashes.get(path) for path in sorted(paths)})
+                       for name, paths in KERNEL_BOUNDARIES.items()}
     return {'source_revision': revision, 'dataset_path': _repo_relative(dataset_path),
             'dataset_sha256': fingerprint(dataset), 'execution_mode': execution_mode,
             'source_tree_sha256': fingerprint(file_hashes), 'source_files_sha256': file_hashes,
             'kernel_source_sha256': fingerprint({name: file_hashes.get(name) for name in sorted(KERNEL_FILES)}),
+            'kernel_boundaries_sha256': boundary_hashes,
             'prompt_source_sha256': {name: _prompt_fingerprint(ROOT / name)
                 for name in prompt_files if (ROOT / name).exists()},
             'evaluation_protocol_sha256': _files_fingerprint(evaluator_files),
             'business_protocol_sha256': _files_fingerprint(business_files),
-            'business_environment': 'fresh_demo_sqlite_per_sample', 'pricing_verified': False}
+            'business_environment': 'fresh_demo_sqlite_per_sample', 'pricing_verified': False,
+            'python_runtime': {'implementation': platform.python_implementation(),
+                               'version': platform.python_version()},
+            'dependency_lock_sha256': (hashlib.sha256(dependency_lock.read_bytes()).hexdigest()
+                                       if dependency_lock.exists() else None),
+            'container_image_digest': os.getenv('LINGCART_IMAGE_DIGEST')}
 
 
 def summarize(samples, repeats):
@@ -288,7 +311,8 @@ def evaluate_gate(report, baseline=None):
         if baseline.get('status') != 'COMPLETED' or not baseline.get('live_verified') or baseline.get('execution_source') != 'live_provider':
             failures.append('基线必须来自已完成的真实模型评测')
         for key in ('dataset_path', 'dataset_sha256', 'suite', 'evaluation_protocol_sha256', 'business_protocol_sha256',
-                    'business_environment', 'limits', 'split', 'repeats', 'purpose_models', 'selected_cases'):
+                    'business_environment', 'limits', 'split', 'repeats', 'purpose_models', 'selected_cases',
+                    'python_runtime', 'dependency_lock_sha256', 'container_image_digest'):
             if baseline.get('manifest', {}).get(key) != report.get('manifest', {}).get(key):
                 failures.append(f'基线 {key} 不一致，不能直接比较')
         if baseline.get('providers') != report.get('providers'):
@@ -306,8 +330,11 @@ def evaluate_gate(report, baseline=None):
                 value, previous = metrics.get(key), baseline.get('metrics', {}).get(key)
                 if value is None or previous is None or value < previous:
                     failures.append(f'{key} 低于基线或缺少数据')
-    elif metrics.get('mean_success_rate') != 1:
-        failures.append('初始门禁要求全部样本通过；后续可显式提供冻结基线')
+    else:
+        if report.get('manifest', {}).get('experiment_spec'):
+            failures.append('论文对照 Gate 必须同时提供冻结基线报告和实验契约')
+        if metrics.get('mean_success_rate') != 1:
+            failures.append('单版本质量 Gate 要求全部样本通过')
     return failures
 
 
@@ -349,6 +376,8 @@ def _validate_experiment_contract(report, baseline, payload):
         failures.append('实验任务集或 suite 与契约不一致')
     if current_manifest.get('repeats') != spec.repeats or baseline_manifest.get('repeats') != spec.repeats:
         failures.append('实验重复次数与契约不一致')
+    if not current_manifest.get('dependency_lock_sha256') or not baseline_manifest.get('dependency_lock_sha256'):
+        failures.append('论文对照报告必须记录可重建的依赖锁指纹')
 
     declarations = list(spec.changes)
     changed_slots = {slot for slot in set(current_mechanisms) | set(baseline_mechanisms)
@@ -366,6 +395,17 @@ def _validate_experiment_contract(report, baseline, payload):
             failures.append(f'契约声明的机制未成为实际差异：{slot}/{implementation_id}')
         elif not set(candidate.get('source_files') or ()) <= set(mechanism_declarations[(slot, implementation_id)].paths):
             failures.append(f'机制源码未完整纳入变更范围：{slot}/{implementation_id}')
+        else:
+            missing = []
+            for sample in report.get('samples', []):
+                events = [event for turn in sample.get('turns', [])
+                          for event in (turn.get('result') or {}).get('events', [])]
+                if not any(event.get('type') == 'mechanism_applied' and event.get('slot') == slot
+                           and event.get('mechanism_id') == implementation_id for event in events):
+                    missing.append(f"{sample.get('case_id')}#{sample.get('repetition')}")
+            if missing:
+                failures.append(f'候选机制没有在全部样本中产生执行证据：{slot}/{implementation_id} '
+                                + '、'.join(missing[:5]))
 
     engine_changed = current_profile.get('engine') != baseline_profile.get('engine')
     engine_declarations = {item.implementation_id: item for item in declarations if item.kind == 'engine'}
@@ -393,6 +433,10 @@ def _validate_experiment_contract(report, baseline, payload):
             expected_kernel = fingerprint({name: file_hashes.get(name) for name in sorted(KERNEL_FILES)})
             if manifest.get('kernel_source_sha256') != expected_kernel:
                 failures.append(f'{label} Stable Kernel 指纹不一致')
+            expected_boundaries = {name: fingerprint({path: file_hashes.get(path) for path in sorted(paths)})
+                                   for name, paths in KERNEL_BOUNDARIES.items()}
+            if manifest.get('kernel_boundaries_sha256') != expected_boundaries:
+                failures.append(f'{label} Stable Kernel 职责边界指纹不一致')
         changed_files = {name for name in set(base_files) | set(current_files)
                          if base_files.get(name) != current_files.get(name)}
         allowed_files = {path for item in declarations for path in item.paths}
@@ -402,7 +446,9 @@ def _validate_experiment_contract(report, baseline, payload):
         changed_kernel = changed_files & KERNEL_FILES
         runtime_files = {path for item in declarations if item.kind == 'runtime' for path in item.paths}
         if changed_kernel and (not spec.compatibility_review or not changed_kernel <= runtime_files):
-            failures.append('Stable Kernel 变更缺少独立兼容性审查：' + '、'.join(sorted(changed_kernel)))
+            boundaries = [name for name, paths in KERNEL_BOUNDARIES.items() if changed_kernel & paths]
+            failures.append('Stable Kernel 变更缺少独立兼容性审查：' +
+                            '、'.join(sorted(changed_kernel)) + f' （责任域：{"/".join(boundaries)}）')
 
     changed_prompts = {name for name in set(baseline_manifest.get('prompt_source_sha256', {})) |
                        set(current_manifest.get('prompt_source_sha256', {}))
@@ -443,6 +489,8 @@ def main(argv=None):
     args = parser.parse_args(argv)
     dataset = load_dataset(args.dataset)
     experiment_spec = ExperimentSpec.from_path(args.experiment_spec) if args.experiment_spec else None
+    if args.gate and experiment_spec and args.baseline is None:
+        parser.error('论文对照 Gate 必须通过 --baseline 提供冻结基线报告')
     if args.dry_run:
         if dataset.get('suite') == 'adaptive' and args.execution_mode != 'adaptive':
             parser.error('自主专项任务必须使用 adaptive')

@@ -22,8 +22,9 @@ def _sealed(snapshot: dict) -> dict:
     return result
 
 
-def new_runtime_snapshot(run_id: str, *, conversation: dict, history: list) -> dict:
-    return _sealed({
+def new_runtime_snapshot(run_id: str, *, conversation: dict, history: list,
+                         execution_contract: dict | None = None) -> dict:
+    snapshot = {
         "schema_version": CURRENT_RUNTIME_SCHEMA_VERSION,
         "state_version": 1,
         "run_id": run_id,
@@ -36,7 +37,14 @@ def new_runtime_snapshot(run_id: str, *, conversation: dict, history: list) -> d
         "budget": {},
         "models": {},
         "sequence": 0,
-    })
+    }
+    if execution_contract is not None:
+        contract = json.loads(json.dumps(execution_contract, ensure_ascii=False, default=str))
+        snapshot["execution_contract"] = contract
+        snapshot["execution_mode"] = contract["execution_mode"]
+        if contract.get("harness") is not None:
+            snapshot["harness"] = contract["harness"]
+    return _sealed(snapshot)
 
 
 def restore_runtime_snapshot(payload: dict | None, run_id: str) -> dict:
@@ -85,6 +93,17 @@ def restore_runtime_snapshot(payload: dict | None, run_id: str) -> dict:
     checksum = snapshot.get("checksum")
     if not checksum or checksum != _checksum(snapshot):
         raise AgentError("CHECKPOINT_CORRUPT", "任务检查点完整性校验失败", retryable=False)
+    contract = snapshot.get("execution_contract")
+    if contract is not None:
+        valid_contract = (
+            isinstance(contract, dict)
+            and contract.get("execution_mode") in {"auto", "adaptive"}
+            and (contract.get("harness") is None or isinstance(contract.get("harness"), dict))
+            and snapshot.get("execution_mode") == contract.get("execution_mode")
+            and snapshot.get("harness") == contract.get("harness")
+        )
+        if not valid_contract:
+            raise AgentError("CHECKPOINT_CONTRACT_CORRUPT", "任务执行契约与检查点不一致", retryable=False)
     return snapshot
 
 

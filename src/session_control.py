@@ -144,7 +144,7 @@ class SessionController:
               resume_id=None, execution_mode='auto', harness_profile=None):
         if execution_mode not in {'auto', 'adaptive'}:
             raise AgentError('INVALID_EXECUTION_MODE', '不支持该执行方式', retryable=False)
-        from src.harness import get_runner, resolve_claim_runner, unwrap_harness_runner
+        from src.harness import get_runner, resolve_claim_runner, runner_execution_contract, unwrap_harness_runner
         if harness_profile:
             selected = get_runner(harness_profile)
             current = unwrap_harness_runner(runner)
@@ -161,24 +161,30 @@ class SessionController:
                 execution_mode = 'adaptive'
         elif resume_id is None:
             runner = get_runner('adaptive-v1' if execution_mode == 'adaptive' else 'baseline-v1')
+        else:
+            saved = self.store.run(resume_id)
+            if not saved or saved['session_id'] != session_id:
+                raise AgentError('RUN_NOT_FOUND', '没有找到该会话的任务', retryable=False)
+            if saved['result'] is None:
+                # Verify persisted code identity before claim() can mutate status
+                # or lease ownership; claim() repeats the identity check atomically.
+                runner = resolve_claim_runner(saved)
+                execution_mode = saved['checkpoint'].get('execution_mode', execution_mode)
         if limits is None and execution_mode == 'adaptive':
             limits = BudgetLimits.adaptive()
         if not _slots.acquire(blocking=False):
             raise AgentError('WORKER_CAPACITY_EXHAUSTED', '当前运行任务较多，请稍后重试', retryable=True)
         try:
+            execution_contract = (None if resume_id is not None and runner is None else
+                                  runner_execution_contract(runner, execution_mode=execution_mode))
             claim = self.store.claim(session_id, request_id or uuid.uuid4().hex, message,
-                                     (limits or BudgetLimits()).__dict__, resume_id=resume_id, action_id=action_id)
+                                     (limits or BudgetLimits()).__dict__, resume_id=resume_id, action_id=action_id,
+                                     execution_contract=execution_contract)
             if 'cached' in claim:
                 _slots.release()
                 return {'run_id': claim['run_id'], 'session_id': session_id, 'status': claim['cached']['status'],
                         'result': claim['cached'], 'cached': True}
-            if not resume_id:
-                claim['snapshot']['execution_mode'] = execution_mode
-                selected = unwrap_harness_runner(runner)
-                if selected:
-                    claim['snapshot']['harness_profile_id'] = selected.profile.profile_id
-                self.store.save_checkpoint(claim['run_id'], claim['token'], claim['snapshot'])
-            else:
+            if resume_id:
                 self.store.reopen_controls(claim['run_id'])
                 runner = resolve_claim_runner(claim, runner)
             execution_mode = claim['snapshot'].get('execution_mode', 'auto')

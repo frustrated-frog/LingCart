@@ -75,11 +75,17 @@ def test_incompatible_model_or_dataset_cannot_be_compared():
 def _comparable_live_report(profile_id='adaptive-v1', *, model_attempts=1):
     from src.harness import get_runner
 
+    provenance = get_runner(profile_id).provenance()
+    context_id = next((item['id'] for item in provenance['mechanisms'] if item['slot'] == 'context'), None)
     sample = dict(case_id='L01', split='test', repetition=1, passed=True, latency_ms=1,
                   model_attempts=model_attempts, tool_calls=0, safety_violations=0, protocol_violations=0,
-                  adaptive_verified=True, turns=[{'usage': {}}])
+                  adaptive_verified=True, turns=[{'usage': {}, 'result': {'events': [
+                      {'type': 'mechanism_applied', 'slot': 'context', 'mechanism_id': context_id},
+                  ]}}])
     source_files = {'src/context_engine.py': 'same', 'src/runtime.py': 'same'}
     kernel_sha = live.fingerprint({name: source_files.get(name) for name in sorted(live.KERNEL_FILES)})
+    boundary_sha = {name: live.fingerprint({path: source_files.get(path) for path in sorted(paths)})
+                    for name, paths in live.KERNEL_BOUNDARIES.items()}
     return {'status': 'COMPLETED', 'live_verified': True, 'execution_source': 'live_provider',
             'manifest': {'dataset_path': 'eval/adaptive_tasks.json', 'dataset_sha256': 'dataset',
                          'suite': 'adaptive', 'execution_mode': 'adaptive',
@@ -87,10 +93,13 @@ def _comparable_live_report(profile_id='adaptive-v1', *, model_attempts=1):
                          'business_environment': 'fresh_demo_sqlite_per_sample',
                          'source_tree_sha256': live.fingerprint(source_files),
                          'source_files_sha256': source_files, 'kernel_source_sha256': kernel_sha,
+                         'kernel_boundaries_sha256': boundary_sha,
                          'prompt_source_sha256': {'src/adaptive_decision.py': 'a'},
-                         'harness_profile': get_runner(profile_id).provenance(),
+                         'harness_profile': provenance,
                          'limits': {'max_seconds': 45}, 'split': 'test', 'repeats': 1,
                          'purpose_models': {'agent': [{'provider': 'test', 'model': 'same'}]},
+                         'python_runtime': {'implementation': 'CPython', 'version': '3.11.0'},
+                         'dependency_lock_sha256': 'lock', 'container_image_digest': None,
                          'selected_cases': [{'id': 'L01', 'split': 'test', 'turns': 1}],
                          'experiment_spec': None},
             'providers': [{'provider': 'test', 'model': 'same'}], 'samples': [sample],
@@ -117,9 +126,8 @@ def _experiment_spec(*, minimum=0, paths=None):
 
 def test_gate_allows_structured_mechanism_intervention():
     baseline = _comparable_live_report()
-    candidate = copy.deepcopy(baseline)
-    candidate['manifest'].update(harness_profile=_comparable_live_report(
-        'adaptive-objective-context-v1')['manifest']['harness_profile'], experiment_spec=_experiment_spec())
+    candidate = _comparable_live_report('adaptive-objective-context-v1')
+    candidate['manifest']['experiment_spec'] = _experiment_spec()
     assert live.evaluate_gate(candidate, baseline) == []
 
 
@@ -171,6 +179,61 @@ def test_gate_requires_declared_mechanism_source_files_and_manifest_integrity():
     candidate['manifest']['source_tree_sha256'] = 'forged'
     failures = live.evaluate_gate(candidate, baseline)
     assert any('源码树指纹与逐文件指纹不一致' in failure for failure in failures)
+
+
+def test_gate_rejects_a_declared_mechanism_without_runtime_application_evidence():
+    baseline = _comparable_live_report()
+    candidate = _comparable_live_report('adaptive-objective-context-v1')
+    candidate['manifest']['experiment_spec'] = _experiment_spec()
+    candidate['samples'][0]['turns'][0]['result']['events'] = []
+
+    failures = live.evaluate_gate(candidate, baseline)
+
+    assert any('没有在全部样本中产生执行证据' in failure for failure in failures)
+
+
+def test_experiment_gate_requires_a_baseline_report():
+    candidate = _comparable_live_report('adaptive-objective-context-v1')
+    candidate['manifest']['experiment_spec'] = _experiment_spec()
+
+    failures = live.evaluate_gate(candidate)
+
+    assert any('必须同时提供冻结基线' in failure for failure in failures)
+
+
+def test_cli_rejects_experiment_gate_without_baseline_before_model_execution(monkeypatch):
+    import pytest
+
+    monkeypatch.setattr(live, 'evaluate', lambda *_a, **_k: (_ for _ in ()).throw(
+        AssertionError('缺少基线时不应启动评测')))
+    spec = live.ROOT / 'research/experiments/objective-context-v1/experiment-spec.json'
+    with pytest.raises(SystemExit):
+        live.main(['--gate', '--experiment-spec', str(spec)])
+
+
+def test_declared_harness_assembly_change_still_requires_kernel_review():
+    baseline = _comparable_live_report()
+    candidate = _comparable_live_report('adaptive-objective-context-v1')
+    candidate['manifest']['experiment_spec'] = _experiment_spec(paths=[
+        'src/context_engine.py', 'src/harness/mechanisms.py', 'src/harness/registry.py'])
+    files = candidate['manifest']['source_files_sha256']
+    files['src/harness/registry.py'] = 'changed'
+    candidate['manifest']['source_tree_sha256'] = live.fingerprint(files)
+    candidate['manifest']['kernel_source_sha256'] = live.fingerprint(
+        {name: files.get(name) for name in sorted(live.KERNEL_FILES)})
+    candidate['manifest']['kernel_boundaries_sha256'] = {
+        name: live.fingerprint({path: files.get(path) for path in sorted(paths)})
+        for name, paths in live.KERNEL_BOUNDARIES.items()}
+
+    failures = live.evaluate_gate(candidate, baseline)
+
+    assert any('Stable Kernel' in failure and 'harness_assembly' in failure for failure in failures)
+
+
+def test_kernel_boundaries_cover_recovery_model_gateway_and_harness_assembly():
+    assert 'src/recovery.py' in live.KERNEL_BOUNDARIES['persistence_and_recovery']
+    assert 'src/model_gateway.py' in live.KERNEL_BOUNDARIES['model_call_protocol']
+    assert 'src/harness/registry.py' in live.KERNEL_BOUNDARIES['harness_assembly']
 
 
 def test_injected_runner_uses_real_business_evidence_and_is_never_labeled_live():

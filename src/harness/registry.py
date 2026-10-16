@@ -18,6 +18,28 @@ ROOT = Path(__file__).resolve().parents[2]
 PROFILE_DIR = ROOT / "configs" / "harness"
 
 
+def harness_execution_identity(provenance: dict) -> dict:
+    """Canonical executable identity; source revision remains audit metadata."""
+
+    # Persisted selection events add trace fields (type, sequence, timestamp),
+    # so identity must be an allow-list rather than "everything except".
+    keys = ("profile_id", "profile_version", "profile_sha256", "engine", "mechanisms", "research")
+    return {key: provenance.get(key) for key in keys}
+
+
+def harness_execution_matches(left: dict, right: dict) -> bool:
+    """Compare executable components while accepting legacy ID-only records."""
+
+    if left.get("profile_id") != right.get("profile_id"):
+        return False
+    if left.get("legacy_profile_reference") or right.get("legacy_profile_reference"):
+        return True
+    if isinstance(left.get("engine"), dict) and isinstance(right.get("engine"), dict):
+        return harness_execution_identity(left) == harness_execution_identity(right)
+    left_sha, right_sha = left.get("execution_sha256"), right.get("execution_sha256")
+    return not (left_sha and right_sha and left_sha != right_sha)
+
+
 class FunctionEngine:
     """Adapter retaining the two production-tested engine entry points."""
 
@@ -92,7 +114,8 @@ class HarnessRunner:
             "mechanisms": mechanisms,
             "source_revision": revision,
         }
-        encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        encoded = json.dumps(harness_execution_identity(payload), ensure_ascii=False,
+                             sort_keys=True, separators=(",", ":"))
         payload["execution_sha256"] = hashlib.sha256(encoded.encode()).hexdigest()
         return payload
 
@@ -105,7 +128,7 @@ class HarnessRunner:
             saved = selected[-1]
             if saved.get("profile_id") != self.profile.profile_id or saved.get("profile_sha256") != self.profile.fingerprint:
                 raise AgentError("HARNESS_PROFILE_CONFLICT", "同一次运行不能切换 Harness Profile", retryable=False)
-            if saved.get("execution_sha256") != self._provenance["execution_sha256"]:
+            if not harness_execution_matches(saved, self._provenance):
                 raise AgentError("HARNESS_IMPLEMENTATION_MISMATCH", "当前机制实现与任务开始时的版本不一致", retryable=False)
         else:
             context.snapshot["harness"] = self.provenance()
@@ -213,17 +236,44 @@ def get_runner(profile_id: str) -> HarnessRunner:
     return get_registry().resolve(profile_id)
 
 
+def get_product_runner(profile_id: str) -> HarnessRunner:
+    """Resolve only profiles approved for ordinary product traffic."""
+
+    runner = get_runner(profile_id)
+    if runner.profile.research.status not in {"baseline", "promoted"}:
+        raise AgentError(
+            "HARNESS_PROFILE_NOT_APPROVED",
+            f"Harness Profile {profile_id} 仅限研究评测，尚未批准用于产品请求",
+            retryable=False,
+        )
+    return runner
+
+
 def unwrap_harness_runner(runner) -> HarnessRunner | None:
     candidate = getattr(runner, "harness_runner", runner)
     return candidate if isinstance(candidate, HarnessRunner) else None
 
 
+def runner_execution_contract(runner, *, execution_mode: str | None = None) -> dict:
+    selected = unwrap_harness_runner(runner)
+    mode = getattr(runner, "execution_mode", None) or execution_mode or "auto"
+    if mode not in {"auto", "adaptive"}:
+        raise AgentError("INVALID_EXECUTION_MODE", "不支持该执行方式", retryable=False)
+    return {"execution_mode": mode, "harness": selected.provenance() if selected else None}
+
+
 def persisted_harness(claim: dict) -> dict | None:
-    saved = claim.get("snapshot", {}).get("harness")
+    snapshot = claim.get("snapshot") or claim.get("checkpoint") or {}
+    saved = snapshot.get("harness") or (snapshot.get("execution_contract") or {}).get("harness")
     if saved:
         return saved
-    return next((event for event in reversed(claim.get("events", []))
-                 if event.get("type") == "harness_profile_selected"), None)
+    event = next((event for event in reversed(claim.get("events", []))
+                  if event.get("type") == "harness_profile_selected"), None)
+    if event:
+        return event
+    # Compatibility for runs created before atomic execution contracts.
+    profile_id = snapshot.get("harness_profile_id")
+    return {"profile_id": profile_id, "legacy_profile_reference": True} if profile_id else None
 
 
 def resolve_claim_runner(claim: dict, runner=None):
@@ -237,9 +287,10 @@ def resolve_claim_runner(claim: dict, runner=None):
         runner = selected = get_runner(saved["profile_id"])
     if saved and selected is not None:
         current = selected.provenance()
-        if current["profile_id"] != saved.get("profile_id") or current["profile_sha256"] != saved.get("profile_sha256"):
+        if (current["profile_id"] != saved.get("profile_id") or
+                (saved.get("profile_sha256") and current["profile_sha256"] != saved.get("profile_sha256"))):
             raise AgentError("HARNESS_PROFILE_CONFLICT", "恢复 Runner 与任务原 Profile 不一致", retryable=False)
-        if current["execution_sha256"] != saved.get("execution_sha256"):
+        if not harness_execution_matches(saved, current):
             raise AgentError("HARNESS_IMPLEMENTATION_MISMATCH", "当前源码无法恢复任务开始时的机制实现", retryable=False)
     return runner
 

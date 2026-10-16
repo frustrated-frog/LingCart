@@ -27,7 +27,7 @@ from src.durable import run_conversation, resume_run
 from src.errors import AgentError
 from src.llm import get_model_status
 from src.persistence import RunStore
-from src.harness import get_registry, get_runner
+from src.harness import get_product_runner as get_runner, get_registry, persisted_harness
 from src.trace_projector import project_trace
 
 configure_logging()
@@ -223,6 +223,14 @@ class ResumeRequest(BaseModel):
     session_id: str = Field(..., min_length=1, max_length=64)
 
 
+def _product_resume_runner(session_id, run_id):
+    saved = RunStore().run(run_id)
+    if not saved or saved['session_id'] != session_id:
+        raise HTTPException(404, '没有找到该会话的任务')
+    harness = persisted_harness(saved)
+    return get_runner(harness['profile_id']) if harness else None
+
+
 @app.get("/conversations/{session_id}")
 def conversation(session_id: str):
     return RunStore().conversation(session_id)
@@ -249,7 +257,8 @@ def get_run_trace(run_id: str, session_id: str):
 @app.post("/runs/{run_id}/resume", response_model=ChatResponse)
 def resume(run_id: str, req: ResumeRequest):
     try:
-        return _response(req.session_id, resume_run(req.session_id, run_id))
+        runner = _product_resume_runner(req.session_id, run_id)
+        return _response(req.session_id, resume_run(req.session_id, run_id, runner=runner))
     except AgentError as exc:
         raise HTTPException(status_code=409, detail={"code": exc.code, "message": str(exc), "retryable": exc.retryable}) from exc
 
@@ -274,9 +283,10 @@ def _control_error(error):
 def start_run(req: StartRunRequest):
     from src.session_control import SessionController
     try:
+        runner = get_runner(req.harness_profile) if req.harness_profile else None
         handle = SessionController().start(req.session_id or uuid.uuid4().hex, req.message,
                     request_id=req.request_id, action_id=req.action_id, execution_mode=req.execution_mode,
-                    harness_profile=req.harness_profile)
+                    harness_profile=req.harness_profile, runner=runner)
         return JSONResponse(status_code=200 if handle.get('cached') else 202, content=handle)
     except AgentError as error:
         raise _control_error(error) from error
@@ -325,8 +335,9 @@ def drain_queue(session_id: str):
 
 @app.get('/harness/profiles')
 def harness_profiles():
-    """列出可运行 Profile；不暴露密钥或模型凭据。"""
-    return {'profiles': [{**profile.canonical_payload(), 'profile_sha256': profile.fingerprint}
+    """列出 Profile 及产品可用状态；不暴露密钥或模型凭据。"""
+    return {'profiles': [{**profile.canonical_payload(), 'profile_sha256': profile.fingerprint,
+                          'product_eligible': profile.research.status in {'baseline', 'promoted'}}
                          for profile in get_registry().profiles()]}
 
 
@@ -334,7 +345,8 @@ def harness_profiles():
 def resume_async(run_id: str, req: ResumeRequest):
     from src.session_control import SessionController
     try:
-        return SessionController().start(req.session_id, '', resume_id=run_id)
+        runner = _product_resume_runner(req.session_id, run_id)
+        return SessionController().start(req.session_id, '', resume_id=run_id, runner=runner)
     except AgentError as error:
         raise _control_error(error) from error
 

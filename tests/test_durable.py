@@ -33,6 +33,24 @@ def test_request_retry_returns_same_run_and_one_answer(database):
         run_conversation("另一个请求", "session", request_id="same")
 
 
+def test_request_id_cannot_rebind_to_another_harness_profile(database):
+    from src.harness import get_runner
+
+    baseline = get_runner("adaptive-v1")
+    candidate = get_runner("adaptive-objective-context-v1")
+    first = run_conversation("查询订单 1002 的状态", "profile-idempotency",
+                             request_id="stable", runner=baseline)
+
+    with pytest.raises(AgentError) as error:
+        run_conversation("查询订单 1002 的状态", "profile-idempotency",
+                         request_id="stable", runner=candidate)
+
+    assert error.value.code == "REQUEST_CONFIGURATION_CONFLICT"
+    repeated = run_conversation("查询订单 1002 的状态", "profile-idempotency",
+                                request_id="stable", runner=baseline)
+    assert repeated["cached"] and repeated["run_id"] == first["run_id"]
+
+
 def test_profile_runner_provenance_is_persisted_with_the_run(database):
     from src.harness import get_runner
 
@@ -90,6 +108,45 @@ def test_adaptive_profile_is_restored_without_external_runner(database, monkeypa
     assert [mechanism for _, mechanism in engine.observed] == ["evidence-reference-context"] * 2
     assert result["harness"]["profile_id"] == "adaptive-v1"
     assert result["events"][0]["type"] == "harness_profile_selected"
+
+
+def test_wrong_resume_runner_is_rejected_before_it_can_hold_the_lease(database):
+    from src.harness import get_runner
+
+    class Crash(BaseException):
+        pass
+
+    class CrashBeforeEngine(RunStore):
+        def save_checkpoint(self, run_id, token, snapshot, event=None):
+            super().save_checkpoint(run_id, token, snapshot, event)
+            if event and event["type"] == "harness_profile_selected":
+                raise Crash()
+
+    candidate = get_runner("adaptive-objective-context-v1")
+    with pytest.raises(Crash):
+        run_conversation("查询订单1002状态", "wrong-resume-runner", runner=candidate,
+                         store=CrashBeforeEngine())
+    run_id = RunStore().conversation("wrong-resume-runner")["active_run_id"]
+
+    with pytest.raises(AgentError) as missing_contract:
+        RunStore().claim("wrong-resume-runner", "resume", "", {}, resume_id=run_id)
+    assert missing_contract.value.code == "EXECUTION_CONTRACT_REQUIRED"
+    assert RunStore().run(run_id)["status"] == "INTERRUPTED"
+
+    with pytest.raises(AgentError) as error:
+        resume_run("wrong-resume-runner", run_id, runner=get_runner("baseline-v1"))
+
+    assert error.value.code == "HARNESS_PROFILE_CONFLICT"
+    assert RunStore().run(run_id)["status"] == "INTERRUPTED"
+
+    changed_implementation = get_runner("adaptive-objective-context-v1")
+    changed_implementation._provenance["engine"]["implementation_sha256"] = "changed-after-crash"
+    with pytest.raises(AgentError) as mismatch:
+        resume_run("wrong-resume-runner", run_id, runner=changed_implementation)
+
+    assert mismatch.value.code == "HARNESS_IMPLEMENTATION_MISMATCH"
+    assert RunStore().run(run_id)["status"] == "INTERRUPTED"
+    assert resume_run("wrong-resume-runner", run_id)["harness"]["profile_id"] == candidate.profile.profile_id
 
 
 def test_completed_run_keeps_a_versioned_terminal_checkpoint(database):

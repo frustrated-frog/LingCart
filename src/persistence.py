@@ -26,6 +26,44 @@ def json_value(value):
     return json.loads(json.dumps(value, ensure_ascii=False, default=str))
 
 
+def _stored_execution_contract(snapshot):
+    contract = snapshot.get("execution_contract")
+    if isinstance(contract, dict):
+        return contract
+    harness = snapshot.get("harness")
+    profile_id = snapshot.get("harness_profile_id")
+    if harness is None and profile_id:
+        harness = {"profile_id": profile_id, "legacy_profile_reference": True}
+    mode = snapshot.get("execution_mode")
+    if mode is None and isinstance(harness, dict):
+        mode = (harness.get("engine") or {}).get("execution_mode")
+    if harness is None:
+        # Pre-contract runs used these exact built-in paths. Keep their cached
+        # idempotency semantics without weakening newly recorded contracts.
+        harness = {"profile_id": "adaptive-v1" if mode == "adaptive" else "baseline-v1",
+                   "legacy_profile_reference": True}
+    return {"execution_mode": mode or "auto", "harness": harness}
+
+
+def _contracts_match(stored, requested, *, require_exact_execution=False):
+    if stored.get("execution_mode") != requested.get("execution_mode"):
+        return False
+    left, right = stored.get("harness"), requested.get("harness")
+    if (left is None) != (right is None):
+        return False
+    if left is None:
+        return True
+    if left.get("profile_id") != right.get("profile_id"):
+        return False
+    if left.get("profile_sha256") and right.get("profile_sha256") and left["profile_sha256"] != right["profile_sha256"]:
+        return False
+    if require_exact_execution:
+        from src.harness.registry import harness_execution_matches
+        if not harness_execution_matches(left, right):
+            return False
+    return True
+
+
 @contextmanager
 def transaction():
     with tools._SessionLocal() as session:
@@ -61,7 +99,9 @@ class RunStore:
             return {"state": conversation.state, "active_run_id": conversation.active_run_id,
                     "messages": [{"role": m.role, "content": m.content, "run_id": m.run_id} for m in reversed(messages)]}
 
-    def claim(self, session_id, request_id, request, limits, *, resume_id=None, action_id=None):
+    def claim(self, session_id, request_id, request, limits, *, resume_id=None, action_id=None,
+              execution_contract=None):
+        requested_contract = json_value(execution_contract) if execution_contract is not None else None
         with transaction() as session:
             conversation = session.get(Conversation, session_id)
             if conversation is None:
@@ -75,6 +115,42 @@ class RunStore:
             if run is not None:
                 if not resume_id and run.request != request:
                     raise AgentError("REQUEST_ID_CONFLICT", "同一请求编号不能用于不同的需求", retryable=False)
+                checkpoint = session.get(Checkpoint, run.run_id)
+                snapshot = restore_runtime_snapshot(checkpoint.payload, run.run_id)
+                if (run.result is None and snapshot.get("execution_contract") is not None
+                        and requested_contract is None):
+                    raise AgentError(
+                        "EXECUTION_CONTRACT_REQUIRED",
+                        "继续未完成任务前必须校验原始执行契约",
+                        retryable=False,
+                    )
+                if requested_contract is not None and not _contracts_match(
+                        _stored_execution_contract(snapshot), requested_contract,
+                        require_exact_execution=run.result is None):
+                    stored_contract = _stored_execution_contract(snapshot)
+                    stored_harness = stored_contract.get("harness") or {}
+                    requested_harness = requested_contract.get("harness") or {}
+                    implementation_changed = (
+                        resume_id
+                        and stored_contract.get("execution_mode") == requested_contract.get("execution_mode")
+                        and stored_harness.get("profile_id") == requested_harness.get("profile_id")
+                        and stored_harness.get("profile_sha256") == requested_harness.get("profile_sha256")
+                        and not stored_harness.get("legacy_profile_reference")
+                        and not requested_harness.get("legacy_profile_reference")
+                    )
+                    if implementation_changed:
+                        from src.harness.registry import harness_execution_matches
+                        implementation_changed = not harness_execution_matches(
+                            stored_harness, requested_harness)
+                    code = ("HARNESS_IMPLEMENTATION_MISMATCH" if implementation_changed else
+                            "HARNESS_PROFILE_CONFLICT" if resume_id else "REQUEST_CONFIGURATION_CONFLICT")
+                    message = ("当前源码无法恢复任务开始时的机制实现" if implementation_changed else
+                               "恢复请求的 Harness Profile 或执行模式与原任务不一致" if resume_id else
+                               "同一请求编号不能切换 Harness Profile 或执行模式")
+                    raise AgentError(code, message, retryable=False)
+                if not resume_id and run.limits != limits:
+                    raise AgentError("REQUEST_CONFIGURATION_CONFLICT",
+                                     "同一请求编号不能改变运行预算", retryable=False)
                 if run.result is not None:
                     return {"cached": run.result, "run_id": run.run_id}
                 if run.lease_token and run.lease_until and run.lease_until > utcnow():
@@ -95,6 +171,7 @@ class RunStore:
                     run.run_id,
                     conversation=conversation.state,
                     history=[{"role": m.role, "content": m.content} for m in reversed(history)],
+                    execution_contract=requested_contract,
                 )
                 session.add(Checkpoint(run_id=run.run_id, payload=snapshot))
                 session.add(ConversationMessage(session_id=session_id, run_id=run.run_id, role="user", content=request))

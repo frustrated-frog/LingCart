@@ -34,7 +34,7 @@ Conversation messages and pending approvals are saved in SQLite. The browser URL
 
 工作台可启用“允许助手按执行结果调整选购步骤”：由模型理解目标并在每次观察后选择下一步，可调整搜索、比较候选、澄清或提交推荐；执行层重新核验价格、库存和硬约束，失败结果交回模型。选购与订单查询等复合请求逐项目标核验，单项完成不会冒充全部完成；最终完成前再次刷新推荐商品。未配置模型时明确报告自主模式未执行。运行中支持补充要求、取消后续步骤和排队追问。异步 API 使用 `POST /runs`，持久事件通过 SSE 支持断线续传；已提交业务操作在取消和恢复后仍保留证据。
 
-详见 [自主计划](docs/adaptive-planning.md)、[会话控制、上下文及偏好](docs/session-control-memory.md) 与 [持续论文复现底座](docs/research-infrastructure-v1.md)。真实评测入口 `eval/run_live_eval.py` 包含固定 20 项任务、开发/测试各十项、默认三次重复；未配置模型时返回 `NOT_RUN`。Harness Profile 会冻结执行引擎、真实绑定的机制实现和研究来源。候选实验必须提供机器可校验的 `experiment-spec.json`，并保留逐文件源码、Stable Kernel、Prompt、引擎、机制与 Profile 指纹。
+详见 [自主计划](docs/adaptive-planning.md)、[会话控制、上下文及偏好](docs/session-control-memory.md) 与 [持续论文复现底座](docs/research-infrastructure-v1.md)。真实评测入口 `eval/run_live_eval.py` 包含固定 20 项任务、开发/测试各十项、默认三次重复；未配置模型时返回 `NOT_RUN`。Harness Profile 会冻结执行引擎、真实绑定的机制实现和研究来源。候选实验必须提供机器可校验的 `experiment-spec.json` 和冻结基线，并保留逐文件源码、Stable Kernel 责任域、Prompt、引擎、机制、Profile、Python 运行时与依赖锁指纹。候选 Profile 只允许从研究评测入口执行；产品 `/chat` 与 `/runs` 仅接受 `baseline` 或 `promoted` Profile。
 
 ## Live demo
 
@@ -130,7 +130,8 @@ Goal verification + terminal result + unique conversation reply
 
 1. `python -m venv venv` and activate it
    (`.\venv\Scripts\Activate.ps1` on Windows, `source venv/bin/activate` on macOS/Linux).
-2. `pip install -r requirements.txt`
+2. 日常开发可执行 `pip install -r requirements.txt`；复现实验和 CI 使用
+   `pip install --require-hashes -r requirements.lock` 安装完全锁定的依赖。
 3. Copy `.env.example` to `.env`, then configure at least one supported model
    provider. Gemini remains the zero-migration default; OpenAI, Groq and any
    OpenAI-compatible endpoint are also supported.
@@ -207,6 +208,14 @@ python eval/run_task_eval.py --gate
 ```
 docker build -t support-agent .
 docker run -p 8501:8501 -e GEMINI_API_KEY=your_key support-agent
+```
+
+Docker 默认固定到 Python `3.11.15` 并从 `requirements.lock` 校验哈希安装。
+正式论文实验应以不可变镜像引用构建，并把同一 digest 写入报告：
+
+```bash
+docker build --build-arg PYTHON_IMAGE=python@sha256:<digest> -t lingcart-experiment .
+docker run -e LINGCART_IMAGE_DIGEST=sha256:<digest> lingcart-experiment
 ```
 
 ## Deploy (Streamlit Community Cloud)

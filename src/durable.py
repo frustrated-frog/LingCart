@@ -52,8 +52,22 @@ def run_conversation(message, session_id, *, request_id=None, action_id=None, li
         if runner is run_adaptive or getattr(runner, "execution_mode", None) == "adaptive":
             limits = BudgetLimits.adaptive()
     store = store or RunStore()
+    from src.harness import resolve_claim_runner, runner_execution_contract
+    execution_contract = None
+    if resume_id is not None and runner is None:
+        saved = store.run(resume_id)
+        if not saved or saved["session_id"] != session_id:
+            raise AgentError("RUN_NOT_FOUND", "没有找到该会话的任务", retryable=False)
+        if saved["result"] is None:
+            # Verify persisted code identity before claim() can grant a lease.
+            # The transaction then compares this same contract atomically.
+            runner = resolve_claim_runner(saved)
+            execution_contract = runner_execution_contract(runner)
+    else:
+        execution_contract = runner_execution_contract(runner)
     claim = store.claim(session_id, request_id or uuid.uuid4().hex, message,
-                        (limits or BudgetLimits()).__dict__, resume_id=resume_id, action_id=action_id)
+                        (limits or BudgetLimits()).__dict__, resume_id=resume_id, action_id=action_id,
+                        execution_contract=execution_contract)
     if "cached" in claim:
         # A retried old request never overwrites the current conversation state.
         return {**claim["cached"], "cached": True}

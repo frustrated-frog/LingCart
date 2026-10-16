@@ -38,14 +38,54 @@ def test_health():
     assert response.json() == {"status": "ok"}
 
 
-def test_harness_profiles_are_discoverable_and_api_can_select_one():
+def test_harness_profiles_are_discoverable_but_candidates_are_research_only():
     profiles = client.get('/harness/profiles')
     assert profiles.status_code == 200
     assert {'baseline-v1', 'adaptive-v1', 'adaptive-objective-context-v1'} <= {
         item['profile_id'] for item in profiles.json()['profiles']}
+    candidate = next(item for item in profiles.json()['profiles']
+                     if item['profile_id'] == 'adaptive-objective-context-v1')
+    assert candidate['product_eligible'] is False
     result = client.post('/chat', json={'message': '查询订单1002状态',
-                                        'harness_profile': 'adaptive-objective-context-v1'}).json()
-    assert result['harness']['profile_id'] == 'adaptive-objective-context-v1'
+                                        'harness_profile': 'adaptive-objective-context-v1'})
+    assert result.status_code == 409
+    assert result.json()['detail']['code'] == 'HARNESS_PROFILE_NOT_APPROVED'
+    baseline = client.post('/chat', json={'message': '查询订单1002状态',
+                                          'harness_profile': 'adaptive-v1'}).json()
+    assert baseline['harness']['profile_id'] == 'adaptive-v1'
+
+
+def test_async_product_api_also_rejects_candidate_profile():
+    result = client.post('/runs', json={'message': '查询订单1002状态',
+                                        'harness_profile': 'adaptive-objective-context-v1'})
+    assert result.status_code == 409
+    assert result.json()['detail']['code'] == 'HARNESS_PROFILE_NOT_APPROVED'
+
+
+def test_product_resume_endpoints_cannot_reopen_a_candidate_run():
+    from src.durable import run_conversation
+    from src.harness import get_runner as get_research_runner
+    from src.persistence import RunStore
+
+    class Crash(BaseException):
+        pass
+
+    class CrashAfterBinding(RunStore):
+        def save_checkpoint(self, run_id, token, snapshot, event=None):
+            super().save_checkpoint(run_id, token, snapshot, event)
+            if event and event['type'] == 'harness_profile_selected':
+                raise Crash()
+
+    with pytest.raises(Crash):
+        run_conversation('查询订单1002状态', 'candidate-resume', store=CrashAfterBinding(),
+                         runner=get_research_runner('adaptive-objective-context-v1'))
+    run_id = RunStore().conversation('candidate-resume')['active_run_id']
+
+    for suffix in ('resume', 'resume-async'):
+        response = client.post(f'/runs/{run_id}/{suffix}', json={'session_id': 'candidate-resume'})
+        assert response.status_code == 409
+        assert response.json()['detail']['code'] == 'HARNESS_PROFILE_NOT_APPROVED'
+    assert RunStore().run(run_id)['status'] == 'INTERRUPTED'
 
 
 def test_model_status_is_sanitized_and_does_not_probe_provider(monkeypatch):

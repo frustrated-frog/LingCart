@@ -1,13 +1,16 @@
 # AI Customer Support Agent — container image for the Streamlit app.
-FROM python:3.11-slim
+# 正式实验可传入带 sha256 digest 的镜像引用，避免基础镜像标签漂移：
+# docker build --build-arg PYTHON_IMAGE=python@sha256:<digest> ...
+ARG PYTHON_IMAGE=python:3.11.15-slim
+FROM ${PYTHON_IMAGE}
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 
 WORKDIR /app
 
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+COPY requirements.lock .
+RUN pip install --no-cache-dir --require-hashes -r requirements.lock
 
 COPY . .
 

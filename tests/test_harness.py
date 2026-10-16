@@ -1,11 +1,19 @@
 from dataclasses import dataclass
+from copy import deepcopy
+import json
 
 import pytest
 
 from src.errors import AgentError
 from src.harness.contracts import RunRequest
 from src.harness.profile import EngineRef, HarnessProfile, ResearchOrigin
-from src.harness.registry import HarnessRegistry, HarnessRunner, get_registry, resolve_claim_runner
+from src.harness.registry import (
+    HarnessRegistry,
+    HarnessRunner,
+    get_registry,
+    harness_execution_matches,
+    resolve_claim_runner,
+)
 from src.runtime import BudgetLimits, RunRuntime, runtime_scope
 
 
@@ -42,20 +50,39 @@ def test_built_in_profiles_are_versioned_and_reproducible():
 
 
 def test_two_profiles_bind_different_context_implementations_to_same_engine():
-    from src.task_plan import TaskPlan
+    from src.task_plan import TaskPlan, TaskStep
 
     baseline = get_registry().resolve("adaptive-v1")
     candidate = get_registry().resolve("adaptive-objective-context-v1")
     assert baseline.engine is candidate.engine
-    baseline_context = baseline.build_context("推荐耳机")
-    candidate_context = candidate.build_context("推荐耳机")
-    state = {"request": "推荐耳机", "goal": None, "goal_revision": 0, "next_steps": None,
-             "working_memory": None, "objective_ledger": []}
-    left, left_manifest = baseline_context.decision_messages("系统", dict(state), TaskPlan([], []), [], max_chars=2000)
-    right, right_manifest = candidate_context.decision_messages("系统", dict(state), TaskPlan([], []), [], max_chars=2000)
+    plan = TaskPlan(["verified", "open"], [
+        TaskStep("verified-old", "shopping", "search_products", {}, status="SUCCEEDED", result={
+            "products": [{"product_id": "OLD", "name": "旧证据", "price": 1, "summary": "A" * 1200}],
+            "observation": "A" * 500,
+        }),
+        TaskStep("latest-open", "shopping", "search_products", {}, status="SUCCEEDED", result={
+            "products": [{"product_id": "NEW", "name": "新证据", "price": 2, "summary": "B" * 1200}],
+            "observation": "B" * 500,
+        }),
+    ])
+    state = {"request": "对比复合任务证据", "goal": None, "goal_revision": 0, "next_steps": None,
+             "working_memory": None, "objective_ledger": [
+                 {"objective_id": "verified", "status": "VERIFIED", "evidence_refs": ["verified-old"]},
+                 {"objective_id": "open", "status": "PENDING", "evidence_refs": []},
+             ]}
+    left, left_manifest = baseline.build_context(state["request"]).decision_messages(
+        "系统", dict(state), plan, [], max_chars=3500)
+    right, right_manifest = candidate.build_context(state["request"]).decision_messages(
+        "系统", dict(state), plan, [], max_chars=3500)
+    left_observations = json.loads(left[1].content)["observations"]
+    right_observations = json.loads(right[1].content)["observations"]
+    left_full = [item["step_id"] for item in left_observations if not item["result"].get("archived")]
+    right_full = [item["step_id"] for item in right_observations if not item["result"].get("archived")]
+
     assert left_manifest["selection_strategy"] == "recent-first"
     assert right_manifest["selection_strategy"] == "objective-first"
-    assert left[1].content != right[1].content
+    assert left_full == ["latest-open"]
+    assert right_full == ["verified-old"]
     assert baseline.provenance()["execution_sha256"] != candidate.provenance()["execution_sha256"]
 
 
@@ -89,11 +116,23 @@ def test_one_run_cannot_switch_profiles():
 def test_resume_rejects_a_profile_whose_bound_implementation_changed():
     runner = get_registry().resolve("adaptive-v1")
     saved = runner.provenance()
-    saved["execution_sha256"] = "0" * 64
+    saved["engine"]["implementation_sha256"] = "0" * 64
     claim = {"snapshot": {"harness": saved}, "events": []}
 
     with pytest.raises(AgentError) as error:
         resolve_claim_runner(claim)
 
     assert error.value.code == "HARNESS_IMPLEMENTATION_MISMATCH"
+
+
+def test_execution_identity_ignores_git_revision_but_not_source_fingerprints():
+    current = get_registry().resolve("adaptive-v1").provenance()
+    another_commit = deepcopy(current)
+    another_commit["source_revision"] = "unrelated-documentation-commit"
+    another_commit["execution_sha256"] = "legacy-hash-that-included-the-revision"
+
+    assert harness_execution_matches(current, another_commit)
+
+    another_commit["mechanisms"][0]["implementation_sha256"] = "changed-source"
+    assert not harness_execution_matches(current, another_commit)
 

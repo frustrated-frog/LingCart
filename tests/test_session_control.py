@@ -75,6 +75,38 @@ def test_async_controller_derives_mode_and_budget_from_harness_profile(database)
     assert result['budget']['limits']['max_model_calls'] == BudgetLimits.adaptive().max_model_calls
 
 
+def test_profile_contract_is_atomic_before_background_submission(database, monkeypatch):
+    import src.session_control as control
+    from src.harness import resolve_claim_runner
+
+    class CrashBeforeSubmit(BaseException):
+        pass
+
+    class CrashingPool:
+        claim = None
+
+        def submit(self, _work, claim, _runner):
+            self.claim = claim
+            raise CrashBeforeSubmit()
+
+    pool = CrashingPool()
+    monkeypatch.setattr(control, '_pool', pool)
+    controller = SessionController()
+    with pytest.raises(CrashBeforeSubmit):
+        controller.start('pre-bind-crash', '查询订单1002状态',
+                         harness_profile='adaptive-objective-context-v1')
+
+    saved = ControlStore().run(pool.claim['run_id'])
+    assert saved['events'] == []
+    assert saved['checkpoint']['execution_mode'] == 'adaptive'
+    assert saved['checkpoint']['execution_contract']['harness']['profile_id'] == 'adaptive-objective-context-v1'
+    assert resolve_claim_runner(pool.claim).profile.profile_id == 'adaptive-objective-context-v1'
+
+    ControlStore().interrupt(pool.claim['run_id'], pool.claim['token'])
+    result = resume_run('pre-bind-crash', pool.claim['run_id'])
+    assert result['harness']['profile_id'] == 'adaptive-objective-context-v1'
+
+
 def test_cancel_keeps_completed_observation_and_prevents_next_tool(database):
     def runner(message, **kwargs):
         context = current_runtime()
