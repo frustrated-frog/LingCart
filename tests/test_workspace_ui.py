@@ -1,5 +1,3 @@
-from pathlib import Path
-
 import pytest
 from streamlit.testing.v1 import AppTest
 
@@ -18,7 +16,9 @@ def isolated_db():
 
 
 def test_workspace_order_query_creates_an_inspectable_record():
-    app = AppTest.from_file(str(Path(__file__).parents[1] / "app.py")).run(timeout=15)
+    app = AppTest.from_string(
+        "from src.ui.pages import init_state, home_page\ninit_state()\nhome_page()"
+    ).run(timeout=15)
     assert not app.exception
     app.button(key="quick_查物流").click().run(timeout=15)
     assert not app.exception
@@ -27,7 +27,9 @@ def test_workspace_order_query_creates_an_inspectable_record():
 
 
 def test_workspace_shopping_scenario_returns_actual_catalog_results():
-    app = AppTest.from_file(str(Path(__file__).parents[1] / "app.py")).run(timeout=15)
+    app = AppTest.from_string(
+        "from src.ui.pages import init_state, home_page\ninit_state()\nhome_page()"
+    ).run(timeout=15)
     app.button(key="scenario_0").click().run(timeout=15)
     assert not app.exception
     result = app.session_state["messages"][-1]["result"]
@@ -47,13 +49,14 @@ def test_catalog_selection_builds_comparison_from_two_real_records():
     assert not app.checkbox(key="compare_P1309S").value
 
 
-def test_order_page_request_refreshes_pending_action_in_sidebar():
-    app = AppTest.from_file(str(Path(__file__).parents[1] / "app.py")).run(timeout=15)
+def test_business_sandbox_refreshes_queued_pending_action():
+    app = AppTest.from_string(
+        "from src.ui.pages import init_state, home_page\ninit_state()\nhome_page()"
+    )
     app.session_state["queued_prompt"] = "帮我支付订单 1003"
     app.run(timeout=15)
     assert not app.exception
     assert app.session_state["memory"].pending_action["order_id"] == 1003
-    assert next(button for button in app.button if button.label == "新建对话").disabled
     assert tools.get_payment_status(1003)["status"] == "pending"
 
 

@@ -9,16 +9,17 @@ routes each request to a specialist agent (orders, refunds, payments, FAQ) that
 calls real backend tools to resolve it — with deterministic task intake,
 bounded tool execution, typed failures, approval boundaries, and observable runs.
 
-## 选序消费工作空间
+## LingCart Agent Engineering
 
-Streamlit 界面提供六个通过侧栏连接的页面：
+Streamlit 默认进入桌面端 Agent 工程控制台，页面分成两个工作域：
 
-- **工作台**: start or continue a conversation, query active orders, and explore shopping scenarios.
-- **商品发现**: search 60 fictional demo products across headphones, keyboards, and USB-C hubs; filter by budget and stock; compare two or three products.
-- **订单与售后**: browse the existing seed orders, inspect stored shipment events, and pass an order into the assistant. Payment/refund writes require a separate confirmation.
-- **任务记录**: view the latest 100 actual run snapshots saved in SQLite, including results and historical statuses. Interrupted tasks retain checkpoints and can be resumed.
-- **我的偏好**：明确确认保存预算、品类和特征，查看版本、更新或忘记；新对话沿用当前偏好档案，当前需求的明确条件优先。
-- **Agent Lab**: inspect actual events, tool parameters/results, task plans, dependencies, verified outcomes, budgets, token usage, latency, and terminal reasons for a selected run.
+- **Agent 控制台**：从真实 Registry、任务集、RunStore 和模型网关读取系统状态，展示当前生产基线、候选机制、最近运行与 Stable Kernel 边界。
+- **运行检查**：沿 Execution Spine 检查事件顺序、Harness 身份、上下文、目标证据、独立审查、工具账本与终止原因。
+- **实验契约**：对照 baseline/candidate 的机制指纹，展示唯一变更、test split、重复次数和质量 Gate；缺少可比报告时明确禁止声称增益。
+- **机制注册表**：比较 planning、context、memory、verification、tool protocol 五个扩展槽位，以及源码与执行指纹。
+- **数据集覆盖**：浏览固定离线回归、真实模型消费任务和自主 Agent 专项任务的类别、分组、轮次与机器断言。
+
+业务沙盒保留消费工作台、商品发现、订单与售后、任务记录和我的偏好，用真实业务路径持续产生可检查的运行证据。支付与退款写操作仍要求独立确认；历史中未记录 Harness 身份的运行会显示为 `legacy/unrecorded`，不会被自动归入当前 Profile。
 
 Product discovery and comparison also work through `/chat`, for example
 `推荐通勤降噪耳机，预算 500 元以内` and `对比商品 P1101 和 P1102`.

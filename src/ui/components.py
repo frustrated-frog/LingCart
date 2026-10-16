@@ -40,6 +40,132 @@ def page_header(title: str, subtitle: str) -> None:
                 f'<div class="ws-title">{esc(title)}</div><div class="ws-subtitle">{esc(subtitle)}</div>', unsafe_allow_html=True)
 
 
+def engineering_header(code: str, title: str, subtitle: str, *, marker: str = "LIVE SYSTEM") -> None:
+    """Header for engineering surfaces with stable English identifiers."""
+
+    st.markdown(
+        f'<div class="eng-header">'
+        f'<div class="eng-eyebrow"><span>{esc(code)}</span><span class="eng-live-marker">'
+        f'<i></i>{esc(marker)}</span></div>'
+        f'<div class="eng-title">{esc(title)}</div>'
+        f'<div class="eng-subtitle">{esc(subtitle)}</div>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+
+
+def section_heading(index: str, title: str, note: str | None = None) -> None:
+    detail = f'<span>{esc(note)}</span>' if note else ""
+    st.markdown(
+        f'<div class="eng-section-heading"><div><b>{esc(index)}</b>{esc(title)}</div>{detail}</div>',
+        unsafe_allow_html=True,
+    )
+
+
+def telemetry_strip(items: list[tuple[str, str, str, str]]) -> None:
+    """Render dense system facts; every value is expected to be source-backed."""
+
+    cells = "".join(
+        f'<div class="eng-telemetry-cell {esc(tone)}">'
+        f'<div class="eng-telemetry-label">{esc(label)}</div>'
+        f'<div class="eng-telemetry-value">{esc(value)}</div>'
+        f'<div class="eng-telemetry-note">{esc(note)}</div></div>'
+        for label, value, note, tone in items
+    )
+    st.markdown(f'<div class="eng-telemetry">{cells}</div>', unsafe_allow_html=True)
+
+
+def mechanism_rail(profile: dict, reference: dict | None = None) -> None:
+    """Show the five extension slots as a comparable mechanism fingerprint."""
+
+    from src.ui.engineering_data import SLOT_LABELS, SLOT_ORDER
+
+    mechanisms = profile.get("mechanisms", {})
+    reference_mechanisms = (reference or {}).get("mechanisms", {})
+    cells = []
+    for slot in SLOT_ORDER:
+        mechanism = mechanisms.get(slot)
+        changed = bool(reference is not None and mechanism != reference_mechanisms.get(slot))
+        state = "empty" if mechanism is None else "changed" if changed else "active"
+        mechanism_id = mechanism.get("id") if mechanism else "unbound"
+        version = f'v{mechanism.get("version")}' if mechanism else "—"
+        cells.append(
+            f'<div class="eng-mechanism {state}">'
+            f'<div class="eng-slot-index">{SLOT_ORDER.index(slot) + 1:02d}</div>'
+            f'<div class="eng-slot-label">{esc(SLOT_LABELS[slot])}</div>'
+            f'<div class="eng-slot-id">{esc(mechanism_id)}</div>'
+            f'<div class="eng-slot-version">{esc(version)}</div></div>'
+        )
+    status = (profile.get("research") or {}).get("status", "unknown")
+    st.markdown(
+        f'<div class="eng-fingerprint-head"><span>{esc(profile.get("profile_id", "unknown"))}</span>'
+        f'<span>{esc(profile.get("engine", {}).get("id", "engine"))} · {esc(status)}</span></div>'
+        f'<div class="eng-mechanism-rail">{"".join(cells)}</div>',
+        unsafe_allow_html=True,
+    )
+
+
+_EVENT_LABELS = {
+    "harness_profile_selected": ("PROFILE", "装配配置"),
+    "mechanism_applied": ("MECHANISM", "应用机制"),
+    "intake": ("INTAKE", "解析需求"),
+    "route_decision": ("ROUTE", "选择路径"),
+    "plan_created": ("PLAN", "生成计划"),
+    "step_started": ("STEP", "开始步骤"),
+    "step_completed": ("STEP", "完成步骤"),
+    "model_call": ("MODEL", "模型调用"),
+    "tool_call": ("TOOL", "调用工具"),
+    "tool_result": ("RESULT", "工具结果"),
+    "verification": ("VERIFY", "完成核验"),
+    "verification_failed": ("VERIFY", "核验未通过"),
+    "request_audited": ("AUDIT", "独立审查"),
+    "control_applied": ("CONTROL", "运行时调整"),
+    "plan_replanned": ("REPLAN", "重规划"),
+    "error": ("ERROR", "执行错误"),
+    "terminal": ("END", "运行结束"),
+}
+
+
+def event_label(event: dict) -> tuple[str, str]:
+    kind = event.get("type", "event")
+    code, label = _EVENT_LABELS.get(kind, (kind.upper(), kind.replace("_", " ")))
+    if kind in {"tool_call", "tool_result"} and event.get("tool"):
+        label = TOOLS.get(event["tool"], event["tool"])
+    elif kind == "model_call" and event.get("purpose"):
+        label = f"模型 · {event['purpose']}"
+    elif kind == "terminal" and event.get("status"):
+        label = STATUSES.get(event["status"], event["status"])
+    return code, label
+
+
+def execution_spine(events: list[dict]) -> None:
+    if not events:
+        st.markdown('<div class="eng-empty-inline">NO EVENTS RECORDED · 暂无事件</div>', unsafe_allow_html=True)
+        return
+    nodes = []
+    for index, event in enumerate(events):
+        code, label = event_label(event)
+        kind = event.get("type", "event")
+        tone = "terminal" if kind == "terminal" else "error" if kind in {"error", "verification_failed", "hook_failed"} else ""
+        sequence = event.get("sequence", index + 1)
+        sequence_label = f"{sequence:02d}" if isinstance(sequence, int) else str(sequence)
+        nodes.append(
+            f'<div class="eng-spine-node {tone}"><div class="eng-spine-dot"></div>'
+            f'<div class="eng-spine-seq">{esc(sequence_label)} / {esc(code)}</div>'
+            f'<div class="eng-spine-label">{esc(label)}</div></div>'
+        )
+    st.markdown(f'<div class="eng-spine">{"".join(nodes)}</div>', unsafe_allow_html=True)
+
+
+def definition_grid(items: list[tuple[str, str]]) -> None:
+    st.markdown(
+        '<div class="eng-definition-grid">' + "".join(
+            f'<div><span>{esc(label)}</span><b>{esc(value)}</b></div>' for label, value in items
+        ) + '</div>',
+        unsafe_allow_html=True,
+    )
+
+
 def order_summary(order: dict) -> None:
     name = ORDER_LABELS.get(order["item"], order["item"])
     st.markdown(f'<div class="ws-order-heading"><div class="ws-order"><div class="ws-order-icon">↗</div><div>'

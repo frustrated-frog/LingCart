@@ -43,7 +43,7 @@ def ask_assistant(prompt):
 
 def view_run(run_id):
     st.session_state.selected_run = run_id
-    st.switch_page(st.session_state.workspace_pages["lab"])
+    st.switch_page(st.session_state.workspace_pages["runs"])
 
 
 def restore_conversation():
@@ -177,7 +177,8 @@ def home_page():
                 st.caption(f"{local_time(run['created_at'])} · {STATUSES.get(run['result'].get('status'), '未知状态')}")
                 if st.button("查看执行记录", key=f"home_run_{run['run_id']}", width="stretch"):
                     view_run(run["run_id"])
-            st.page_link(st.session_state.workspace_pages["tasks"], label="全部任务记录", icon=":material/history:")
+            if "tasks" in st.session_state.get("workspace_pages", {}):
+                st.page_link(st.session_state.workspace_pages["tasks"], label="全部任务记录", icon=":material/history:")
     if st.session_state.archive_error:
         st.warning("本次回复已保留，但任务记录保存失败。请检查本地数据库；不要重复提交已确认的支付或退款。")
 
@@ -322,44 +323,11 @@ def tasks_page():
 
 
 def lab_page():
-    page_header("Agent Lab", "查看真实执行路径、工具参数、运行结果与终止原因。")
-    runs = list_runs()
-    if not runs:
-        st.info("尚无执行记录。先在工作台运行订单查询或商品搜索，再到这里查看。")
-        st.page_link(st.session_state.workspace_pages["home"], label="前往工作台", icon=":material/arrow_forward:")
-        return
-    ids = [run["run_id"] for run in runs]
-    selected = st.session_state.selected_run
-    chosen = st.selectbox("选择任务", ids, index=ids.index(selected) if selected in ids else 0,
-                          format_func=lambda value: next(f"{local_time(r['created_at'])} · {r['request']}" for r in runs if r['run_id'] == value))
-    st.session_state.selected_run = chosen
-    run = next(r for r in runs if r["run_id"] == chosen)
-    st.caption(run["request"])
-    with st.container(border=True, key="ws_panel_lab"):
-        render_run(run["result"], detailed=True)
-    with st.expander("任务理解结果"):
-        st.json(run["result"].get("intake", {}))
-    with st.expander('原始需求与最终证据的独立审查'):
-        st.json({'需求审查': run['result'].get('request_audit'), '映射审查': run['result'].get('binding_audit'),
-                 '完成审查': run['result'].get('completion_audit')})
-    saved = RunStore().run(chosen)
-    if saved:
-        with st.expander('结构化上下文与证据引用'):
-            st.json(saved['checkpoint'].get('context', {}))
-        with st.expander('工作笔记与已读取证据'):
-            adaptive = saved['checkpoint'].get('adaptive', {})
-            st.json({'working_memory': adaptive.get('working_memory'),
-                     'evidence_access': adaptive.get('evidence_access', {}),
-                     'read_evidence_refs': adaptive.get('read_evidence_refs', [])})
-        with st.expander('逐项目标与完成证据'):
-            adaptive = saved['checkpoint'].get('adaptive', {})
-            st.json({'goal': adaptive.get('goal'), 'objective_ledger': adaptive.get('objective_ledger', []),
-                     'binding_revision': adaptive.get('binding_revision', 0),
-                     'constraint_bindings': adaptive.get('constraint_bindings', {}),
-                     'verification': run['result'].get('plan', {}).get('verification', {})})
-        with st.expander('运行控制与计划版本'):
-            st.json(ControlStore().commands(saved['session_id'], chosen))
-            st.json(saved['checkpoint'].get('adaptive', {}).get('journal', []))
+    """Compatibility entry point for old links and direct imports."""
+
+    from src.ui.engineering_pages import runs_page
+
+    runs_page()
 
 
 @st.fragment(run_every='1s')

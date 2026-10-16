@@ -1,0 +1,253 @@
+"""Read-only view models for the Agent engineering console.
+
+The UI deliberately reads the same registry, run archive and evaluation files
+used by the runtime.  Keeping these adapters free of Streamlit makes every
+number shown in the console testable and prevents decorative demo metrics from
+drifting away from the system they describe.
+"""
+from __future__ import annotations
+
+from collections import Counter
+from datetime import UTC, datetime
+import json
+from pathlib import Path
+from typing import Any
+
+from src.harness import get_registry, get_runner
+from src.model_gateway import get_model_status
+from src.workspace import list_runs
+
+
+ROOT = Path(__file__).resolve().parents[2]
+SLOT_ORDER = ("planning", "context", "memory", "verification", "tool_protocol")
+SLOT_LABELS = {
+    "planning": "规划",
+    "context": "上下文",
+    "memory": "记忆",
+    "verification": "核验",
+    "tool_protocol": "工具协议",
+}
+RESEARCH_STATUS_LABELS = {"baseline": "基线", "candidate": "候选", "promoted": "已晋升"}
+CATEGORY_LABELS = {
+    "order": "订单查询",
+    "refund": "退款处理",
+    "payment": "支付处理",
+    "payment_approval": "支付审批",
+    "refund_approval": "退款审批",
+    "shopping": "商品推荐",
+    "shopping_validation": "选购核验",
+    "faq": "规则问答",
+    "human": "人工转交",
+    "compound": "复合任务",
+    "context": "上下文连续性",
+    "clarification": "澄清",
+    "rule_rejection": "规则拒绝",
+    "data_absence": "数据缺失",
+    "model_resilience": "模型韧性",
+    "unsupported": "不支持请求",
+    "soft_preferences": "软偏好",
+    "negation": "否定约束",
+    "negation_scope": "否定范围",
+    "coverage": "目标覆盖",
+    "multiple_orders": "多订单",
+    "policy_evidence": "规则证据",
+    "unknown_policy": "未知规则",
+    "selection": "候选选择",
+    "no_match": "无匹配结果",
+    "long_history": "长历史",
+    "price_change": "价格变化",
+    "stock_change": "库存变化",
+    "steering": "运行时调整",
+    "combined_constraints": "组合约束",
+    "multiple_products": "多商品",
+    "two_categories": "跨品类",
+    "conflict": "约束冲突",
+    "numeric_constraint": "数值约束",
+    "multi_turn": "多轮任务",
+}
+
+
+def _read_json(path: Path) -> Any:
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def profile_catalog() -> list[dict]:
+    """Return resolved, executable profiles with immutable provenance."""
+
+    profiles = []
+    for profile in get_registry().profiles():
+        provenance = get_runner(profile.profile_id).provenance()
+        mechanisms = {item.slot: item.model_dump() for item in profile.mechanisms}
+        profiles.append(
+            {
+                "profile_id": profile.profile_id,
+                "version": profile.version,
+                "display_name": profile.display_name,
+                "description": profile.description,
+                "engine": profile.engine.model_dump(),
+                "mechanisms": mechanisms,
+                "capabilities": list(profile.capabilities),
+                "research": profile.research.model_dump(),
+                "fingerprint": profile.fingerprint,
+                "execution_sha256": provenance["execution_sha256"],
+                "source_revision": provenance.get("source_revision"),
+                "resolved_mechanisms": {item["slot"]: item for item in provenance["mechanisms"]},
+            }
+        )
+    return profiles
+
+
+def dataset_catalog() -> list[dict]:
+    """Describe the task suites that are part of the current evaluation base."""
+
+    definitions = (
+        ("offline-core-v1", "固定离线回归集", "eval/task_cases.json", "support", "scripted"),
+        ("live-support-v1", "真实模型消费任务集", "eval/live_tasks.json", "support", "live"),
+        ("adaptive-agent-v1", "自主 Agent 专项集", "eval/adaptive_tasks.json", "adaptive", "live"),
+    )
+    datasets = []
+    for dataset_id, display_name, relative_path, suite, execution_source in definitions:
+        path = ROOT / relative_path
+        payload = _read_json(path)
+        cases = payload.get("cases", [])
+        categories = Counter(case.get("category", "unclassified") for case in cases)
+        splits = Counter(case.get("split", "fixed") for case in cases)
+        turns = sum(len(case.get("turns", [])) for case in cases)
+        datasets.append(
+            {
+                "dataset_id": dataset_id,
+                "display_name": display_name,
+                "path": relative_path,
+                "suite": payload.get("suite", suite),
+                "execution_source": execution_source,
+                "description": payload.get("description") or payload.get("name") or "",
+                "case_count": len(cases),
+                "turn_count": turns,
+                "categories": dict(sorted(categories.items())),
+                "splits": dict(sorted(splits.items())),
+                "cases": cases,
+            }
+        )
+    return datasets
+
+
+def experiment_catalog() -> list[dict]:
+    """Load experiment contracts and only attach genuinely comparable reports."""
+
+    reports = []
+    for path in sorted((ROOT / "output").glob("*.json")) if (ROOT / "output").exists() else []:
+        try:
+            payload = _read_json(path)
+        except (OSError, json.JSONDecodeError):
+            continue
+        contract = (payload.get("manifest") or {}).get("experiment_spec") or {}
+        if contract.get("experiment_id"):
+            reports.append((path, payload, contract["experiment_id"]))
+
+    experiments = []
+    pattern = "research/experiments/*/experiment-spec.json"
+    for path in sorted(ROOT.glob(pattern)):
+        payload = _read_json(path)
+        matches = [(report_path, report) for report_path, report, experiment_id in reports
+                   if experiment_id == payload["experiment_id"]]
+        comparable = [(report_path, report) for report_path, report in matches
+                      if report.get("status") == "COMPLETED" and (report.get("gate") or {}).get("passed") is True]
+        latest = comparable[-1] if comparable else None
+        experiments.append(
+            {
+                **payload,
+                "path": path.relative_to(ROOT).as_posix(),
+                "status": "COMPLETED" if latest else "AWAITING_REPORT",
+                "report_path": latest[0].relative_to(ROOT).as_posix() if latest else None,
+                "report": latest[1] if latest else None,
+            }
+        )
+    return experiments
+
+
+def run_profile(result: dict) -> dict:
+    """Resolve the recorded profile without inventing provenance for old runs."""
+
+    harness = result.get("harness")
+    if isinstance(harness, dict) and harness.get("profile_id"):
+        return harness
+    for event in reversed(result.get("events", [])):
+        if event.get("type") == "harness_profile_selected" and event.get("profile_id"):
+            return event
+    return {"profile_id": "legacy/unrecorded", "legacy_profile_reference": True}
+
+
+def run_catalog(limit: int = 100) -> list[dict]:
+    runs = []
+    for run in list_runs(limit=limit):
+        result = run["result"]
+        events = result.get("events", [])
+        runs.append(
+            {
+                **run,
+                "status": result.get("status", "UNKNOWN"),
+                "profile": run_profile(result),
+                "event_count": len(events),
+                "tool_calls": sum(event.get("type") == "tool_call" for event in events),
+                "model_calls": sum(event.get("type") == "model_call" for event in events),
+                "latency_ms": result.get("latency_ms"),
+                "tokens": (result.get("usage") or {}).get("total_tokens"),
+            }
+        )
+    return runs
+
+
+def stable_kernel_boundaries() -> list[dict]:
+    # Import the evaluation gate's own declaration so the UI cannot drift from
+    # the paths that actually trigger kernel review.
+    from eval.run_live_eval import KERNEL_BOUNDARIES
+
+    labels = {
+        "state_and_side_effects": "状态与副作用",
+        "persistence_and_recovery": "持久化与恢复",
+        "model_call_protocol": "模型调用协议",
+        "harness_assembly": "Harness 装配",
+    }
+    return [
+        {"boundary_id": boundary_id, "label": labels.get(boundary_id, boundary_id), "paths": list(paths)}
+        for boundary_id, paths in KERNEL_BOUNDARIES.items()
+    ]
+
+
+def engineering_overview() -> dict:
+    profiles = profile_catalog()
+    datasets = dataset_catalog()
+    experiments = experiment_catalog()
+    runs = run_catalog()
+    status_counts = Counter(run["status"] for run in runs)
+    event_count = sum(run["event_count"] for run in runs)
+    profiled_runs = sum(run["profile"]["profile_id"] != "legacy/unrecorded" for run in runs)
+    try:
+        from dotenv import load_dotenv
+
+        load_dotenv(ROOT / ".env")
+        model = get_model_status()
+    except Exception as exc:  # configuration diagnostics must not take down the console
+        model = {"ready": False, "configured": False, "live_verified": False,
+                 "message": str(exc), "providers": []}
+    return {
+        "generated_at": datetime.now(UTC).isoformat(),
+        "profiles": profiles,
+        "datasets": datasets,
+        "experiments": experiments,
+        "runs": runs,
+        "kernel": stable_kernel_boundaries(),
+        "model": model,
+        "counts": {
+            "profiles": len(profiles),
+            "candidate_profiles": sum(item["research"]["status"] == "candidate" for item in profiles),
+            "dataset_cases": sum(item["case_count"] for item in datasets),
+            "dataset_turns": sum(item["turn_count"] for item in datasets),
+            "runs": len(runs),
+            "profiled_runs": profiled_runs,
+            "events": event_count,
+            "waiting_runs": sum(count for status, count in status_counts.items()
+                                if status.startswith("WAITING") or status == "INTERRUPTED"),
+        },
+        "status_counts": dict(status_counts),
+    }
