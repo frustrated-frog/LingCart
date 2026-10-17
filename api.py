@@ -1,8 +1,7 @@
-"""FastAPI backend for the AI Customer Support Agent.
+"""FastAPI backend and production web host for LingCart.
 
-Exposes the same multi-agent orchestration logic as the Streamlit UI over a
-clean JSON API, so the system can be consumed by the web frontend or another
-service. Endpoints:
+Exposes the multi-agent runtime through a clean JSON API and serves the built
+React application in production. Core endpoints:
 
     GET  /health   liveness check
     GET  /ready    database and model-configuration readiness
@@ -14,11 +13,14 @@ service. Endpoints:
 """
 
 import logging
+import os
+from pathlib import Path
 import time
 import uuid
 
-from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field
 
 from src import tools
@@ -40,6 +42,16 @@ app = FastAPI(
         "to a specialist (order/refund/payment/FAQ) agent that calls real backend tools."
     ),
     version="1.1.0",
+)
+
+_development_origins = "http://127.0.0.1:5173,http://localhost:5173"
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[item.strip() for item in os.getenv("LINGCART_WEB_ORIGINS", _development_origins).split(",")
+                   if item.strip()],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 
@@ -341,6 +353,94 @@ def harness_profiles():
                          for profile in get_registry().profiles()]}
 
 
+@app.get('/engineering/overview')
+def engineering_overview():
+    """返回工程控制台首页所需的真实、脱敏系统状态。"""
+    from src.engineering_console import engineering_overview as build_overview
+
+    return build_overview()
+
+
+@app.get('/engineering/runs')
+def engineering_runs(limit: int = Query(100, ge=1, le=500), status: str | None = None,
+                     profile_id: str | None = None):
+    from src.engineering_console import run_catalog
+
+    runs = run_catalog(limit=limit, include_result=False)
+    if status:
+        runs = [run for run in runs if run['status'] == status]
+    if profile_id:
+        runs = [run for run in runs if run['profile']['profile_id'] == profile_id]
+    return {'runs': runs}
+
+
+@app.get('/engineering/runs/{run_id}')
+def engineering_run(run_id: str):
+    from src.engineering_console import run_detail
+    from src.session_control import ControlStore
+
+    detail = run_detail(run_id)
+    if detail is None:
+        raise HTTPException(404, '没有找到该运行')
+    saved = RunStore().run(run_id)
+    result = detail['result']
+    events = result.get('events', [])
+    return {
+        **detail,
+        'checkpoint': (saved or {}).get('checkpoint', {}),
+        'tool_ledger': RunStore().outcomes(run_id) if saved else [],
+        'commands': ControlStore().commands(saved['session_id'], run_id) if saved else [],
+        'trace_projection': project_trace(events),
+    }
+
+
+@app.get('/engineering/datasets')
+def engineering_datasets():
+    from src.engineering_console import CATEGORY_LABELS, dataset_catalog
+
+    return {'category_labels': CATEGORY_LABELS, 'datasets': dataset_catalog(include_cases=False)}
+
+
+@app.get('/engineering/datasets/{dataset_id}')
+def engineering_dataset(dataset_id: str):
+    from src.engineering_console import CATEGORY_LABELS, dataset_catalog
+
+    dataset = next((item for item in dataset_catalog(include_cases=True)
+                    if item['dataset_id'] == dataset_id), None)
+    if dataset is None:
+        raise HTTPException(404, '没有找到该任务集')
+    return {'category_labels': CATEGORY_LABELS, 'dataset': dataset}
+
+
+@app.get('/engineering/experiments')
+def engineering_experiments():
+    from src.engineering_console import experiment_catalog
+
+    return {'experiments': experiment_catalog(include_report=True)}
+
+
+@app.get('/business/products')
+def business_products(query: str = '', category: str | None = None, max_price: float | None = Query(None, gt=0),
+                      available_only: bool = True):
+    return tools.search_products(query=query, category=category, max_price=max_price,
+                                 available_only=available_only, limit=60)
+
+
+@app.get('/business/orders')
+def business_orders(query: str = '', status: str | None = None):
+    from src.workspace import list_orders
+
+    return {'orders': list_orders(query=query, status=status)}
+
+
+@app.get('/business/orders/{order_id}')
+def business_order(order_id: int):
+    details = tools.get_order_details(order_id)
+    if details.get('error'):
+        raise HTTPException(404, details['error'])
+    return {'order': details, 'shipment': tools.track_shipment(order_id)}
+
+
 @app.post('/runs/{run_id}/resume-async', status_code=202)
 def resume_async(run_id: str, req: ResumeRequest):
     from src.session_control import SessionController
@@ -433,3 +533,15 @@ def forget_preference(profile_id: str, key: str):
         return {'forgotten': True}
     except AgentError as error:
         raise _control_error(error) from error
+
+
+# A production build is served by FastAPI so deployment has one process and
+# one origin.  Vite's development server is still used for local hot reload.
+_frontend_dist = Path(__file__).resolve().parent / 'frontend' / 'dist'
+if _frontend_dist.is_dir():
+    @app.get('/{frontend_path:path}', include_in_schema=False)
+    def frontend_app(frontend_path: str):
+        requested = (_frontend_dist / frontend_path).resolve()
+        if _frontend_dist.resolve() in requested.parents and requested.is_file():
+            return FileResponse(requested)
+        return FileResponse(_frontend_dist / 'index.html')

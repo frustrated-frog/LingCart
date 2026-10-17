@@ -1,8 +1,7 @@
-"""One-off script to capture real README screenshots of the running app.
-Not part of the shipped project - run manually, then delete/ignore.
+"""Capture real screenshots from the running React workspace.
 
 Usage: python scripts/capture_screenshots.py
-(requires the Streamlit app already running at http://localhost:8501,
+(requires the production build/API running at http://localhost:8000,
  and `pip install playwright && playwright install chromium`)
 """
 
@@ -10,27 +9,27 @@ import time
 
 from playwright.sync_api import sync_playwright
 
-URL = "http://localhost:8501"
+URL = "http://localhost:8000/sandbox"
 OUT_DIR = "demo"
 
 
 def send_message(page, text: str) -> None:
-    textarea = page.locator("textarea").first
+    textarea = page.get_by_label("消费需求")
     textarea.click()
     textarea.fill(text)
-    textarea.press("Enter")
+    page.get_by_label("发送需求").click()
 
 
 def wait_for_reply(page, timeout_s: int = 30) -> None:
-    page.wait_for_selector("text=Thinking...", state="visible", timeout=timeout_s * 1000)
-    page.wait_for_selector("text=Thinking...", state="detached", timeout=timeout_s * 1000)
+    page.wait_for_selector("text=正在执行并核验结果", state="visible", timeout=timeout_s * 1000)
+    page.wait_for_selector("text=正在执行并核验结果", state="detached", timeout=timeout_s * 1000)
     time.sleep(0.5)
 
 
 def main() -> None:
     with sync_playwright() as p:
         browser = p.chromium.launch()
-        page = browser.new_page(viewport={"width": 1100, "height": 900})
+        page = browser.new_page(viewport={"width": 1440, "height": 1000})
         page.goto(URL)
         page.wait_for_selector("textarea", timeout=20000)
         time.sleep(1)
@@ -45,19 +44,18 @@ def main() -> None:
         wait_for_reply(page)
         page.screenshot(path=f"{OUT_DIR}/02_guardrail_refusal.png")
 
-        # expand the newest agent trace, scroll it into view, then screenshot
-        trace_toggle = page.locator("summary", has_text="Agent trace").last
-        trace_toggle.click()
-        time.sleep(0.3)
-        trace_toggle.scroll_into_view_if_needed()
-        time.sleep(0.3)
+        # Open the run inspector to capture the durable execution spine.
+        page.get_by_text("运行检查", exact=True).click()
+        page.wait_for_selector("text=Execution Spine", timeout=20000)
         page.screenshot(path=f"{OUT_DIR}/02b_guardrail_trace_expanded.png")
 
-        # 3. FAQ + sidebar stats
+        # 3. FAQ + engineering console telemetry
+        page.goto(URL)
+        page.wait_for_selector("textarea", timeout=20000)
         send_message(page, "What is your return policy?")
         wait_for_reply(page)
-        time.sleep(2)
-        page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+        page.get_by_text("Agent 控制台", exact=True).click()
+        page.wait_for_selector("text=Harness Profiles", timeout=20000)
         time.sleep(0.5)
         page.screenshot(path=f"{OUT_DIR}/03_faq_and_sidebar.png")
 

@@ -1,4 +1,4 @@
-"""Read models and run archive shared by all Streamlit workspace pages."""
+"""Read models and run archive shared by the API and React workspace."""
 
 import json
 from datetime import UTC, datetime

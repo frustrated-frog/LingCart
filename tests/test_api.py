@@ -1,4 +1,5 @@
 from fastapi.testclient import TestClient
+from pathlib import Path
 import pytest
 
 import api
@@ -36,6 +37,63 @@ def test_health():
     response = client.get("/health")
     assert response.status_code == 200
     assert response.json() == {"status": "ok"}
+
+
+def test_production_build_and_client_routes_are_served_when_available():
+    if not (Path(api.__file__).parent / 'frontend' / 'dist').is_dir():
+        pytest.skip('React production build is not present')
+    home = client.get('/')
+    deep_link = client.get('/mechanisms')
+    assert home.status_code == 200
+    assert deep_link.status_code == 200
+    assert 'LingCart · Agent Engineering' in home.text
+    assert '<div id="root"></div>' in deep_link.text
+
+
+def test_engineering_overview_exposes_real_registry_and_aggregates_only():
+    response = client.get('/engineering/overview')
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload['counts']['profiles'] >= 3
+    assert payload['counts']['dataset_cases'] == 100
+    assert {item['profile_id'] for item in payload['profiles']} >= {
+        'baseline-v1', 'adaptive-v1', 'adaptive-objective-context-v1'}
+    assert all('cases' not in item for item in payload['datasets'])
+    assert all('result' not in item for item in payload['runs'])
+
+
+def test_engineering_dataset_detail_and_business_catalog_are_api_backed():
+    dataset = client.get('/engineering/datasets/offline-core-v1')
+    assert dataset.status_code == 200
+    assert dataset.json()['dataset']['case_count'] == 60
+    assert len(dataset.json()['dataset']['cases']) == 60
+    assert client.get('/engineering/datasets/missing').status_code == 404
+
+    products = client.get('/business/products', params={'category': '耳机', 'max_price': 500})
+    assert products.status_code == 200
+    assert products.json()['total'] > 0
+    assert all(item['category'] == '耳机' and item['price'] <= 500
+               for item in products.json()['products'])
+    orders = client.get('/business/orders', params={'status': 'shipped'})
+    assert orders.status_code == 200
+    assert all(item['status'] == 'shipped' for item in orders.json()['orders'])
+
+
+def test_engineering_run_detail_is_session_independent_but_contains_runtime_evidence():
+    result = client.post('/chat', json={
+        'message': '查询订单 1002 的状态和物流',
+        'session_id': 'engineering-inspector',
+        'request_id': 'engineering-run',
+        'harness_profile': 'adaptive-v1',
+    }).json()
+    detail = client.get(f"/engineering/runs/{result['run_id']}")
+    assert detail.status_code == 200
+    payload = detail.json()
+    assert payload['run_id'] == result['run_id']
+    assert payload['profile']['profile_id'] == 'adaptive-v1'
+    assert payload['event_count'] == len(payload['result']['events'])
+    assert payload['trace_projection']['integrity']['sequential'] is True
+    assert client.get('/engineering/runs/missing').status_code == 404
 
 
 def test_harness_profiles_are_discoverable_but_candidates_are_research_only():

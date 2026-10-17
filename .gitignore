@@ -11,3 +11,6 @@ RESUME_BULLETS.md
 .DS_Store
 .playwright-cli/
 output/
+frontend/node_modules/
+frontend/dist/
+frontend/coverage/

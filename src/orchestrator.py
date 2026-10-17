@@ -391,7 +391,7 @@ def _run_orchestrator(user_message: str, history: list | None = None, pending_ac
 
 
 def run_orchestrator(user_message: str, history: list | None = None, pending_action: dict | None = None, *, limits=None) -> dict:
-    """Shared runtime boundary used by API, Streamlit and offline evaluation."""
+    """Shared runtime boundary used by API, web frontend and offline evaluation."""
     context = current_runtime()
     if context is None:
         context = RunRuntime(uuid.uuid4().hex, limits or BudgetLimits())

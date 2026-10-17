@@ -1,6 +1,6 @@
 # Agent Core V1 运行与恢复
 
-API 与 Streamlit 使用 `src.durable.run_conversation`，离线测试可直接调用无持久化的 `run_orchestrator`。现有 SQLite 文件首次启动时增建会话、消息、任务、步骤、工具账本、检查点和待确认操作表；支付及退款每订单唯一。若历史文件已有重复业务记录，迁移报错，需人工核对后处理，不自动删除。
+FastAPI 与 React 工作台通过同一组接口使用 `src.durable.run_conversation`，离线测试可直接调用无持久化的 `run_orchestrator`。现有 SQLite 文件首次启动时增建会话、消息、任务、步骤、工具账本、检查点和待确认操作表；支付及退款每订单唯一。若历史文件已有重复业务记录，迁移报错，需人工核对后处理，不自动删除。
 
 ## 会话与请求
 

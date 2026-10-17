@@ -7,3 +7,5 @@ __pycache__/
 demo/
 *.md
 *.db
+frontend/node_modules/
+frontend/dist/

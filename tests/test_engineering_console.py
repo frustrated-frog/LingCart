@@ -1,12 +1,9 @@
-from pathlib import Path
-
 import pytest
-from streamlit.testing.v1 import AppTest
 
 from src import tools
 from src.backend.db import get_engine, get_session_factory
 from src.backend.seed import seed
-from src.ui.engineering_data import dataset_catalog, experiment_catalog, profile_catalog
+from src.engineering_console import dataset_catalog, experiment_catalog, profile_catalog
 
 
 @pytest.fixture(autouse=True)
@@ -40,22 +37,3 @@ def test_experiment_view_does_not_invent_a_comparable_report():
     assert experiment["experiment_id"] == "objective-context-v1"
     assert experiment["status"] == "AWAITING_REPORT"
     assert experiment["report"] is None
-
-
-def test_app_opens_on_agent_engineering_console():
-    app = AppTest.from_file(str(Path(__file__).parents[1] / "app.py")).run(timeout=20)
-    assert not app.exception
-    assert any("Agent 工程控制台" in item.value for item in app.markdown)
-    assert any(button.label == "新建业务对话" for button in app.button)
-
-
-@pytest.mark.parametrize("page", ["runs_page", "mechanisms_page", "datasets_page", "experiments_page"])
-def test_engineering_pages_render_from_repository_data(page):
-    source = (
-        "from src.ui.styles import apply_styles\n"
-        f"from src.ui.engineering_pages import {page}\n"
-        "apply_styles()\n"
-        f"{page}()"
-    )
-    app = AppTest.from_string(source).run(timeout=20)
-    assert not app.exception
