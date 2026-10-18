@@ -2,14 +2,18 @@
 
 Docstrings are written for the LLM to read when deciding which tool to call.
 """
+import ast
+from datetime import datetime
 import logging
 import json
+import math
 import time
 import uuid
 from contextlib import contextmanager
 from contextvars import ContextVar
 
 from sqlalchemy import select, text
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from src.backend.db import Order, Payment, Product, Refund, ShipmentEvent, get_engine, get_session_factory, init_db
 from src.backend.seed import seed as _seed_data
@@ -55,6 +59,74 @@ def get_database_status() -> dict:
         "message": "数据库连接正常",
         "latency_ms": round((time.monotonic() - started) * 1000, 2),
     }
+
+
+def read_clock(timezone: str = "Asia/Shanghai") -> dict:
+    """Read the current wall clock from an explicit IANA timezone."""
+    try:
+        zone = ZoneInfo(timezone)
+    except (ZoneInfoNotFoundError, ValueError):
+        return {"error": f"未知 IANA 时区：{timezone}"}
+    now = datetime.now(zone)
+    return {
+        "iso_datetime": now.isoformat(),
+        "date": now.date().isoformat(),
+        "time": now.strftime("%H:%M:%S"),
+        "weekday": now.isoweekday(),
+        "timezone": timezone,
+        "observed_at": now.isoformat(),
+        "data_source": "RUNTIME_CLOCK",
+    }
+
+
+_ARITHMETIC_OPERATORS = {
+    ast.Add: lambda left, right: left + right,
+    ast.Sub: lambda left, right: left - right,
+    ast.Mult: lambda left, right: left * right,
+    ast.Div: lambda left, right: left / right,
+    ast.FloorDiv: lambda left, right: left // right,
+    ast.Mod: lambda left, right: left % right,
+    ast.Pow: lambda left, right: left ** right,
+    ast.UAdd: lambda value: value,
+    ast.USub: lambda value: -value,
+}
+
+
+def calculate(expression: str) -> dict:
+    """Evaluate bounded arithmetic without eval, names, calls or attribute access."""
+    if not expression.strip() or len(expression) > 200:
+        return {"error": "算式不能为空且长度不能超过 200 个字符"}
+    try:
+        tree = ast.parse(expression, mode="eval")
+    except SyntaxError:
+        return {"error": "算式格式无效"}
+    nodes = list(ast.walk(tree))
+    if len(nodes) > 64:
+        return {"error": "算式过于复杂"}
+
+    def evaluate(node):
+        if isinstance(node, ast.Expression):
+            return evaluate(node.body)
+        if isinstance(node, ast.Constant) and type(node.value) in {int, float}:
+            value = node.value
+        elif isinstance(node, ast.BinOp) and type(node.op) in _ARITHMETIC_OPERATORS:
+            left, right = evaluate(node.left), evaluate(node.right)
+            if isinstance(node.op, ast.Pow) and abs(right) > 12:
+                raise ValueError("指数超出限制")
+            value = _ARITHMETIC_OPERATORS[type(node.op)](left, right)
+        elif isinstance(node, ast.UnaryOp) and type(node.op) in _ARITHMETIC_OPERATORS:
+            value = _ARITHMETIC_OPERATORS[type(node.op)](evaluate(node.operand))
+        else:
+            raise ValueError("算式包含不允许的语法")
+        if type(value) not in {int, float} or abs(value) > 1e15 or not math.isfinite(float(value)):
+            raise ValueError("计算结果超出限制")
+        return value
+
+    try:
+        result = evaluate(tree)
+    except (ArithmeticError, ValueError) as exc:
+        return {"error": str(exc)}
+    return {"expression": expression, "result": result, "data_source": "DETERMINISTIC_CALCULATOR"}
 
 
 @contextmanager
@@ -159,6 +231,88 @@ def search_products(query: str = "", category: str | None = None, max_price: flo
         return {"products": [_product_dict(product) for product in matched[:limit]], "total": len(matched),
                 "filters": {"query": query, "category": category, "max_price": max_price,
                             "available_only": available_only}, "data_source": "DEMO_CATALOG"}
+
+
+def get_catalog_facets(available_only: bool = True) -> dict:
+    """Describe live catalog categories and observable fields without a fixed ontology."""
+    with _session() as session:
+        statement = select(Product).order_by(Product.category, Product.product_id)
+        if available_only:
+            statement = statement.where(Product.stock > 0)
+        products = session.scalars(statement).all()
+        categories = sorted({product.category for product in products})
+        prices = [float(product.price) for product in products]
+        spec_keys: dict[str, set[str]] = {}
+        searchable_values: set[str] = set()
+        for product in products:
+            spec_keys.setdefault(product.category, set()).update(str(key) for key in (product.specs or {}))
+            searchable_values.update(
+                str(value) for value in (product.specs or {}).values()
+                if isinstance(value, (str, int, float)) and not isinstance(value, bool)
+            )
+            searchable_values.update(part.strip() for part in product.summary.split("·") if part.strip())
+        from src.backend.catalog import CATEGORY_ALIASES, SEARCH_ALIASES
+        return {
+            "categories": categories,
+            "category_aliases": {category: list(CATEGORY_ALIASES.get(category, ())) for category in categories},
+            "search_aliases": dict(SEARCH_ALIASES),
+            "price_range": {"min": min(prices), "max": max(prices)} if prices else None,
+            "spec_keys": {category: sorted(keys) for category, keys in sorted(spec_keys.items())},
+            "searchable_values": sorted(searchable_values),
+            "available_products": len(products),
+            "data_source": "DEMO_CATALOG",
+        }
+
+
+def discover_products(query: str = "", category: str | None = None, max_price: float | None = None,
+                      soft_preferences: list[str] | None = None, limit: int = 4,
+                      context_seed: str = "") -> dict:
+    """Return an evidence-bound, diverse discovery slate from the live catalog."""
+    if max_price is not None and max_price < 0:
+        return {"error": "预算不能为负数"}
+    if not 1 <= limit <= 12:
+        return {"error": "探索推荐数量必须在 1 到 12 之间"}
+    with _session() as session:
+        statement = select(Product).where(Product.stock > 0).order_by(Product.product_id)
+        if category:
+            statement = statement.where(Product.category == category)
+        if max_price is not None:
+            statement = statement.where(Product.price <= max_price)
+        products = session.scalars(statement).all()
+        terms = query.strip().casefold().split()
+        unresolved_query = None
+        if terms:
+            documents = {
+                product.product_id: (
+                f"{product.product_id} {product.name} {product.category} {product.summary} "
+                + json.dumps(product.specs, ensure_ascii=False)).casefold()
+                for product in products
+            }
+            matched = [product for product in products
+                       if all(term in documents[product.product_id] for term in terms)]
+            # If none of the model's literal terms exist anywhere in the live
+            # schema, they are not a valid hard catalog binding. Preserve this
+            # uncertainty and offer a diagnostic slate instead of applying a
+            # made-up filter or returning a false unsupported result.
+            if not matched and not any(term in document for term in terms for document in documents.values()):
+                unresolved_query = query
+            else:
+                products = matched
+        from src.recommendation import select_discovery_slate
+        result = select_discovery_slate(
+            [_product_dict(product) for product in products],
+            query=query,
+            category=category,
+            max_price=max_price,
+            soft_preferences=soft_preferences,
+            limit=limit,
+            context_seed=context_seed,
+        )
+        if unresolved_query and result.get("products") and not result.get("error"):
+            result["unbound_catalog_language"] = [unresolved_query]
+            result["interaction_policy"] = "RECOMMEND_AND_ASK"
+            result["personalization"] = "EXPLORATORY"
+        return result
 
 
 def compare_products(product_ids: list[str]) -> dict:

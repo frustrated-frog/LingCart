@@ -152,14 +152,15 @@ def _execute_understanding(user_message, history, pending_action, intake, run_id
     elif understanding.objectives:
         planned_intake, plan = to_task_plan(understanding, user_message)
         if planned_intake.execution_mode == CLARIFICATION_REQUIRED:
+            missing_order = planned_intake.missing_slots == ("order_id",)
             result = _simple_result(
                 planned_intake,
                 run_id,
-                reply="请提供要处理的订单号，例如“查询订单 1004 的状态和物流”。",
+                reply=planned_intake.reason,
                 agent="intake",
                 route="CLARIFY",
                 status="WAITING_CLARIFICATION",
-                terminal_reason="MISSING_ORDER_ID",
+                terminal_reason="MISSING_ORDER_ID" if missing_order else "MISSING_REQUIRED_INFORMATION",
             )
         else:
             from src.task_plan import execute_plan
@@ -180,7 +181,8 @@ def _execute_understanding(user_message, history, pending_action, intake, run_id
         result = _simple_result(
             intake,
             run_id,
-            reply="这个请求超出了当前消费服务助手的能力范围。我目前可以处理商品选择、订单、物流、退款、支付状态和服务规则。",
+            reply=("我理解这个请求，但它需要当前未注册的外部操作、不可访问的私有数据，或属于不能安全执行的事项。"
+                   "如果你只需要解释、写作或规划，请直接说明目标；如果依赖实时信息，可以提供可验证来源。"),
             agent="intake",
             route="UNSUPPORTED",
             status="FAILED",

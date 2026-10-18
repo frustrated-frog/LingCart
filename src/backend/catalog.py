@@ -6,6 +6,18 @@ from src.backend.db import Product, ShipmentEvent
 
 
 CATEGORIES = ("耳机", "键盘", "扩展坞")
+# Optional language metadata belongs to the catalog adapter, not the intent
+# router. Categories without aliases remain discoverable through their live DB
+# value and the semantic capability path.
+CATEGORY_ALIASES = {
+    "耳机": ("headphones", "earbuds"),
+    "键盘": ("keyboard",),
+    "扩展坞": ("usb-c hub", "usb c hub"),
+}
+SEARCH_ALIASES = {
+    "noise cancelling": "降噪",
+    "noise-cancelling": "降噪",
+}
 _AUDIO = [
     ("轻听", 199, "入耳式", "无", 24, "轻量通勤"),
     ("静行", 399, "入耳式", "主动降噪", 36, "地铁通勤"),

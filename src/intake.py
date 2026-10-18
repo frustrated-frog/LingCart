@@ -26,6 +26,7 @@ PAYMENT_STATUS = "PAYMENT_STATUS"
 PAYMENT_PROCESS = "PAYMENT_PROCESS"
 FAQ = "FAQ"
 PRODUCT_SEARCH = "PRODUCT_SEARCH"
+PRODUCT_DISCOVERY = "PRODUCT_DISCOVERY"
 PRODUCT_COMPARE = "PRODUCT_COMPARE"
 
 APPROVAL_CONFIRMED = "CONFIRMED"
@@ -62,6 +63,47 @@ def _has_any(text: str, phrases: tuple[str, ...]) -> bool:
 def _extract_order_id(text: str) -> int | None:
     matches = _ORDER_ID.findall(text)
     return int(matches[-1]) if matches else None
+
+
+def _catalog_terms(text: str) -> tuple[str | None, list[str]]:
+    """Resolve live catalog language without embedding product taxonomy in intake."""
+    try:
+        from src.tools import get_catalog_facets
+        facets = get_catalog_facets()
+    except Exception:  # pragma: no cover - semantic fallback remains available
+        return None, []
+    folded = text.casefold()
+    categories = [str(value) for value in facets.get("categories", []) if str(value).casefold() in folded]
+    category = max(categories, key=len) if categories else None
+    if category is None:
+        category = next((name for name, aliases in facets.get("category_aliases", {}).items()
+                         if any(str(alias).casefold() in folded for alias in aliases)), None)
+    matches: list[str] = []
+    for raw in facets.get("searchable_values", []):
+        value = str(raw).casefold()
+        fragments = re.split(r"[\s·,/，、;；()（）]+", value)
+        for fragment in fragments:
+            if len(fragment) < 2:
+                continue
+            candidate = fragment if fragment in folded else next(
+                (fragment[start:end]
+                 for size in range(min(8, len(fragment)), 1, -1)
+                 for start in range(0, len(fragment) - size + 1)
+                 for end in (start + size,)
+                 if fragment[start:end] in folded),
+                None,
+            )
+            has_language = any(character.isalpha() or "\u4e00" <= character <= "\u9fff" for character in candidate or "")
+            category_folded = (category or "").casefold()
+            if (candidate and has_language and candidate not in matches
+                    and candidate != category_folded and candidate not in category_folded):
+                matches.append(candidate)
+                break
+    matches.sort(key=lambda value: (folded.find(value), -len(value), value))
+    for alias, canonical in facets.get("search_aliases", {}).items():
+        if str(alias).casefold() in folded and canonical not in matches:
+            matches.append(str(canonical))
+    return category, matches
 
 
 def parse_approval_response(user_message: str, pending_action: dict | None = None) -> str:
@@ -120,10 +162,12 @@ def analyze_request(user_message: str, *, _check_clause_coverage: bool = True) -
     # an unrelated shopping request into an order task.
     shopping_text = re.sub(r"^\(context:.*?\)\s*", "", normalized)
     product_ids = re.findall(r"(?<![a-z0-9])p\d{4}s?(?![a-z0-9])", shopping_text, re.IGNORECASE)
-    category = next((name for name in ("耳机", "键盘", "扩展坞") if name in shopping_text), None)
-    if not category:
-        category = next((name for word, name in (("headphones", "耳机"), ("earbuds", "耳机"), ("keyboard", "键盘"), ("usb-c hub", "扩展坞")) if word in shopping_text), None)
-    shopping_action = _has_any(shopping_text, ("找", "选", "推荐", "对比", "比较", "搜索", "预算", "search", "compare", "find", "recommend"))
+    category, catalog_terms = _catalog_terms(shopping_text)
+    recommendation_action = _has_any(shopping_text, ("推荐", "选", "recommend"))
+    listing_action = _has_any(shopping_text, ("搜索", "推荐", "search", "find", "recommend"))
+    shopping_action = recommendation_action or _has_any(
+        shopping_text, ("找", "对比", "比较", "搜索", "预算", "search", "compare", "find")
+    )
     if shopping_action and (category or product_ids or "商品" in shopping_text):
         budget_match = re.search(r"(?:预算\s*(?:为|是|不超过)?\s*[¥￥]?\s*)(-?\d+(?:\.\d+)?)", shopping_text)
         if not budget_match:
@@ -135,15 +179,15 @@ def analyze_request(user_message: str, *, _check_clause_coverage: bool = True) -
             shopping_entities["max_price"] = float(budget_match.group(1))
         if product_ids:
             shopping_entities["product_ids"] = list(dict.fromkeys(value.upper() for value in product_ids))
-        # Keep recognized feature constraints rather than passing sentence
-        # filler to keyword search or silently dropping explicit needs.
-        features = [word for word in ("降噪", "静音", "三模", "头戴式", "开放式", "4k", "便携", "通勤", "办公") if word in shopping_text]
-        if "noise cancelling" in shopping_text or "noise-cancelling" in shopping_text:
-            features.append("降噪")
-        shopping_entities["query"] = " ".join(dict.fromkeys(features))
+        shopping_entities["query"] = " ".join(catalog_terms)
         entities.update(shopping_entities)
-        if category and (not product_ids or _has_any(shopping_text, ("搜索", "推荐", "search", "find", "recommend"))):
+        if product_ids and category and listing_action:
             intents.append(PRODUCT_SEARCH)
+        elif not product_ids:
+            if recommendation_action and not catalog_terms and "max_price" not in shopping_entities:
+                intents.append(PRODUCT_DISCOVERY)
+            elif category or "商品" in shopping_text:
+                intents.append(PRODUCT_SEARCH)
         if product_ids:
             intents.append(PRODUCT_COMPARE)
 

@@ -199,9 +199,9 @@ class ContextEngine:
 
     def effective_request(self):
         # 只给已明确属于选购的请求补缺省预算；不会改变订单、付款与售后动作。
-        from src.intake import analyze_request, PRODUCT_SEARCH
+        from src.intake import analyze_request, PRODUCT_DISCOVERY, PRODUCT_SEARCH
         intake = analyze_request(self.goal)
-        if PRODUCT_SEARCH not in intake.intents:
+        if not {PRODUCT_SEARCH, PRODUCT_DISCOVERY} & set(intake.intents):
             return self.goal
         preferences = {p['key']: p['value']['value'] for p in self.preferences}
         suffix = []

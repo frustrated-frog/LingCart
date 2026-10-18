@@ -25,6 +25,8 @@ from src.runtime import ToolExecutor, TraceRecorder
 
 
 _READ_ONLY_TOOLS = {
+    "read_clock": tools.read_clock,
+    "calculate": tools.calculate,
     "get_order_status": tools.get_order_status,
     "get_order_details": tools.get_order_details,
     "track_shipment": tools.track_shipment,
@@ -32,6 +34,7 @@ _READ_ONLY_TOOLS = {
     "get_payment_status": tools.get_payment_status,
     "answer_faq": tools.answer_faq,
     "search_products": tools.search_products,
+    "discover_products": tools.discover_products,
     "compare_products": tools.compare_products,
 }
 

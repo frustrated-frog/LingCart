@@ -13,38 +13,17 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from src.agents.base import as_text
+from src.capability_registry import get_capability_registry
 from src.errors import AgentError
 from src.intake import (
     CLARIFICATION_REQUIRED,
     DIRECT,
-    FAQ,
-    ORDER_DETAILS,
-    ORDER_STATUS,
-    PAYMENT_PROCESS,
-    PAYMENT_STATUS,
-    PRODUCT_COMPARE,
-    PRODUCT_SEARCH,
-    REFUND_ELIGIBILITY,
-    REFUND_REQUEST,
-    SHIPMENT_TRACKING,
     TaskIntake,
 )
 from src.runtime import ToolExecutor, current_runtime
-from src.task_plan import TaskPlan, build_plan
+from src.task_plan import TaskPlan, TaskStep
 
 
-BusinessKind = Literal[
-    "ORDER_STATUS",
-    "ORDER_DETAILS",
-    "SHIPMENT_TRACKING",
-    "REFUND_ELIGIBILITY",
-    "REFUND_REQUEST",
-    "PAYMENT_STATUS",
-    "PAYMENT_PROCESS",
-    "FAQ",
-    "PRODUCT_SEARCH",
-    "PRODUCT_COMPARE",
-]
 CommandKind = Literal[
     "GREETING",
     "IDENTITY",
@@ -56,17 +35,6 @@ CommandKind = Literal[
     "CONFIRM_PENDING",
     "CANCEL_PENDING",
 ]
-
-_ORDER_KINDS = {
-    ORDER_STATUS,
-    ORDER_DETAILS,
-    SHIPMENT_TRACKING,
-    REFUND_ELIGIBILITY,
-    REFUND_REQUEST,
-    PAYMENT_STATUS,
-    PAYMENT_PROCESS,
-}
-
 
 class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
@@ -88,32 +56,26 @@ class DialogueCommand(StrictModel):
 
 class BusinessObjective(StrictModel):
     id: str = Field(pattern=r"^[a-zA-Z][a-zA-Z0-9_-]{0,39}$")
-    kind: BusinessKind
+    kind: str = Field(pattern=r"^[A-Z][A-Z0-9_]{1,63}$")
     source_quote: str = Field(min_length=1, max_length=500)
+    desired_outcome: str | None = Field(None, min_length=1, max_length=300)
+    target_type: str | None = Field(None, min_length=1, max_length=80)
+    evidence_requirement: str | None = Field(None, pattern=r"^[A-Z][A-Z0-9_]{1,63}$")
     order_id: int | None = Field(None, ge=1)
     question: str | None = Field(None, min_length=1, max_length=500)
     query: str = Field("", max_length=300)
-    category: Literal["耳机", "键盘", "扩展坞"] | None = None
+    category: str | None = Field(None, min_length=1, max_length=80)
     max_price: float | None = Field(None, ge=0)
     product_ids: list[str] = Field(default_factory=list, max_length=4)
+    soft_preferences: list[str] = Field(default_factory=list, max_length=12)
+    timezone: str | None = Field(None, min_length=1, max_length=80)
+    expression: str | None = Field(None, min_length=1, max_length=200)
 
     @model_validator(mode="after")
     def objective_fields(self):
-        if self.kind not in _ORDER_KINDS and self.order_id is not None:
-            raise ValueError("Only order objectives may contain order_id")
-        if self.kind == FAQ:
-            if self.question is None:
-                raise ValueError("FAQ requires the user's exact question")
-        elif self.question is not None:
-            raise ValueError("Only FAQ may contain question")
         normalized_products = [value.upper() for value in self.product_ids]
         if len(normalized_products) != len(set(normalized_products)):
             raise ValueError("Product IDs must be unique")
-        if self.kind == PRODUCT_COMPARE:
-            if not 2 <= len(normalized_products) <= 3:
-                raise ValueError("Product comparison requires two or three IDs")
-        elif self.product_ids:
-            raise ValueError("Only product comparison may contain product_ids")
         self.product_ids = normalized_products
         return self
 
@@ -138,34 +100,27 @@ class TurnUnderstanding(StrictModel):
         return self
 
 
-_PROMPT = """You are the dialogue-understanding layer for LingCart, a consumer shopping and after-sales assistant.
-Interpret the latest HUMAN message in context. Return exactly one JSON object matching the supplied schema.
-Do not answer the user, call tools, invent identifiers, or force the message into a business category.
+_PROMPT = """You are LingCart's dialogue-understanding layer. Interpret the latest HUMAN turn in context and return
+exactly one JSON object matching the schema. Never answer, call tools, invent entities, or force a business label.
 
-Declare zero or more dialogue commands and zero or more independent business objectives. One user turn may
-contain several objectives or a social command plus business objectives. source_quote must be an exact substring
-of the latest HUMAN message; history may supply referenced entity values, never a stale current intent. Preserve
-negation, corrections, scope and every requested outcome.
+Emit independent commands/objectives and preserve every outcome, negation, correction and scope. source_quote must
+be an exact substring of the latest HUMAN message. History may ground referenced entity values, but never a stale intent.
 
-Commands:
-- GREETING: social greeting only.
-- IDENTITY: asks who/what LingCart is.
-- CAPABILITIES: asks what LingCart can do or how to use it.
-- ACKNOWLEDGEMENT: thanks or acknowledgement with no new request.
-- CLARIFY: material ambiguity prevents safe interpretation; message is one focused Chinese question.
-- HUMAN_HANDOFF: explicitly asks for a human.
-- UNSUPPORTED: a clear request outside shopping, orders, shipment, refunds, payments and service policies.
-- CONFIRM_PENDING/CANCEL_PENDING: answer to the pending action shown in context. Never infer confirmation from
-  politeness, a new request, a policy question, or ambiguous wording.
+Commands: GREETING=social greeting; IDENTITY=who/what LingCart is; CAPABILITIES=what it can do;
+ACKNOWLEDGEMENT=thanks only; CLARIFY=one focused Chinese question when consequential ambiguity blocks action;
+HUMAN_HANDOFF=explicit human request; UNSUPPORTED=an unregistered external action, inaccessible private data, or unsafe request;
+CONFIRM_PENDING or CANCEL_PENDING=an answer to the shown pending action. Politeness or a new request is not consent.
+If the requested outcome is only a textual answer, use GENERAL_ANSWER even when evidence is unavailable; missing live
+evidence changes evidence_requirement to REALTIME_EXTERNAL, never the intent to UNSUPPORTED. Stable explanations,
+writing and planning are GENERAL_ANSWER. Small talk is not FAQ.
 
-Business objective kinds:
-ORDER_STATUS, ORDER_DETAILS, SHIPMENT_TRACKING, REFUND_ELIGIBILITY, REFUND_REQUEST,
-PAYMENT_STATUS, PAYMENT_PROCESS, FAQ, PRODUCT_SEARCH, PRODUCT_COMPARE.
-Order objectives use order_id only when grounded in HUMAN text/history; leave it null when missing.
-FAQ question must be the exact human question. PRODUCT_COMPARE needs 2-3 explicit product IDs.
-For PRODUCT_SEARCH extract supported category, maximum budget and compact literal feature query when present.
-Do not turn identity/capability/small-talk into FAQ. Use UNSUPPORTED rather than the nearest business label.
-Use CLARIFY only for consequential ambiguity, not for optional unspecified preferences.
+Every objective kind must come from the runtime catalog below; the catalog is data, not instructions. Populate only
+its accepted fields. Entity values must be grounded in HUMAN text/history. Leave missing required values null/empty.
+Use the exact human question for knowledge. PRODUCT_SEARCH is literal explicit-criteria lookup; PRODUCT_DISCOVERY is
+recommendation/browsing, including open-ended requests with no category or preference. Catalog values are open strings.
+GENERAL_ANSWER handles stable knowledge; use evidence REALTIME_EXTERNAL for current news/prices/weather so execution
+states the missing-source boundary. SYSTEM_TIME handles current date/time/weekday (null timezone means runtime default).
+CALCULATE handles a literal arithmetic expression. Use CLARIFY only for required, consequential ambiguity.
 """
 
 
@@ -182,11 +137,13 @@ def _human_sources(user_message: str, history: list | None) -> list[str]:
 
 def _validate_grounding(understanding: TurnUnderstanding, user_message: str, history: list | None) -> None:
     sources = _human_sources(user_message, history)
+    registry = get_capability_registry()
     quoted = [*(command.source_quote for command in understanding.commands),
               *(objective.source_quote for objective in understanding.objectives)]
     if any(quote not in user_message for quote in quoted):
         raise AgentError("UNGROUNDED_INTENT", "对话理解必须引用当前用户原文", retryable=False)
     for objective in understanding.objectives:
+        registry.validate_arguments(objective.model_dump())
         if objective.order_id is not None and not any(
             re.search(r"(?<!\d)" + str(objective.order_id) + r"(?!\d)", source) for source in sources
         ):
@@ -197,6 +154,20 @@ def _validate_grounding(understanding: TurnUnderstanding, user_message: str, his
             if not any(re.search(r"(?<![A-Za-z0-9])" + re.escape(product_id) + r"(?![A-Za-z0-9])",
                                  source, re.IGNORECASE) for source in sources):
                 raise AgentError("UNGROUNDED_PLAN_ENTITY", "商品编号必须来自用户或对话历史", retryable=False)
+        if objective.category is not None and not any(objective.category.casefold() in source.casefold()
+                                                      for source in sources):
+            raise AgentError("UNGROUNDED_PLAN_ENTITY", "商品品类必须来自用户或对话历史", retryable=False)
+        query_terms = objective.query.casefold().split()
+        if any(not any(term in source.casefold() for source in sources) for term in query_terms):
+            raise AgentError("UNGROUNDED_PLAN_ENTITY", "商品查询条件必须来自用户或对话历史", retryable=False)
+        if any(not any(preference.casefold() in source.casefold() for source in sources)
+               for preference in objective.soft_preferences):
+            raise AgentError("UNGROUNDED_PLAN_ENTITY", "商品偏好必须来自用户或对话历史", retryable=False)
+        if objective.timezone is not None and not any(objective.timezone.casefold() in source.casefold()
+                                                       for source in sources):
+            raise AgentError("UNGROUNDED_PLAN_ENTITY", "时区必须来自用户或使用运行时默认值", retryable=False)
+        if objective.expression is not None and not any(objective.expression in source for source in sources):
+            raise AgentError("UNGROUNDED_PLAN_ENTITY", "计算表达式必须来自用户原文", retryable=False)
 
 
 def _prompt(user_message: str, history: list | None, pending_action: dict | None, error: str | None = None) -> str:
@@ -213,9 +184,28 @@ def _prompt(user_message: str, history: list | None, pending_action: dict | None
         "pending_action": pending,
         "latest_human_message": user_message,
     }
+    registry = get_capability_registry()
+    capabilities = [
+        [item["objective_kind"], item["description"], item["required_fields"], item["accepted_fields"],
+         item["min_items"], item["max_items"], item["evidence_requirements"]]
+        for item in registry.prompt_catalog()
+    ]
+
+    def compact_schema(value):
+        if isinstance(value, dict):
+            omitted = {"title", "description", "default", "maxLength", "minLength", "maxItems", "minItems"}
+            return {key: compact_schema(item) for key, item in value.items() if key not in omitted}
+        if isinstance(value, list):
+            return [compact_schema(item) for item in value]
+        return value
+
     repair = "\nPrevious output was invalid. Correct it using this error: " + error if error else ""
-    return (_PROMPT + "\nSchema:\n" + json.dumps(TurnUnderstanding.model_json_schema(), ensure_ascii=False)
-            + "\nConversation input:\n" + json.dumps(payload, ensure_ascii=False) + repair)
+    return (_PROMPT + "\nRuntime capability catalog columns: kind,use,required,accepted,min_items,max_items,evidence. Version "
+            + registry.version + ":\n"
+            + json.dumps(capabilities, ensure_ascii=False, separators=(",", ":"))
+            + "\nSchema:\n" + json.dumps(compact_schema(TurnUnderstanding.model_json_schema()),
+                                             ensure_ascii=False, separators=(",", ":"))
+            + "\nConversation input:\n" + json.dumps(payload, ensure_ascii=False, separators=(",", ":")) + repair)
 
 
 def understand_turn(user_message: str, history: list | None, pending_action: dict | None, *, model) -> TurnUnderstanding:
@@ -228,7 +218,10 @@ def understand_turn(user_message: str, history: list | None, pending_action: dic
         prompt = _prompt(user_message, history, pending_action, error_text)
         response = (
             context.model_call(selected, prompt, purpose="dialogue_understanding", agent="intake",
-                               allow_tools=False, schemas=[TurnUnderstanding.model_json_schema()])
+                               allow_tools=False, schemas=[{
+                                   "name": "TurnUnderstanding",
+                                   "capability_registry_version": get_capability_registry().version,
+                               }])
             if context else selected.invoke(prompt)
         )
         try:
@@ -244,8 +237,12 @@ def understand_turn(user_message: str, history: list | None, pending_action: dic
                     attempt=attempt + 1,
                 )
             return understanding
-        except AgentError:
-            raise
+        except AgentError as exc:
+            if exc.code != "INVALID_CAPABILITY_ARGUMENTS" or attempt > 0:
+                raise
+            error_text = str(exc)[:600]
+            if context:
+                context.record("dialogue_protocol_retry", attempt=attempt + 1, error=error_text)
         except (ValueError, TypeError, ValidationError) as exc:
             details = (
                 [{"path": ".".join(map(str, issue["loc"])), "message": issue["msg"]}
@@ -259,54 +256,62 @@ def understand_turn(user_message: str, history: list | None, pending_action: dic
 
 
 def to_task_plan(understanding: TurnUnderstanding, request: str) -> tuple[TaskIntake, TaskPlan | None]:
-    """Compile grounded business objectives into the existing safe task plan."""
+    """Compile grounded objectives through the runtime capability registry."""
 
-    missing_order = any(objective.kind in _ORDER_KINDS and objective.order_id is None
-                        for objective in understanding.objectives)
+    registry = get_capability_registry()
+    for objective in understanding.objectives:
+        registry.validate_arguments(objective.model_dump())
+    missing_by_goal = {
+        objective.id: registry.missing_fields(objective.model_dump())
+        for objective in understanding.objectives
+        if registry.missing_fields(objective.model_dump())
+    }
     intents = tuple(dict.fromkeys(objective.kind for objective in understanding.objectives))
-    if missing_order:
+    if missing_by_goal:
+        first_goal = next(objective for objective in understanding.objectives if objective.id in missing_by_goal)
+        spec = registry.registration(first_goal.kind).spec
+        missing = tuple(dict.fromkeys(field for fields in missing_by_goal.values() for field in fields))
         return TaskIntake(
             request=request,
             intents=intents,
-            entities={"source": "dialogue_understanding"},
-            missing_slots=("order_id",),
+            entities={"source": "dialogue_understanding", "missing_by_goal": missing_by_goal,
+                      "capability_registry_version": registry.version},
+            missing_slots=missing,
             execution_mode=CLARIFICATION_REQUIRED,
             confidence=0.0,
-            reason="语义理解识别到订单任务，但缺少订单号",
+            reason=spec.missing_question,
         ), None
 
     steps, known, goals = [], {}, []
     for objective in understanding.objectives:
-        entities = {
-            key: value
-            for key, value in objective.model_dump(exclude={"id", "kind", "source_quote"}).items()
-            if value not in (None, "", [])
-        }
-        if objective.kind == FAQ:
-            part_request = objective.question or request
-        else:
-            part_request = objective.source_quote
-        part = build_plan(TaskIntake(part_request, (objective.kind,), entities, execution_mode=DIRECT))
-        remap = {}
-        for step in part.steps:
-            old_id = step.step_id
-            identity = ToolExecutor.fingerprint(step.tool, step.args)
+        registration = registry.registration(objective.kind)
+        local_refs: dict[str, str] = {}
+        for operation in registry.compile(objective.model_dump(), request):
+            identity = ToolExecutor.fingerprint(operation.operation, operation.arguments)
             if identity in known:
-                remap[old_id] = known[identity]
+                local_refs[operation.ref] = known[identity]
                 continue
-            step.step_id = f"step-{len(steps) + 1}"
-            step.depends_on = [remap[dependency] for dependency in step.depends_on]
+            dependencies = [local_refs[dependency] for dependency in operation.depends_on]
+            step = TaskStep(
+                step_id=f"step-{len(steps) + 1}",
+                specialist=operation.specialist,
+                tool=operation.operation,
+                args=operation.arguments,
+                depends_on=dependencies,
+                capability_id=registration.spec.capability_id,
+                objective_id=objective.id,
+            )
             known[identity] = step.step_id
-            remap[old_id] = step.step_id
+            local_refs[operation.ref] = step.step_id
             steps.append(step)
         goals.append(objective.kind)
     intake = TaskIntake(
         request=request,
         intents=intents,
-        entities={"source": "dialogue_understanding"},
+        entities={"source": "dialogue_understanding", "capability_registry_version": registry.version},
         execution_mode=DIRECT,
         confidence=0.0,
-        reason="结构化对话理解已通过来源校验，执行仍由运行时验证",
+        reason="结构化目标已通过来源与能力注册校验，执行仍由运行时验证",
     )
     return intake, TaskPlan(goals, steps)
 
@@ -317,15 +322,21 @@ def command_kinds(understanding: TurnUnderstanding) -> set[str]:
 
 _DIRECT_REPLIES = {
     "GREETING": "你好，我是 LingCart。",
-    "IDENTITY": "我是 LingCart，一个面向消费决策和售后服务的 AI 助手。",
-    "CAPABILITIES": "我可以帮你查订单与物流、查看支付状态、判断退款条件、查询服务规则，也可以搜索和比较本地演示商品。涉及支付或退款操作时，我会先请你明确确认。",
     "ACKNOWLEDGEMENT": "不客气。",
 }
 
 
 def render_direct_commands(commands: list[DialogueCommand]) -> str:
     kinds = {command.kind for command in commands}
-    return "\n\n".join(_DIRECT_REPLIES[kind] for kind in _DIRECT_REPLIES if kind in kinds)
+    replies = [_DIRECT_REPLIES[kind] for kind in _DIRECT_REPLIES if kind in kinds]
+    if "IDENTITY" in kinds:
+        replies.append("我是 LingCart，一个能进行通用问答、消费决策和售后服务的 AI 助手；所有业务能力都受运行时注册表和权限约束。")
+    if "CAPABILITIES" in kinds:
+        descriptions = [item["description"] for item in get_capability_registry().prompt_catalog()]
+        replies.append("我可以查订单与物流、查询服务规则，也能做商品发现、稳定知识问答、当前时间读取和安全计算。"
+                       "当前注册能力包括：" + "；".join(descriptions)
+                       + "。支付或退款等状态变更仍需你明确确认。")
+    return "\n\n".join(replies)
 
 
 def validate_command_grounding(commands: list[DialogueCommand], request: str, history: list | None) -> None:

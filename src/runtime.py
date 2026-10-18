@@ -391,9 +391,10 @@ def _argument_schema(name, fn):
 # 注册表列出每个生产入口；同名新函数不会自动获得只读权限。
 _PRODUCTION_TOOL_POLICIES = {
     "src.tools": {
+        "read_clock": {}, "calculate": {},
         "get_order_status": {}, "get_order_details": {}, "track_shipment": {},
         "get_payment_status": {}, "check_refund_eligibility": {}, "answer_faq": {},
-        "search_products": {}, "compare_products": {},
+        "search_products": {}, "get_catalog_facets": {}, "discover_products": {}, "compare_products": {},
         "process_payment": {"side_effect": True, "transactional": True, "approval_action": "PROCESS_PAYMENT"},
         "initiate_refund": {"side_effect": True, "transactional": True, "approval_action": "INITIATE_REFUND"},
         "escalate_to_human": {"effect": ToolEffect.WRITE, "risk_level": ToolRiskLevel.GUARDED,

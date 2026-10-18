@@ -18,6 +18,20 @@ def test_get_order_status_found():
     assert tools.get_order_status(1001) == {"order_id": 1001, "status": "delivered"}
 
 
+def test_runtime_clock_has_explicit_source_and_timezone():
+    result = tools.read_clock("Asia/Shanghai")
+    assert result["data_source"] == "RUNTIME_CLOCK"
+    assert result["timezone"] == "Asia/Shanghai"
+    assert 1 <= result["weekday"] <= 7
+
+
+def test_calculator_accepts_arithmetic_and_rejects_code():
+    assert tools.calculate("(18 + 6) / 3")["result"] == 8
+    assert "error" in tools.calculate("__import__('os').getcwd()")
+    assert "error" in tools.calculate("2 ** 100")
+    assert "error" in tools.calculate("9" * 180)
+
+
 def test_get_order_status_not_found():
     result = tools.get_order_status(9999)
     assert "error" in result
