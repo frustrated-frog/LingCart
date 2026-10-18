@@ -149,7 +149,8 @@ def test_metrics_count_failed_model_attempts_and_never_invent_dollar_cost():
     assert report["metrics"]["cost"]["billable_provider_requests"] == 0
     duplicate = next(case for case in report["cases"] if case["id"] == "T58")
     assert duplicate["passed"]
-    assert duplicate["turns"][0]["physical_tools"].count("get_order_status") == 1
+    assert duplicate["turns"][0]["physical_tools"] == []
+    assert any(event["type"] == "dialogue_protocol_retry" for event in duplicate["turns"][0]["events"])
     assert report["summary"]["total"] == 3
     assert all("usage_source" in turn["metrics"] for case in report["cases"] for turn in case["turns"])
 

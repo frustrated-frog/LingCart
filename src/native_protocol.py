@@ -140,13 +140,12 @@ def decision_functions(state, plan, history=None):
 
 
 def decode_decision(response, state):
-    from src.adaptive_decision import Decision, IntentDeclaration
+    from src.adaptive_decision import Decision, IntentDeclaration, decision_from_intent
     from src.direct_executor import _READ_ONLY_TOOLS
     if state['goal'] is None and not getattr(response, 'tool_calls', []):
         from src.agents.base import as_text
         intent = IntentDeclaration.model_validate(json.loads(as_text(response.content)))
-        decision = (Decision(action='clarify', reason=intent.reason, goal=intent.goal, message=intent.clarification)
-                    if intent.clarification else Decision(action='set_goal', reason=intent.reason, goal=intent.goal, next_steps=intent.next_steps))
+        decision = decision_from_intent(intent)
         return decision, dict(function='declare_intent', submission_id=None, transport='validated_json_fallback')
     allowed = set(_READ_ONLY_TOOLS) | {'declare_intent', 'clarify', 'finish', 'revise_plan', 'inspect', 'complete', 'recommend', 'refine_constraints'}
     name, args, call_id = one_call(response, allowed)
@@ -155,10 +154,7 @@ def decode_decision(response, state):
         if state['goal'] is not None:
             raise ValueError('The goal is already declared')
         intent = IntentDeclaration.model_validate(data)
-        if intent.clarification:
-            decision = Decision(action='clarify', reason=intent.reason, goal=intent.goal, message=intent.clarification)
-        else:
-            decision = Decision(action='set_goal', reason=intent.reason, goal=intent.goal, next_steps=intent.next_steps)
+        decision = decision_from_intent(intent)
     elif name in _READ_ONLY_TOOLS:
         reason = data.pop('reason', None) or ''
         decision = Decision(action='tool', tool=name, args=data, reason=reason)

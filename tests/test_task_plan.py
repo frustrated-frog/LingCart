@@ -79,38 +79,39 @@ def test_ambiguous_multi_order_goals_and_batch_writes_clarify():
 def test_structured_model_plan_dispatches_multiple_specialists(monkeypatch):
     import json
     from langchain_core.messages import AIMessage
-    import src.planner as planner
     class PlannerModel:
         def invoke(self, message):
-            return AIMessage(content=json.dumps({"goals": [
-                {"intent": "ORDER_STATUS", "order_id": 1002},
-                {"intent": "FAQ"},
-            ]}))
-    monkeypatch.setattr(planner, "get_llm", lambda **_kwargs: PlannerModel())
+            return AIMessage(content=json.dumps({"reason": "复合请求", "commands": [], "objectives": [
+                {"id": "shipment", "kind": "SHIPMENT_TRACKING", "source_quote": "订单 1002 的包裹怎么样", "order_id": 1002},
+                {"id": "policy", "kind": "FAQ", "source_quote": "讲讲售后保障", "question": "讲讲售后保障"},
+            ]}, ensure_ascii=False))
+    monkeypatch.setattr("src.orchestrator.get_llm", lambda **_kwargs: PlannerModel())
     result = run_orchestrator("订单 1002 的包裹怎么样，另外讲讲售后保障")
     assert result["status"] == "PARTIAL"
     assert result["terminal_reason"] == "INSUFFICIENT_POLICY_EVIDENCE"
     assert {t["agent"] for t in result["trace"]} == {"order", "faq"}
     assert result["budget"]["consumed"]["model_calls"] == 1
     assert any(e["type"] == "verification" for e in result["events"])
-    assert result["usage"]["total_tokens"] is None
+    assert result["understanding"]["objectives"][0]["kind"] == "SHIPMENT_TRACKING"
 
 
 def test_model_planner_cannot_invent_order_ids_or_write_without_approval(monkeypatch):
     import json
     from langchain_core.messages import AIMessage
-    import src.planner as planner
     class PlannerModel:
-        def __init__(self, order_id):
-            self.order_id = order_id
+        def __init__(self, order_id, quote):
+            self.order_id, self.quote = order_id, quote
         def invoke(self, message):
-            return AIMessage(content=json.dumps({"goals": [{"intent": "PAYMENT_PROCESS", "order_id": self.order_id}]}))
-    monkeypatch.setattr(planner, "get_llm", lambda **_kwargs: PlannerModel(1003))
+            return AIMessage(content=json.dumps({"reason": "处理账单", "commands": [], "objectives": [
+                {"id": "shipment", "kind": "SHIPMENT_TRACKING", "source_quote": f"订单 {self.order_id} 的包裹怎么样", "order_id": self.order_id},
+                {"id": "payment", "kind": "PAYMENT_PROCESS", "source_quote": self.quote, "order_id": self.order_id},
+            ]}, ensure_ascii=False))
+    monkeypatch.setattr("src.orchestrator.get_llm", lambda **_kwargs: PlannerModel(1003, "处理一下账单"))
     # Use an ambiguous compound phrasing so deterministic intake falls through.
     result = run_orchestrator("订单 1002 的包裹怎么样，另外处理一下账单")
-    assert result["terminal_reason"] == "UNGROUNDED_PLAN_ENTITY"
+    assert result["terminal_reason"] in {"UNGROUNDED_INTENT", "UNGROUNDED_PLAN_ENTITY"}
     assert not result["trace"]
-    monkeypatch.setattr(planner, "get_llm", lambda **_kwargs: PlannerModel(1003))
+    monkeypatch.setattr("src.orchestrator.get_llm", lambda **_kwargs: PlannerModel(1003, "处理一下账单"))
     result = run_orchestrator("订单 1003 的包裹怎么样，另外处理一下账单")
     assert result["status"] == "WAITING_APPROVAL"
     assert tools.get_payment_status(1003)["status"] == "pending"

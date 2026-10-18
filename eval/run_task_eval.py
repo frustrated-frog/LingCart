@@ -2,7 +2,7 @@
 
 Run ``python eval/run_task_eval.py --dry-run`` to validate without importing the
 application, or ``python eval/run_task_eval.py --output /tmp/task-eval.json``.
-The legacy live router benchmark in run_eval.py is intentionally separate.
+The live dialogue-understanding benchmark in run_eval.py is intentionally separate.
 """
 
 from __future__ import annotations
@@ -26,7 +26,7 @@ from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_DATASET = Path(__file__).with_name("task_cases.json")
-DEFAULT_BASELINE = Path(__file__).with_name("baseline_v3.json")
+DEFAULT_BASELINE = Path(__file__).with_name("baseline_v4.json")
 TOOLS = {
     "get_order_status", "get_order_details", "track_shipment",
     "check_refund_eligibility", "initiate_refund", "get_payment_status",
@@ -573,7 +573,7 @@ def evaluate_gate(report: dict, baseline: dict) -> list[str]:
     if baseline.get("schema_version") != 1:
         return ["baseline schema_version must be 1"]
     if report.get("dataset_sha256") != baseline.get("dataset_sha256"):
-        failures.append("dataset fingerprint differs from baseline-v2")
+        failures.append("dataset fingerprint differs from the selected baseline")
     summary = report.get("summary", {})
     expected = baseline.get("expected", {})
     for report_key, baseline_key in (
@@ -600,7 +600,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--dry-run", action="store_true", help="validate JSON only; no application imports")
     parser.add_argument("--output", type=Path, help="write a detailed JSON report")
     parser.add_argument("--case", action="append", help="run one case ID; repeat to select several")
-    parser.add_argument("--gate", action="store_true", help="compare the full report with eval/baseline_v3.json")
+    parser.add_argument("--gate", action="store_true", help="compare the full report with eval/baseline_v4.json")
     parser.add_argument("--baseline", type=Path, help="use this baseline and enable the evaluation gate")
     args = parser.parse_args(argv)
     dataset = load_dataset(args.dataset)

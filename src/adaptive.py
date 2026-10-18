@@ -139,7 +139,17 @@ def _present(context, recorder, intake, state, plan, *, reason, message, error=N
                   result=e.get('result'), status=e.get('status'), duration_ms=e.get('duration_ms'))
              for e in context.events if e['type'] == 'tool_result']
     if success:
-        status = 'SUCCEEDED'
+        from src.dialogue_understanding import DialogueCommand, render_direct_commands
+        dialogue_commands = [DialogueCommand.model_validate(command)
+                             for command in state.get('dialogue_commands', [])]
+        preface = render_direct_commands(dialogue_commands)
+        if preface:
+            message = preface + '\n\n' + message
+        if any(command.kind == 'UNSUPPORTED' for command in dialogue_commands):
+            message += '\n\n另外一部分请求超出了当前消费服务助手的能力范围。'
+            status, reason = 'PARTIAL', 'PARTIAL_UNSUPPORTED_INTENT'
+        else:
+            status = 'SUCCEEDED'
     elif error or reason == 'MODEL_STOPPED':
         status = 'PARTIAL' if trace else 'FAILED'
     else:
@@ -155,6 +165,26 @@ def _present(context, recorder, intake, state, plan, *, reason, message, error=N
     result['request_audit'] = deepcopy(state.get('request_audit'))
     result['binding_audit'] = deepcopy(state.get('binding_audit'))
     result['completion_audit'] = deepcopy(state.get('completion_audit'))
+    return result
+
+
+def _present_dialogue(context, recorder, intake, state, plan, decision):
+    """Complete a tool-free dialogue command without fake business evidence."""
+    _discard_native_queue(context, state, decision.action.upper())
+    state['pending'] = None
+    state['model_cursor'] = context.model_cursor
+    _save(context, state, plan)
+    status = 'FAILED' if decision.action == 'unsupported' else 'SUCCEEDED'
+    reason = 'UNSUPPORTED_INTENT' if decision.action == 'unsupported' else 'COMPLETED'
+    error = ({'code': 'UNSUPPORTED_INTENT', 'message': decision.reason or decision.message, 'retryable': False}
+             if decision.action == 'unsupported' else None)
+    recorder.record('verification', conversation_complete=status == 'SUCCEEDED',
+                    business_evidence_required=False)
+    result = _finish(recorder, intake, context.run_id, 'intake', [], reply=decision.message,
+                     status=status, terminal_reason=reason, error=error)
+    result.update(route='CONVERSATIONAL' if status == 'SUCCEEDED' else 'UNSUPPORTED',
+                  understanding={'commands': [command.model_dump() for command in decision.commands],
+                                 'objectives': [], 'reason': decision.reason})
     return result
 
 
@@ -185,7 +215,10 @@ def _validate_tool(decision, state, plan, history):
 def _accept(context, recorder, state, plan, decision, history):
     if state['goal'] is None:
         if decision.goal is None:
-            if decision.action == 'clarify':
+            if decision.action in {'clarify', 'respond', 'handoff', 'unsupported'}:
+                if decision.commands:
+                    from src.dialogue_understanding import validate_command_grounding
+                    validate_command_grounding(decision.commands, state['request'], history)
                 state['pending'] = dict(decision=decision.model_dump(), step_id=None)
                 state['model_cursor'] = context.model_cursor
                 _save(context, state, plan)
@@ -193,6 +226,10 @@ def _accept(context, recorder, state, plan, decision, history):
                                 goal_revision=state['goal_revision'], step_id=None)
                 return
             raise AgentError('MODEL_FORMAT_ERROR', '首次决策必须包含目标及约束', retryable=False)
+        if decision.commands:
+            from src.dialogue_understanding import validate_command_grounding
+            validate_command_grounding(decision.commands, state['request'], history)
+            state['dialogue_commands'] = [command.model_dump() for command in decision.commands]
         validate_goal(decision.goal, state['request'], history)
         if decision.action != 'clarify':
             from src.request_audit import review_request
@@ -458,6 +495,7 @@ def _run(context, user_message, history, pending_action):
         state.setdefault('binding_revision', 0)
         state.setdefault('binding_audit', None)
         state.setdefault('native_queue', [])
+        state.setdefault('dialogue_commands', [])
         plan = _restore_plan(state['plan'])
         if revision == state['goal_revision'] and user_message != state['request']:
             raise AgentError('CHECKPOINT_CONFLICT', '恢复请求与已保存目标不一致', retryable=False)
@@ -473,6 +511,7 @@ def _run(context, user_message, history, pending_action):
                          next_steps=None, request_audit=None, completion_audit=None,
                          constraint_bindings={}, binding_revision=0, binding_audit=None,
                          audit_format_feedback=None,
+                         dialogue_commands=[],
                          native_queue=[], active_native_submission=None,
                          version=state['version'] + 1)
             plan.goals = []
@@ -485,6 +524,7 @@ def _run(context, user_message, history, pending_action):
                      goal=None, next_steps=None, working_memory=None, journal=[], pending=None,
                      objective_ledger=[], feedback=None, repair_count=0, request_audit=None,
                      completion_audit=None, constraint_bindings={}, binding_revision=0, binding_audit=None,
+                     dialogue_commands=[],
                      native_queue=[], active_native_submission=None,
                      model_cursor=context.model_cursor)
         _save(context, state, plan)
@@ -525,6 +565,11 @@ def _run(context, user_message, history, pending_action):
             pending = state['pending']
             decision = Decision.model_validate(pending['decision'])
             step = next((s for s in plan.steps if s.step_id == pending['step_id']), None)
+            if decision.action in {'respond', 'unsupported'}:
+                return _present_dialogue(context, recorder, intake, state, plan, decision)
+            if decision.action == 'handoff':
+                from src.orchestrator import _explicit_escalation
+                return _explicit_escalation(intake, context.run_id, state['request'])
             if decision.action in {'clarify', 'finish'}:
                 return _present(context, recorder, intake, state, plan,
                     reason='MODEL_CLARIFICATION' if decision.action == 'clarify' else 'MODEL_STOPPED', message=decision.message)

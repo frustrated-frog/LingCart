@@ -67,7 +67,7 @@ def _current_experiment_identity(spec: dict) -> dict:
     candidate = runner.provenance()
     environment = environment_manifest(dataset, runner.execution_mode, dataset_path)
     purpose_models = {}
-    for purpose in ("router", "goal", "planner", "agent", "final_response"):
+    for purpose in ("dialogue_understanding", "goal", "planner", "agent", "final_response"):
         try:
             config = load_gateway_config(purpose=purpose)
             purpose_models[purpose] = [{

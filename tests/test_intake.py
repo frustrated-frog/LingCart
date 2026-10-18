@@ -77,13 +77,18 @@ def test_explicit_human_request_is_not_confused_with_failure():
     assert result.execution_mode == ESCALATION_REQUESTED
 
 
-def test_out_of_domain_request_is_unsupported():
+def test_out_of_domain_request_uses_open_set_model_fallback():
     result = analyze_request("帮我查一下今天的股票价格")
-    assert result.execution_mode == UNSUPPORTED
+    assert result.execution_mode == LLM_REQUIRED
+
+
+def test_identity_question_uses_semantic_model_fallback():
+    result = analyze_request("你是谁")
+    assert result.execution_mode == LLM_REQUIRED
 
 
 def test_ambiguous_request_uses_model_fallback():
-    result = analyze_request("你是谁")
+    result = analyze_request("帮我看看这个")
     assert result.execution_mode == LLM_REQUIRED
 
 

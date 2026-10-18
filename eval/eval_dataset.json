@@ -15,9 +15,13 @@
   {"message": "How long do returns take once you receive the item?", "expected_route": "FAQ"},
   {"message": "Do you ship internationally?", "expected_route": "FAQ"},
   {"message": "What's your customer support email?", "expected_route": "FAQ"},
-  {"message": "asdkjhasd nonsense gibberish qqweqwe", "expected_route": "ESCALATE"},
-  {"message": "This is the worst service ever, I'm furious and demand answers!!!", "expected_route": "ESCALATE"},
-  {"message": "Can I speak to a manager right now, this is unacceptable", "expected_route": "ESCALATE"},
+  {"message": "asdkjhasd nonsense gibberish qqweqwe", "expected_route": "UNSUPPORTED"},
+  {"message": "This is the worst service ever, I'm furious and demand answers!!!", "expected_route": "UNSUPPORTED"},
+  {"message": "Can I speak to a manager right now, this is unacceptable", "expected_route": "HANDOFF"},
   {"message": "I paid but never got my order, where is it?", "expected_route": "ORDER"},
-  {"message": "Can I get a refund since my payment was charged twice for order 1001?", "expected_route": "REFUND"}
+  {"message": "Can I get a refund since my payment was charged twice for order 1001?", "expected_route": "REFUND"},
+  {"message": "方便说说你到底是什么助手吗？", "expected_route": "CONVERSATIONAL"},
+  {"message": "第一次来，我可以让你帮我干哪些事？", "expected_route": "CONVERSATIONAL"},
+  {"message": "Find noise-cancelling headphones under 500 RMB", "expected_route": "SHOPPING"},
+  {"message": "Check order 1002, and also tell me tomorrow's weather", "expected_route": "MULTI"}
 ]

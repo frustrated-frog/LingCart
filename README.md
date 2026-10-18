@@ -35,7 +35,7 @@ FastAPI API + production static host
         │
 Durable conversation + request deduplication
         │
-Task intake ── direct plan / compound intake / model planner
+Task intake ── high-confidence fast path / open-set structured dialogue understanding
         │
 Harness Profile ── planning / context / memory / verification / tool protocol
         │

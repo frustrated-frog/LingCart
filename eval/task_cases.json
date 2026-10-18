@@ -1051,7 +1051,7 @@
       "id": "T25",
       "category": "unsupported",
       "language": "zh",
-      "description": "天气请求规则拒绝且不伪装人工工单",
+      "description": "天气请求由开放集语义识别拒绝且不伪装人工工单",
       "turns": [
         {
           "message": "帮我查一下今天的天气",
@@ -1066,18 +1066,26 @@
               "escalate_to_human"
             ],
             "pending_present": false,
-            "max_model_invocations": 0,
+            "max_model_invocations": 1,
             "terminal_reason": "UNSUPPORTED_INTENT",
             "error_code": "UNSUPPORTED_INTENT"
           }
         }
-      ]
+      ],
+      "model": {
+        "mode": "scripted",
+        "responses": [
+          {
+            "content": "{\"reason\":\"超出消费服务范围\",\"commands\":[{\"kind\":\"UNSUPPORTED\",\"source_quote\":\"帮我查一下今天的天气\",\"message\":null}],\"objectives\":[]}"
+          }
+        ]
+      }
     },
     {
       "id": "T26",
       "category": "unsupported",
       "language": "en",
-      "description": "英文非业务股票行情请求规则拒绝",
+      "description": "英文非业务股票行情由开放集语义识别拒绝",
       "turns": [
         {
           "message": "What is the stock price today?",
@@ -1092,12 +1100,20 @@
               "escalate_to_human"
             ],
             "pending_present": false,
-            "max_model_invocations": 0,
+            "max_model_invocations": 1,
             "terminal_reason": "UNSUPPORTED_INTENT",
             "error_code": "UNSUPPORTED_INTENT"
           }
         }
-      ]
+      ],
+      "model": {
+        "mode": "scripted",
+        "responses": [
+          {
+            "content": "{\"reason\":\"outside support scope\",\"commands\":[{\"kind\":\"UNSUPPORTED\",\"source_quote\":\"What is the stock price today?\",\"message\":null}],\"objectives\":[]}"
+          }
+        ]
+      }
     },
     {
       "id": "T27",
@@ -2494,40 +2510,7 @@
       "id": "T56",
       "category": "model_resilience",
       "language": "en",
-      "description": "错误路由格式必须失败不能制造人工工单",
-      "turns": [
-        {
-          "message": "Please help with my purchase concern.",
-          "expect": {
-            "statuses": [
-              "FAILED"
-            ],
-            "tools": [],
-            "forbidden_tools": [
-              "process_payment",
-              "initiate_refund",
-              "escalate_to_human"
-            ],
-            "pending_present": false,
-            "max_model_invocations": 1,
-            "error_code": "MODEL_FORMAT_ERROR"
-          }
-        }
-      ],
-      "model": {
-        "mode": "scripted",
-        "responses": [
-          {
-            "content": "NOT_A_ROUTE"
-          }
-        ]
-      }
-    },
-    {
-      "id": "T57",
-      "category": "model_resilience",
-      "language": "en",
-      "description": "模型未调用工具的订单断言不能判成功",
+      "description": "错误对话理解协议必须失败不能制造人工工单",
       "turns": [
         {
           "message": "Please help with my purchase concern.",
@@ -2543,7 +2526,7 @@
             ],
             "pending_present": false,
             "max_model_invocations": 2,
-            "error_present": true
+            "error_code": "MODEL_FORMAT_ERROR"
           }
         }
       ],
@@ -2551,99 +2534,19 @@
         "mode": "scripted",
         "responses": [
           {
-            "content": "ORDER"
+            "content": "NOT_A_DIALOGUE_PROTOCOL"
           },
           {
-            "content": "Your order 1001 was delivered."
+            "content": "STILL_NOT_A_DIALOGUE_PROTOCOL"
           }
         ]
       }
     },
     {
-      "id": "T58",
+      "id": "T57",
       "category": "model_resilience",
       "language": "en",
-      "description": "模型重复调用应停止并保留唯一真实观察",
-      "turns": [
-        {
-          "message": "Please help with my purchase concern.",
-          "expect": {
-            "statuses": [
-              "PARTIAL"
-            ],
-            "tools": [
-              {
-                "name": "get_order_status",
-                "args": {
-                  "order_id": 1001
-                },
-                "result": {
-                  "order_id": 1001,
-                  "status": "delivered"
-                }
-              }
-            ],
-            "forbidden_tools": [
-              "process_payment",
-              "initiate_refund",
-              "escalate_to_human"
-            ],
-            "pending_present": false,
-            "max_model_invocations": 4,
-            "terminal_reason": "REPEATED_TOOL_CALL",
-            "max_physical_calls_per_tool": {
-              "get_order_status": 1
-            }
-          }
-        }
-      ],
-      "model": {
-        "mode": "scripted",
-        "responses": [
-          {
-            "content": "ORDER"
-          },
-          {
-            "tool_calls": [
-              {
-                "name": "get_order_status",
-                "args": {
-                  "order_id": 1001
-                },
-                "id": "first"
-              }
-            ]
-          },
-          {
-            "tool_calls": [
-              {
-                "name": "get_order_status",
-                "args": {
-                  "order_id": 1001
-                },
-                "id": "duplicate"
-              }
-            ]
-          },
-          {
-            "tool_calls": [
-              {
-                "name": "get_order_status",
-                "args": {
-                  "order_id": 1001
-                },
-                "id": "blocked"
-              }
-            ]
-          }
-        ]
-      }
-    },
-    {
-      "id": "T59",
-      "category": "model_resilience",
-      "language": "en",
-      "description": "模型工具参数格式错不能变成已完成任务",
+      "description": "模型不能使用用户未提供的订单编号",
       "turns": [
         {
           "message": "Please help with my purchase concern.",
@@ -2658,8 +2561,8 @@
               "escalate_to_human"
             ],
             "pending_present": false,
-            "max_model_invocations": 3,
-            "error_code": "INVALID_TOOL_ARGUMENTS"
+            "max_model_invocations": 1,
+            "error_code": "UNGROUNDED_PLAN_ENTITY"
           }
         }
       ],
@@ -2667,8 +2570,77 @@
         "mode": "scripted",
         "responses": [
           {
-            "content": "ORDER"
+            "content": "{\"reason\":\"order lookup\",\"commands\":[],\"objectives\":[{\"id\":\"status\",\"kind\":\"ORDER_STATUS\",\"source_quote\":\"Please help with my purchase concern.\",\"order_id\":1001}]}"
+          }
+        ]
+      }
+    },
+    {
+      "id": "T58",
+      "category": "model_resilience",
+      "language": "en",
+      "description": "对话协议第一次格式错误后允许一次有界修复",
+      "turns": [
+        {
+          "message": "Please help with my purchase concern.",
+          "expect": {
+            "statuses": [
+              "SUCCEEDED"
+            ],
+            "tools": [],
+            "forbidden_tools": [
+              "process_payment",
+              "initiate_refund",
+              "escalate_to_human"
+            ],
+            "pending_present": false,
+            "max_model_invocations": 2,
+            "terminal_reason": "COMPLETED",
+            "reply_contains_any": [
+              "LingCart"
+            ]
+          }
+        }
+      ],
+      "model": {
+        "mode": "scripted",
+        "responses": [
+          {
+            "content": "not json"
           },
+          {
+            "content": "{\"reason\":\"identity question\",\"commands\":[{\"kind\":\"IDENTITY\",\"source_quote\":\"Please help with my purchase concern.\",\"message\":null}],\"objectives\":[]}"
+          }
+        ]
+      }
+    },
+    {
+      "id": "T59",
+      "category": "model_resilience",
+      "language": "en",
+      "description": "理解阶段禁止模型绕过协议直接调用工具",
+      "turns": [
+        {
+          "message": "Please help with my purchase concern.",
+          "expect": {
+            "statuses": [
+              "FAILED"
+            ],
+            "tools": [],
+            "forbidden_tools": [
+              "process_payment",
+              "initiate_refund",
+              "escalate_to_human"
+            ],
+            "pending_present": false,
+            "max_model_invocations": 2,
+            "error_code": "MODEL_FORMAT_ERROR"
+          }
+        }
+      ],
+      "model": {
+        "mode": "scripted",
+        "responses": [
           {
             "tool_calls": [
               {
@@ -2681,7 +2653,15 @@
             ]
           },
           {
-            "content": "The tool arguments were invalid."
+            "tool_calls": [
+              {
+                "name": "get_order_status",
+                "args": {
+                  "wrong": 1001
+                },
+                "id": "bad-args-again"
+              }
+            ]
           }
         ]
       }

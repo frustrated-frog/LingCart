@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "name": "baseline-v4",
+  "description": "统一结构化对话理解：开放集请求、协议修复与实体溯源进入离线门禁；业务工具、审批和政策证据边界保持不变。",
+  "dataset_sha256": "da93ffe9dbec8f976fa9240e02c79f71dd5ca5e6ddd2387233e25a87e089de45",
+  "expected": {
+    "cases_passed": 60,
+    "cases_total": 60,
+    "turns_passed": 71,
+    "turns_total": 71
+  },
+  "maximums": {
+    "model_invocations": 12,
+    "tool_calls": 73,
+    "physical_tool_calls": 74
+  }
+}

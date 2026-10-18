@@ -1,10 +1,8 @@
-"""Router evaluation harness.
+"""Live structured dialogue-understanding evaluation harness.
 
-Measures whether the orchestrator's routing LLM classifies realistic customer
-messages into the correct specialist (ORDER/REFUND/PAYMENT/FAQ/ESCALATE). This
-is distinct from tests/test_routing.py, which only checks the graph wiring
-with a mocked LLM — this harness measures actual LLM classification quality
-against a curated dataset, including deliberately tricky/ambiguous messages.
+Measures whether the shared understanding model produces the correct domain
+or open-set dialogue command. Business execution is evaluated separately by
+run_task_eval.py.
 
 Run:  python eval/run_eval.py            (calls the real LLM, one request per
                                            message; needs GEMINI_API_KEY or
@@ -22,9 +20,11 @@ import time
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from src.orchestrator import ROUTES, route_node  # noqa: E402
+from src.dialogue_understanding import understand_turn  # noqa: E402
+from src.llm import get_llm  # noqa: E402
 
 HERE = os.path.dirname(__file__)
+ROUTES = {"ORDER", "REFUND", "PAYMENT", "FAQ", "SHOPPING", "HANDOFF", "UNSUPPORTED", "CONVERSATIONAL", "MULTI"}
 
 
 def load_dataset() -> list[dict]:
@@ -33,7 +33,29 @@ def load_dataset() -> list[dict]:
 
 
 def classify(message: str) -> str:
-    return route_node({"user_message": message})["route"]
+    result = understand_turn(message, [], None, model=get_llm(purpose="dialogue_understanding"))
+    commands = {command.kind for command in result.commands}
+    if "HUMAN_HANDOFF" in commands:
+        return "HANDOFF"
+    if "UNSUPPORTED" in commands and result.objectives:
+        return "MULTI"
+    if "UNSUPPORTED" in commands:
+        return "UNSUPPORTED"
+    domains = set()
+    for objective in result.objectives:
+        if objective.kind.startswith("REFUND"):
+            domains.add("REFUND")
+        elif objective.kind.startswith("PAYMENT"):
+            domains.add("PAYMENT")
+        elif objective.kind == "FAQ":
+            domains.add("FAQ")
+        elif objective.kind.startswith("PRODUCT"):
+            domains.add("SHOPPING")
+        else:
+            domains.add("ORDER")
+    if len(domains) > 1:
+        return "MULTI"
+    return next(iter(domains), "CONVERSATIONAL")
 
 
 def main() -> None:

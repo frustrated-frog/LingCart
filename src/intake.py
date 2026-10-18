@@ -1,7 +1,7 @@
 """Deterministic task intake for common customer-service requests.
 
 The intake layer intentionally handles only high-confidence patterns. Ambiguous
-requests still fall through to the model router, while missing business slots
+requests still fall through to structured dialogue understanding, while missing business slots
 are clarified before any model or tool call is made.
 """
 
@@ -86,7 +86,7 @@ def parse_approval_response(user_message: str, pending_action: dict | None = Non
     return APPROVAL_UNKNOWN
 
 
-def analyze_request(user_message: str) -> TaskIntake:
+def analyze_request(user_message: str, *, _check_clause_coverage: bool = True) -> TaskIntake:
     """Return a structured, conservative interpretation of a user request."""
 
     request = user_message.strip()
@@ -159,9 +159,12 @@ def analyze_request(user_message: str) -> TaskIntake:
     status_words = ("状态", "status")
     detail_words = ("详情", "明细", "什么商品", "details")
 
-    if _has_any(normalized, refund_words) and not (policy_question and order_id is None):
-        eligibility_words = ("能不能", "能否", "可以退款", "是否可以", "资格", "eligible", "eligibility", "can i")
-        request_words = ("想退款", "申请退款", "我要退款", "帮我退款", "退掉", "start a refund", "want a refund", "refund order")
+    eligibility_words = ("能不能", "能否", "可以退款", "是否可以", "资格", "eligible", "eligibility", "can i")
+    request_words = ("想退款", "申请退款", "我要退款", "帮我退款", "退掉", "start a refund", "want a refund", "refund order")
+    explicit_refund_goal = _has_any(normalized, eligibility_words) or _has_any(normalized, request_words)
+    # A pure policy question remains FAQ even when another clause mentions an
+    # order. Explicit eligibility/action language still creates its own goal.
+    if _has_any(normalized, refund_words) and (explicit_refund_goal or not policy_question):
         if _has_any(normalized, eligibility_words):
             intents.append(REFUND_ELIGIBILITY)
         elif _has_any(normalized, request_words):
@@ -179,7 +182,7 @@ def analyze_request(user_message: str) -> TaskIntake:
         else:
             intents.append(PAYMENT_STATUS)
 
-    if _has_any(normalized, shipment_words) and not (policy_question and order_id is None):
+    if _has_any(normalized, shipment_words) and not policy_question:
         intents.append(SHIPMENT_TRACKING)
     if _has_any(normalized, detail_words):
         intents.append(ORDER_DETAILS)
@@ -196,6 +199,32 @@ def analyze_request(user_message: str) -> TaskIntake:
 
     # Preserve order while removing duplicate matches from overlapping phrases.
     intents = list(dict.fromkeys(intents))
+    if intents and _check_clause_coverage:
+        # The fast path is allowed only when it accounts for every coordinated
+        # clause. Unknown siblings go to the open-set semantic layer instead of
+        # being silently dropped because another clause matched a known rule.
+        clauses = [part.strip() for part in re.split(
+            r"(?:[，,；;]\s*)?(?:再|然后|另外|同时|顺便|并且|还要|then|also)\s*",
+            normalized,
+            flags=re.IGNORECASE,
+        ) if part.strip()]
+        if len(clauses) > 1:
+            for clause in clauses:
+                child = analyze_request(clause, _check_clause_coverage=False)
+                bare_numbers = {int(value) for value in re.findall(
+                    r"(?<![A-Za-z0-9])\d{4,}(?![A-Za-z0-9])", clause
+                )}
+                explicit_child_orders = set(child.entities.get("order_ids", []))
+                if child.entities.get("order_id") is not None:
+                    explicit_child_orders.add(child.entities["order_id"])
+                if (not child.intents and child.execution_mode == LLM_REQUIRED) or bare_numbers - explicit_child_orders:
+                    return TaskIntake(
+                        request=request,
+                        entities=entities,
+                        execution_mode=LLM_REQUIRED,
+                        confidence=0.0,
+                        reason="复合请求包含确定性规则无法完整覆盖的子句",
+                    )
     order_intents = {
         ORDER_STATUS,
         ORDER_DETAILS,
@@ -233,29 +262,10 @@ def analyze_request(user_message: str) -> TaskIntake:
             reason="命中高置信度业务规则",
         )
 
-    unsupported_words = (
-        "天气",
-        "股票",
-        "基金",
-        "机票",
-        "酒店",
-        "写代码",
-        "weather",
-        "stock price",
-        "flight ticket",
-    )
-    if _has_any(normalized, unsupported_words):
-        return TaskIntake(
-            request=request,
-            execution_mode=UNSUPPORTED,
-            confidence=0.99,
-            reason="请求超出消费服务业务范围",
-        )
-
     return TaskIntake(
         request=request,
         entities=entities,
         execution_mode=LLM_REQUIRED,
         confidence=0.0,
-        reason="确定性规则无法可靠判断，交由模型路由",
+        reason="确定性规则无法可靠判断，交由结构化对话理解",
     )

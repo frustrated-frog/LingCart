@@ -190,8 +190,8 @@ def built_in_mechanisms() -> tuple[HarnessMechanism, ...]:
     """Return exact implementations referenced by built-in Profiles."""
 
     return (
-        EmbeddedMechanism("planning", "routed-specialists", "1", ("orchestrator",),
-                          ("src/orchestrator.py", "src/planner.py")),
+        EmbeddedMechanism("planning", "structured-dialogue-understanding", "1", ("orchestrator",),
+                          ("src/orchestrator.py", "src/dialogue_understanding.py", "src/intake.py")),
         EmbeddedMechanism("tool_protocol", "runtime-tool-ledger", "2", ("orchestrator",),
                           ("src/runtime.py", "src/persistence.py")),
         EmbeddedMechanism("verification", "deterministic-business-gates", "1", ("orchestrator",),

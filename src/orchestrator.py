@@ -3,15 +3,8 @@ import re
 import time
 import uuid
 from datetime import UTC, datetime
-from typing import TypedDict
-
-from langgraph.graph import END, START, StateGraph
 
 from src.agents.base import as_text, sum_usage
-from src.agents.faq_agent import run_faq_agent
-from src.agents.order_agent import run_order_agent
-from src.agents.payment_agent import run_payment_agent
-from src.agents.refund_agent import run_refund_agent
 from src.direct_executor import execute_approved_action, execute_direct
 from src.errors import AgentError, classify_exception
 from src.intake import (
@@ -26,46 +19,13 @@ from src.intake import (
     analyze_request,
     parse_approval_response,
 )
-from src.llm import extract_usage, get_llm
+from src.llm import get_llm
 from src.logging_config import configure_logging
 from src.runtime import BudgetLimits, RunRuntime, ToolExecutor, TraceRecorder, current_runtime, runtime_scope
 from src.tools import escalate_to_human
 
 configure_logging()
 logger = logging.getLogger("support_agent.orchestrator")
-
-ROUTES = ("ORDER", "REFUND", "PAYMENT", "FAQ", "ESCALATE")
-
-ROUTER_PROMPT = """You are a customer-support router. Read the user's message and decide which
-specialist should handle it. Respond with ONLY one word from this list:
-- ORDER    : order status, tracking, order details
-- REFUND   : refund requests, refund status, eligibility
-- PAYMENT  : payment status, making a payment
-- FAQ      : general policy questions (shipping times, return policy)
-- ESCALATE : an explicit human-support request, abuse, or a truly unsupported request
-
-Do not choose ESCALATE merely because information is missing; the application handles clarification.
-
-User message: {user_message}
-Answer with one word only."""
-
-
-class SupportState(TypedDict, total=False):
-    user_message: str
-    history: list
-    route: str
-    reply: str
-    trace: list
-    events: list
-    agent: str
-    usage: dict
-    cached: bool
-    status: str
-    terminal_reason: str
-    run_id: str
-    error: dict | None
-    pending_action: dict | None
-
 
 def _event(run_id: str, sequence: int, event_type: str, **data) -> dict:
     context = current_runtime()
@@ -80,60 +40,6 @@ def _event(run_id: str, sequence: int, event_type: str, **data) -> dict:
     }
 
 
-def parse_route(text: str) -> str:
-    normalized = text.strip().upper()
-    for match in re.finditer(r"\b(ORDER|REFUND|PAYMENT|FAQ|ESCALATE)\b", normalized):
-        return match.group(1)
-    return "ESCALATE"
-
-
-def route_node(state: SupportState) -> dict:
-    run_id = state.get("run_id") or uuid.uuid4().hex
-    started_at = time.perf_counter()
-    llm = get_llm(purpose="router")
-    prompt = ROUTER_PROMPT.format(user_message=state["user_message"])
-    context = current_runtime()
-    result = context.model_call(llm, prompt, purpose="route", allow_tools=False) if context else llm.invoke(prompt)
-    duration_ms = round((time.perf_counter() - started_at) * 1000, 2)
-    text = as_text(result.content)
-    labels = set(re.findall(r"\b(ORDER|REFUND|PAYMENT|FAQ|ESCALATE)\b", text.upper()))
-    if len(labels) != 1:
-        raise AgentError("MODEL_FORMAT_ERROR", "路由模型未返回唯一有效业务类型", retryable=False)
-    route = labels.pop()
-    events = list(state.get("events") or [])
-    if context:
-        events = list(context.events)
-    else:
-        events.append(_event(run_id, len(events) + 1, "model_call", purpose="route", status="SUCCEEDED",
-                             duration_ms=duration_ms, usage=extract_usage(result)))
-    events.append(
-        _event(run_id, len(events) + 1, "route_decision", source="model", route=route, confidence=None)
-    )
-    return {"route": route, "usage": extract_usage(result), "events": events, "run_id": run_id}
-
-
-def _make_agent_node(agent_name: str, run_fn):
-    def node(state: SupportState) -> dict:
-        result = run_fn(state["user_message"], state.get("history"), run_id=state.get("run_id"))
-        prior_events = list(state.get("events") or [])
-        for event in result.get("events") or []:
-            prior_events.append({**event, "sequence": len(prior_events) + 1})
-        return {
-            "reply": result["reply"],
-            "trace": result["trace"],
-            "events": prior_events,
-            "agent": agent_name,
-            "usage": sum_usage(state.get("usage", {}), result.get("usage", {})),
-            "cached": result.get("cached", False),
-            "status": result.get("status", "SUCCEEDED"),
-            "terminal_reason": result.get("terminal_reason", "COMPLETED"),
-            "error": result.get("error"),
-            "pending_action": result.get("pending_action"),
-        }
-
-    return node
-
-
 def _escalate(run_id, request, reason, terminal_reason, usage=None):
     recorder = TraceRecorder(run_id)
     executor = ToolExecutor({"escalate_to_human": escalate_to_human}, recorder, max_calls=1)
@@ -145,35 +51,6 @@ def _escalate(run_id, request, reason, terminal_reason, usage=None):
                             result=result, status=event["status"], duration_ms=event["duration_ms"])],
                 events=recorder.events, agent="escalate", route="ESCALATE", usage=usage or {},
                 status="WAITING_HUMAN", terminal_reason=terminal_reason, pending_action=None, error=None)
-
-
-def escalate_node(state: SupportState) -> dict:
-    return _escalate(state["run_id"], state["user_message"], "模型路由判断该请求需要人工客服",
-                     "MODEL_ROUTED_ESCALATION", state.get("usage"))
-
-
-def build_graph():
-    graph = StateGraph(SupportState)
-    graph.add_node("route", route_node)
-    graph.add_node("order", _make_agent_node("order", run_order_agent))
-    graph.add_node("refund", _make_agent_node("refund", run_refund_agent))
-    graph.add_node("payment", _make_agent_node("payment", run_payment_agent))
-    graph.add_node("faq", _make_agent_node("faq", run_faq_agent))
-    graph.add_node("escalate", escalate_node)
-
-    graph.add_edge(START, "route")
-    graph.add_conditional_edges(
-        "route",
-        lambda state: state["route"],
-        {"ORDER": "order", "REFUND": "refund", "PAYMENT": "payment", "FAQ": "faq", "ESCALATE": "escalate"},
-    )
-    for node in ("order", "refund", "payment", "faq", "escalate"):
-        graph.add_edge(node, END)
-
-    return graph.compile()
-
-
-_GRAPH = build_graph()
 
 
 def _simple_result(
@@ -222,6 +99,108 @@ def _explicit_escalation(intake: TaskIntake, run_id: str, user_message: str) -> 
     return result
 
 
+def _execute_understanding(user_message, history, pending_action, intake, run_id):
+    """Interpret an open-set turn, then hand only validated goals to executors."""
+
+    from src.dialogue_understanding import command_kinds, render_direct_commands, to_task_plan, understand_turn
+
+    understanding = understand_turn(
+        user_message,
+        history,
+        pending_action,
+        model=get_llm(purpose="dialogue_understanding"),
+    )
+    kinds = command_kinds(understanding)
+    payload = understanding.model_dump()
+
+    # The semantic layer may recognize an implicit answer, but mutating actions
+    # retain the stricter explicit authorization parser above this function.
+    if kinds & {"CONFIRM_PENDING", "CANCEL_PENDING"} and pending_action:
+        result = _simple_result(
+            intake,
+            run_id,
+            reply="为避免误操作，请明确回复“确认”继续，或回复“取消”放弃。",
+            agent="intake",
+            route="APPROVAL",
+            status="WAITING_APPROVAL",
+            terminal_reason="APPROVAL_REQUIRED",
+            pending_action=pending_action,
+        )
+    elif kinds & {"CONFIRM_PENDING", "CANCEL_PENDING"}:
+        result = _simple_result(
+            intake,
+            run_id,
+            reply="当前没有等待确认的支付或退款操作，请重新说明你要处理的事项。",
+            agent="intake",
+            route="CLARIFY",
+            status="WAITING_CLARIFICATION",
+            terminal_reason="NO_PENDING_ACTION",
+        )
+    elif "HUMAN_HANDOFF" in kinds:
+        result = _explicit_escalation(intake, run_id, user_message)
+    elif "CLARIFY" in kinds:
+        question = next(command.message for command in understanding.commands if command.kind == "CLARIFY")
+        result = _simple_result(
+            intake,
+            run_id,
+            reply=question,
+            agent="intake",
+            route="CLARIFY",
+            status="WAITING_CLARIFICATION",
+            terminal_reason="MODEL_CLARIFICATION",
+        )
+    elif understanding.objectives:
+        planned_intake, plan = to_task_plan(understanding, user_message)
+        if planned_intake.execution_mode == CLARIFICATION_REQUIRED:
+            result = _simple_result(
+                planned_intake,
+                run_id,
+                reply="请提供要处理的订单号，例如“查询订单 1004 的状态和物流”。",
+                agent="intake",
+                route="CLARIFY",
+                status="WAITING_CLARIFICATION",
+                terminal_reason="MISSING_ORDER_ID",
+            )
+        else:
+            from src.task_plan import execute_plan
+
+            result = execute_plan(
+                planned_intake,
+                run_id,
+                plan=plan,
+                source="dialogue_model",
+                incomplete_reason="PARTIAL_UNSUPPORTED_INTENT" if "UNSUPPORTED" in kinds else None,
+            )
+            prefix = render_direct_commands(understanding.commands)
+            if prefix:
+                result["reply"] = prefix + "\n\n" + result["reply"]
+            if "UNSUPPORTED" in kinds:
+                result["reply"] += "\n\n另外一部分请求超出了当前消费服务助手的能力范围。"
+    elif "UNSUPPORTED" in kinds:
+        result = _simple_result(
+            intake,
+            run_id,
+            reply="这个请求超出了当前消费服务助手的能力范围。我目前可以处理商品选择、订单、物流、退款、支付状态和服务规则。",
+            agent="intake",
+            route="UNSUPPORTED",
+            status="FAILED",
+            terminal_reason="UNSUPPORTED_INTENT",
+            error={"code": "UNSUPPORTED_INTENT", "message": "结构化对话理解判定请求超出能力范围", "retryable": False},
+        )
+    else:
+        result = _simple_result(
+            intake,
+            run_id,
+            reply=render_direct_commands(understanding.commands),
+            agent="intake",
+            route="CONVERSATIONAL",
+            status="SUCCEEDED",
+            terminal_reason="COMPLETED",
+        )
+    result["understanding"] = payload
+    return result
+
+
 def resolve_followup(request, history):
     """Fill a missing order only from an unambiguous conversational reference."""
     intake = analyze_request(request)
@@ -230,25 +209,25 @@ def resolve_followup(request, history):
         clarification = ((context.snapshot.get("conversation") or {}).get("clarification") if context else None) or {}
         if "order_id" in clarification.get("missing_slots", []):
             order_id = re.search(r"\d{4,}", request).group()
-            return f"{clarification['request']}（订单 {order_id}）"
+            return f"{clarification['request']}（订单 {order_id}）", clarification.get("entities", {}).get("source") == "dialogue_understanding"
         for message in reversed(history or []):
             if getattr(message, "type", "") != "human":
                 continue
             prior = analyze_request(as_text(message.content))
             if prior.execution_mode == CLARIFICATION_REQUIRED and "order_id" in prior.missing_slots:
                 order_id = re.search(r"\d{4,}", request).group()
-                return f"{prior.request}（订单 {order_id}）"
+                return f"{prior.request}（订单 {order_id}）", prior.execution_mode == LLM_REQUIRED
             break
     reference = any(word in request.lower() for word in ("刚才", "那个", "这个", "它", "呢", "再", "继续", " it", "that order", "this order", "same order"))
     if reference and "order_id" in intake.missing_slots:
         for message in reversed(history or []):
             prior = analyze_request(as_text(message.content))
             if len(prior.entities.get("order_ids", [])) > 1:
-                return request
+                return request, False
             order_id = prior.entities.get("order_id")
             if order_id:
-                return f"(Context: the customer was last discussing order {order_id}.)\n{request}"
-    return request
+                return f"(Context: the customer was last discussing order {order_id}.)\n{request}", False
+    return request, False
 
 
 def _run_orchestrator(user_message: str, history: list | None = None, pending_action: dict | None = None) -> dict:
@@ -256,14 +235,16 @@ def _run_orchestrator(user_message: str, history: list | None = None, pending_ac
 
     run_id = current_runtime().run_id if current_runtime() else uuid.uuid4().hex
     started_at = time.perf_counter()
-    user_message = resolve_followup(user_message, history)
-    intake = analyze_request(user_message)
+    user_message, semantic_followup = resolve_followup(user_message, history)
+    intake = (TaskIntake(user_message, execution_mode=LLM_REQUIRED, confidence=0.0,
+                         reason="继续完成先前的结构化语义澄清")
+              if semantic_followup else analyze_request(user_message))
 
     approval_decision = parse_approval_response(user_message, pending_action) if pending_action else None
     active_execution_mode = (
         "APPROVAL"
         if pending_action
-        and (approval_decision in {APPROVAL_CONFIRMED, APPROVAL_CANCELLED} or intake.execution_mode == LLM_REQUIRED)
+        and approval_decision in {APPROVAL_CONFIRMED, APPROVAL_CANCELLED}
         else intake.execution_mode
     )
     if pending_action and approval_decision == APPROVAL_CONFIRMED:
@@ -277,17 +258,6 @@ def _run_orchestrator(user_message: str, history: list | None = None, pending_ac
             route="APPROVAL",
             status="CANCELLED",
             terminal_reason="USER_CANCELLED_ACTION",
-        )
-    elif pending_action and intake.execution_mode == LLM_REQUIRED:
-        result = _simple_result(
-            intake,
-            run_id,
-            reply="当前仍有一项待确认操作。请明确回复“确认”继续，或回复“取消”放弃。",
-            agent="intake",
-            route="APPROVAL",
-            status="WAITING_APPROVAL",
-            terminal_reason="APPROVAL_REQUIRED",
-            pending_action=pending_action,
         )
     elif intake.execution_mode == DIRECT:
         result = execute_direct(intake, run_id)
@@ -316,19 +286,7 @@ def _run_orchestrator(user_message: str, history: list | None = None, pending_ac
         result = _explicit_escalation(intake, run_id, user_message)
     elif intake.execution_mode == LLM_REQUIRED:
         try:
-            from src.planner import create_model_plan, needs_model_plan
-            if needs_model_plan(user_message):
-                planned_intake, plan = create_model_plan(user_message, history)
-                if planned_intake.execution_mode == CLARIFICATION_REQUIRED:
-                    result = _simple_result(planned_intake, run_id, reply="请补充复合任务所需的订单号。", agent="intake", route="CLARIFY",
-                                            status="WAITING_CLARIFICATION", terminal_reason="MISSING_ORDER_ID")
-                else:
-                    from src.task_plan import execute_plan
-                    result = execute_plan(planned_intake, run_id, plan=plan, source="model")
-                intake = planned_intake
-            else:
-                result = _GRAPH.invoke({"user_message": user_message, "history": history or [],
-                                        "trace": [], "events": [], "run_id": run_id})
+            result = _execute_understanding(user_message, history, pending_action, intake, run_id)
             result.setdefault("run_id", run_id)
             result.setdefault("status", "SUCCEEDED")
             result.setdefault("terminal_reason", "COMPLETED")
@@ -336,7 +294,9 @@ def _run_orchestrator(user_message: str, history: list | None = None, pending_ac
             result.setdefault("trace", [])
             result.setdefault("error", None)
             result.setdefault("pending_action", None)
-            result["intake"] = intake.to_dict()
+            # Semantic compilation may add missing slots or a more specific
+            # execution contract; preserve it for durable follow-up recovery.
+            result.setdefault("intake", intake.to_dict())
             if not result["events"] or result["events"][-1].get("type") != "terminal":
                 result["events"].append(
                     _event(

@@ -1,5 +1,7 @@
+import json
 import pytest
 from fastapi.testclient import TestClient
+from langchain_core.messages import AIMessage
 
 import api
 from src import orchestrator, tools
@@ -117,7 +119,7 @@ def test_model_unavailable_is_failed_not_fake_escalation(monkeypatch):
         "get_llm",
         lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("No LLM configured. Set a key")),
     )
-    result = orchestrator.run_orchestrator("你是谁")
+    result = orchestrator.run_orchestrator("帮我看看这个")
     assert result["status"] == "FAILED"
     assert result["terminal_reason"] == "MODEL_UNAVAILABLE"
     assert result["agent"] == "runtime"
@@ -125,7 +127,46 @@ def test_model_unavailable_is_failed_not_fake_escalation(monkeypatch):
     assert "没有转交人工" in result["reply"]
 
 
-def test_unsupported_request_is_not_escalated():
+@pytest.mark.parametrize(
+    "message,expected",
+    [
+        ("你是谁", "我是 LingCart"),
+        ("你能做什么？", "查订单与物流"),
+        ("你好", "你好，我是 LingCart"),
+    ],
+)
+def test_basic_conversation_succeeds_without_model_or_tools(monkeypatch, message, expected):
+    kinds = {"你是谁": "IDENTITY", "你能做什么？": "CAPABILITIES", "你好": "GREETING"}
+    response = AIMessage(content=json.dumps({
+        "reason": "基础对话",
+        "commands": [{"kind": kinds[message], "source_quote": message, "message": None}],
+        "objectives": [],
+    }, ensure_ascii=False))
+    class Model:
+        def invoke(self, _prompt):
+            return response
+    monkeypatch.setattr(orchestrator, "get_llm", lambda **_kwargs: Model())
+
+    result = orchestrator.run_orchestrator(message)
+
+    assert result["status"] == "SUCCEEDED"
+    assert result["route"] == "CONVERSATIONAL"
+    assert result["agent"] == "intake"
+    assert result["trace"] == []
+    assert result["budget"]["consumed"]["model_calls"] == 1
+    assert expected in result["reply"]
+
+
+def test_unsupported_request_is_not_escalated(monkeypatch):
+    response = AIMessage(content=json.dumps({
+        "reason": "超出消费服务范围",
+        "commands": [{"kind": "UNSUPPORTED", "source_quote": "帮我查一下今天的天气", "message": None}],
+        "objectives": [],
+    }, ensure_ascii=False))
+    class Model:
+        def invoke(self, _prompt):
+            return response
+    monkeypatch.setattr(orchestrator, "get_llm", lambda **_kwargs: Model())
     result = orchestrator.run_orchestrator("帮我查一下今天的天气")
     assert result["status"] == "FAILED"
     assert result["terminal_reason"] == "UNSUPPORTED_INTENT"

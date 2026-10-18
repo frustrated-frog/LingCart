@@ -172,11 +172,17 @@ def test_model_path_cannot_execute_unconfirmed_refund(monkeypatch, seeded_worksp
     assert not any(t["tool"] == "initiate_refund" for t in result["trace"])
 
 
-def test_langgraph_carries_model_requested_approval_to_frontend(monkeypatch):
-    response = FakeToolCallMessage(tool_calls=[{"name": "process_payment", "args": {"order_id": 1003, "method": "card"}, "id": "1"}])
-    monkeypatch.setattr(base, "get_llm", lambda **_kwargs: FakeLLM([response]))
-    monkeypatch.setattr(orchestrator, "get_llm", lambda **_kwargs: FakeLLM([FakeToolCallMessage(content="PAYMENT")]))
-    result = run_orchestrator("could you take care of it")
+def test_semantic_intake_carries_model_requested_approval_to_frontend(monkeypatch):
+    import json
+    from langchain_core.messages import AIMessage
+    class Model:
+        def invoke(self, _prompt):
+            return AIMessage(content=json.dumps({"reason": "payment request", "commands": [], "objectives": [
+                {"id": "payment", "kind": "PAYMENT_PROCESS",
+                 "source_quote": "take care of the bill for order 1003", "order_id": 1003}
+            ]}))
+    monkeypatch.setattr(orchestrator, "get_llm", lambda **_kwargs: Model())
+    result = run_orchestrator("could you take care of the bill for order 1003")
     assert result["status"] == "WAITING_APPROVAL"
     assert result["pending_action"]["order_id"] == 1003
     assert tools.get_payment_status(1003)["status"] == "pending"

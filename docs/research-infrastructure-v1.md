@@ -10,7 +10,7 @@
 
 当前有两个冻结对照 Profile、一个已否决实验候选和一个论文机制候选：
 
-- `baseline-v1`：现有确定性接入与专业 Agent 路由。
+- `baseline-v1`：高置信确定性接入与开放式结构化对话理解。
 - `adaptive-v1`：现有模型逐步决策、证据上下文、目标账本、受限重规划和独立审查。
 - `adaptive-objective-context-v1`：使用同一 adaptive 引擎，仅把 context 机制切换为“已验证目标证据优先”。首轮真实 Gate 已拒绝：token 减少约 6.8%，但 pass@1 和重复稳定性从 1.0 降到 0.8。
 - `adaptive-ace-context-v1`：复现 ACE 的 Generator / Reflector / Curator 与增量 Playbook；现有 adaptive Agent 是 Generator，后两者只在离线 `dev` 报告上运行，在线候选只读加载冻结版本。

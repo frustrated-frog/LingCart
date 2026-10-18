@@ -3,19 +3,20 @@
   "profile_id": "baseline-v1",
   "version": "1.0.0",
   "display_name": "稳定业务基线",
-  "description": "冻结现有确定性接入、专业路由、审批与持久化恢复路径，作为后续机制实验的对照组。",
+  "description": "冻结高置信接入、开放式结构化对话理解、审批与持久化恢复路径，作为后续机制实验的对照组。",
   "engine": {
     "id": "orchestrator",
     "version": "1"
   },
   "mechanisms": [
-    {"slot": "planning", "id": "routed-specialists", "version": "1"},
+    {"slot": "planning", "id": "structured-dialogue-understanding", "version": "1"},
     {"slot": "tool_protocol", "id": "runtime-tool-ledger", "version": "2"},
     {"slot": "verification", "id": "deterministic-business-gates", "version": "1"}
   ],
   "capabilities": [
     "deterministic_intake",
-    "specialist_routing",
+    "open_set_dialogue_understanding",
+    "multi_objective_planning",
     "durable_runtime",
     "approval_guard",
     "tool_ledger"

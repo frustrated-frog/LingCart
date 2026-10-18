@@ -147,7 +147,7 @@ def verify_observation(step):
         raise AgentError("INVALID_TOOL_RESULT", "工具结果未包含本步骤所需的业务证据", retryable=False)
 
 
-def execute_plan(intake, run_id, *, plan=None, source="deterministic"):
+def execute_plan(intake, run_id, *, plan=None, source="deterministic", incomplete_reason=None):
     context = current_runtime()
     recorder = TraceRecorder(run_id)
     plan = plan or build_plan(intake)
@@ -234,6 +234,8 @@ def execute_plan(intake, run_id, *, plan=None, source="deterministic"):
     # An empty search is a verified outcome, not a claim that products exist.
     if not errors and not pending and len(plan.steps) == 1 and plan.steps[0].tool == "search_products" and not plan.steps[0].result.get("products"):
         reason = "NO_MATCHING_PRODUCTS"
+    if incomplete_reason and status == "SUCCEEDED":
+        status, reason = "PARTIAL", incomplete_reason
     response = _finish(recorder, intake, run_id, agent, trace, reply="\n\n".join(_facts(s) for s in plan.steps) or "没有可执行的业务步骤。",
                        status=status, terminal_reason=reason, pending_action=pending, error=errors[-1] if errors else None)
     response["plan"] = plan.payload()

@@ -363,12 +363,14 @@ def test_external_write_with_uncertain_outcome_is_not_replayed(database):
 def test_structured_intake_clarification_survives_service_restart(database, monkeypatch):
     import json
     from langchain_core.messages import AIMessage
-    import src.planner as planner
     class Model:
         def invoke(self, messages):
             order_id = 1002 if '订单 1002' in messages else None
-            return AIMessage(content=json.dumps({"goals": [{"intent": "ORDER_STATUS", "order_id": order_id}, {"intent": "FAQ"}]}))
-    monkeypatch.setattr(planner, "get_llm", lambda **_kwargs: Model())
+            return AIMessage(content=json.dumps({"reason": "复合请求", "commands": [], "objectives": [
+                {"id": "status", "kind": "ORDER_STATUS", "source_quote": "包裹怎么样", "order_id": order_id},
+                {"id": "policy", "kind": "FAQ", "source_quote": "讲讲售后保障", "question": "讲讲售后保障"},
+            ]}, ensure_ascii=False))
+    monkeypatch.setattr("src.orchestrator.get_llm", lambda **_kwargs: Model())
     first = run_conversation("包裹怎么样，另外讲讲售后保障", "model-slots")
     assert first["status"] == "WAITING_CLARIFICATION"
     assert RunStore().conversation("model-slots")["state"]["clarification"]["missing_slots"] == ["order_id"]

@@ -8,7 +8,7 @@ import time
 
 SUPPORTED_PROVIDERS = {"auto", "gemini", "groq", "openai", "openai_compatible"}
 MODEL_PURPOSES = {
-    "router", "goal", "planner", "agent", "final_response", "default",
+    "router", "dialogue_understanding", "goal", "planner", "agent", "final_response", "default",
     "ace_reflector", "ace_curator",
 }
 DEFAULT_MODELS = {
