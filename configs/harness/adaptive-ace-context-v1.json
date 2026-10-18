@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "profile_id": "adaptive-ace-context-v1",
+  "version": "1.0.0",
+  "display_name": "ACE 经验上下文候选",
+  "description": "在自主 Agent 的证据上下文之外，注入由 dev 真实轨迹离线反思并增量策展的冻结策略 Playbook。",
+  "engine": {
+    "id": "adaptive",
+    "version": "1"
+  },
+  "mechanisms": [
+    {"slot": "planning", "id": "bounded-model-loop", "version": "1"},
+    {
+      "slot": "context",
+      "id": "ace-playbook-context",
+      "version": "1",
+      "configuration": {
+        "playbook_path": "research/playbooks/lingcart-ace-v1-guarded.json",
+        "max_bullets": 24,
+        "max_chars": 12000
+      }
+    },
+    {"slot": "memory", "id": "objective-ledger", "version": "1"},
+    {"slot": "verification", "id": "independent-request-audit", "version": "1"},
+    {"slot": "tool_protocol", "id": "native-strict-tools", "version": "1"}
+  ],
+  "capabilities": [
+    "model_directed_planning",
+    "bounded_replanning",
+    "ace_frozen_playbook",
+    "offline_experience_learning",
+    "goal_verification",
+    "durable_resume",
+    "runtime_steering"
+  ],
+  "research": {
+    "status": "candidate",
+    "source_type": "hybrid",
+    "paper_id": "arXiv:2510.04618v3",
+    "hypothesis": "由 dev 真实轨迹经过 Generator、Reflector、Curator 增量学习的冻结 Playbook，可在不放宽硬约束和不增加安全违规的前提下，提高复杂消费任务的跨任务成功率与恢复稳定性。"
+  }
+}

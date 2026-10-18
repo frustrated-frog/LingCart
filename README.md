@@ -8,7 +8,7 @@ LingCart 是一个面向消费决策与售后任务的 Agent 工程项目。它�
 
 - Agent 工程控制台：展示真实 Harness Registry、模型网关状态、任务集统计、实验契约与最近运行。
 - Run Inspector：沿 Execution Spine 检查 Profile 身份、事件顺序、模型调用、工具调用、目标证据与终止原因。
-- Mechanism Registry：比较 planning、context、memory、verification、tool protocol 五个扩展槽位及源码指纹。
+- Mechanism Registry：比较 planning、context、memory、verification、tool protocol 五个扩展槽位、参数和源码/研究产物指纹。
 - Experiment Contracts：冻结 baseline、candidate、唯一变量、数据分组、重复次数与质量 Gate；没有可比报告时不声称增益。
 - Dataset Coverage：浏览固定离线回归、真实模型消费任务和自主 Agent 专项任务的类别、分组、轮次与机器断言。
 - 消费业务沙盒：商品发现、订单与售后、支付/退款确认、任务记录和用户主动控制的长期偏好。
@@ -184,10 +184,27 @@ python eval/run_task_eval.py --gate
 
 ```bash
 python eval/run_live_eval.py --dry-run
-python eval/run_live_eval.py --profile adaptive-v1 --split test --repeats 3
+python eval/run_live_eval.py --harness-profile adaptive-v1 --split test --repeats 3
 ```
 
 候选实验必须提供机器可校验的 `experiment-spec.json`，冻结 baseline、candidate、数据分组、重复次数、指标方向和最大回退。报告还记录 Profile、机制实现、Prompt、Python、依赖锁和源码指纹。candidate Profile 只能从研究评测入口执行，产品 `/chat` 与 `/runs` 只接受 `baseline` 或 `promoted`。
+
+第一版 ACE（Agentic Context Engineering）纵向切片已经接入：现有 adaptive Agent 产生真实执行轨迹，离线 Reflector/Curator 只从 `dev` 环境反馈增量构建不可变 Playbook，候选 Profile 在 `test` 时只读加载固定版本。它与用户偏好、业务事实和权限分仓，独立审查不会接收 Playbook；代码门禁拒绝具体商品/订单事实和放宽硬约束的策略。
+
+```bash
+# 只验证 ACE 学习来源，不调用模型
+venv/bin/python -m eval.run_ace_adaptation \
+  --input-report output/deepseek-native-release-dev.json \
+  --dry-run
+
+# 生成新的不可变 Playbook 与完整学习报告
+venv/bin/python -m eval.run_ace_adaptation \
+  --input-report output/deepseek-native-release-dev.json \
+  --output-playbook research/playbooks/lingcart-ace-v1-guarded.json \
+  --output-report output/research/ace-v1-learning-guarded.json
+```
+
+`adaptive-objective-context-v1` 的首轮真实对照已被 Gate 拒绝：虽然 token 下降约 6.8%，但正确率和跨重复稳定性退化。负结果与报告哈希保留在 `research/experiments/objective-context-v1/`；ACE 当前仍是 `candidate`，不能从产品入口使用，也尚未宣称论文收益。
 
 详见：
 

@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "playbook_id": "lingcart-ace",
+  "version": 0,
+  "parent_sha256": null,
+  "source": {
+    "method": "seed",
+    "paper_id": "arXiv:2510.04618",
+    "training_report_path": null,
+    "training_report_sha256": null,
+    "training_split": null,
+    "sample_count": 0,
+    "model_config_sha256": null,
+    "generated_at": "2026-10-18T00:00:00+00:00"
+  },
+  "bullets": []
+}

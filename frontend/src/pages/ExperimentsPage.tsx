@@ -18,6 +18,8 @@ export function ExperimentsPage() {
   if (!baseline || !candidate) return <ErrorState error={new Error('实验引用了 Registry 中不存在的 Profile')} />
   const ready = experiment.status === 'CURRENT_REPRODUCIBLE'
   const historical = experiment.status === 'HISTORICAL_PASSED'
+  const rejected = experiment.status === 'CURRENT_REJECTED' || experiment.status === 'HISTORICAL_REJECTED'
+  const historicalRejected = experiment.status === 'HISTORICAL_REJECTED'
 
   return <>
     <PageHeader code="EXPERIMENTS / 04" title="实验契约"
@@ -27,7 +29,7 @@ export function ExperimentsPage() {
       { label: 'CONTRACT', value: 'VALID', note: experiment.path, tone: 'teal' },
       { label: 'VARIABLES', value: experiment.changes.length, note: '契约声明的变化', tone: 'violet' },
       { label: 'TEST REPEATS', value: experiment.repeats, note: `${experiment.evaluation_split} split`, tone: 'blue' },
-      { label: 'CONCLUSION', value: ready ? 'CURRENT & REPRODUCIBLE' : historical ? 'HISTORICAL ONLY' : 'NO COMPARABLE REPORT', note: ready ? '当前版本可复现' : historical ? '实现或环境已变化' : '禁止声称增益', tone: ready ? 'teal' : 'amber' },
+      { label: 'CONCLUSION', value: ready ? 'CURRENT & REPRODUCIBLE' : rejected ? 'GATE REJECTED' : historical ? 'HISTORICAL ONLY' : 'NO COMPARABLE REPORT', note: ready ? '当前版本可复现' : rejected ? (historicalRejected ? '历史版本未通过' : '当前版本未通过') : historical ? '实现或环境已变化' : '禁止声称增益', tone: ready ? 'teal' : 'amber' },
     ]} />
     <div className="experiment-pipeline">{[
       ['01', 'FREEZE', '冻结 Profile 与数据集', 'done'], ['02', 'DECLARE', '声明唯一变化与指标', 'done'],
@@ -46,6 +48,7 @@ export function ExperimentsPage() {
       </tbody></table></div></div>
     </div>
     {ready ? <><SectionHeading index="04" title="当前可复现实验报告" note={experiment.report_path ?? ''} /><JsonBlock value={experiment.report?.metrics ?? {}} /></>
-      : <div className="warning-state"><b>{historical ? 'HISTORICAL REPORT · CURRENT VERSION UNVERIFIED' : 'NO COMPARABLE REPORT'}</b><p>{historical ? '该实验曾有通过 Gate 的报告，但源码、Profile、模型配置、数据集或评测协议已变化，不能把历史结论当作当前版本结论。' : '当前仓库没有同时绑定该实验契约且通过 Gate 的候选报告，因此不能声称候选机制更好。'}</p>{historical && <code>{experiment.report_mismatches.join(' · ')}</code>}<small>下一步应分别在 test split 上运行 baseline 与 candidate，保持模型配置、依赖锁、重复次数和业务环境一致。</small></div>}
+      : rejected ? <><div className="warning-state"><b>{historicalRejected ? 'HISTORICAL REPORT · GATE REJECTED' : 'CURRENT REPORT · GATE REJECTED'}</b><p>候选报告已完成，但没有通过实验契约。失败报告仍保留并展示，不能声称候选机制更好。</p>{historicalRejected && <code>{experiment.report_mismatches.join(' · ')}</code>}<small>{experiment.report?.gate?.failures.join('；') || 'Gate 未提供失败原因'}</small></div><SectionHeading index="04" title="被拒绝实验的指标" note={experiment.report_path ?? ''} /><JsonBlock value={experiment.report?.metrics ?? {}} /></>
+      : <div className="warning-state"><b>{historical ? 'HISTORICAL REPORT · CURRENT VERSION UNVERIFIED' : 'NO COMPARABLE REPORT'}</b><p>{historical ? '该实验曾有通过 Gate 的报告，但源码、Profile、模型配置、数据集或评测协议已变化，不能把历史结论当作当前版本结论。' : '当前仓库没有同时绑定该实验契约且完成 Gate 的候选报告，因此不能声称候选机制更好。'}</p>{historical && <code>{experiment.report_mismatches.join(' · ')}</code>}<small>下一步应分别在 test split 上运行 baseline 与 candidate，保持模型配置、依赖锁、重复次数和业务环境一致。</small></div>}
   </>
 }

@@ -1,6 +1,8 @@
+import json
+
 import pytest
 
-from src import tools
+from src import engineering_console, tools
 from src.backend.db import get_engine, get_session_factory
 from src.backend.seed import seed
 from src.engineering_console import _report_mismatches, dataset_catalog, experiment_catalog, profile_catalog
@@ -32,11 +34,41 @@ def test_dataset_view_model_reports_real_case_and_split_counts():
     assert datasets["adaptive-agent-v1"]["turn_count"] == 21
 
 
-def test_experiment_view_does_not_invent_a_comparable_report():
+def test_experiment_view_does_not_invent_a_comparable_report(monkeypatch, tmp_path):
+    folder = tmp_path / "research" / "experiments" / "empty-v1"
+    folder.mkdir(parents=True)
+    spec = {"experiment_id": "empty-v1", "baseline_profile": "adaptive-v1",
+            "candidate_profile": "candidate-v1"}
+    (folder / "experiment-spec.json").write_text(json.dumps(spec))
+    monkeypatch.setattr(engineering_console, "ROOT", tmp_path)
+    monkeypatch.setattr(engineering_console, "_current_experiment_identity", lambda _spec: {})
+
     experiment = experiment_catalog()[0]
-    assert experiment["experiment_id"] == "objective-context-v1"
+    assert experiment["experiment_id"] == "empty-v1"
     assert experiment["status"] == "AWAITING_REPORT"
     assert experiment["report"] is None
+
+
+def test_experiment_view_surfaces_a_rejected_report(monkeypatch, tmp_path):
+    folder = tmp_path / "research" / "experiments" / "rejected-v1"
+    output = tmp_path / "output" / "nested"
+    folder.mkdir(parents=True)
+    output.mkdir(parents=True)
+    spec = {"experiment_id": "rejected-v1", "baseline_profile": "adaptive-v1",
+            "candidate_profile": "candidate-v1"}
+    (folder / "experiment-spec.json").write_text(json.dumps(spec))
+    current = {"experiment_spec": spec, "harness_profile": {}}
+    report = {"status": "COMPLETED", "generated_at": "2026-10-18T00:00:00Z",
+              "manifest": current, "metrics": {"pass_at_1": 0.8},
+              "gate": {"passed": False, "failures": ["正确率退化"]}}
+    (output / "report.json").write_text(json.dumps(report))
+    monkeypatch.setattr(engineering_console, "ROOT", tmp_path)
+    monkeypatch.setattr(engineering_console, "_current_experiment_identity", lambda _spec: current)
+
+    experiment = experiment_catalog()[0]
+    assert experiment["status"] == "CURRENT_REJECTED"
+    assert experiment["report"]["gate"]["failures"] == ["正确率退化"]
+    assert experiment["report_path"] == "output/nested/report.json"
 
 
 def test_report_identity_detects_stale_source_profile_model_and_dataset():

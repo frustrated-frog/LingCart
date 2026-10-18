@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -21,6 +22,20 @@ class MechanismRef(BaseModel):
     slot: str = Field(pattern=r"^[a-z][a-z0-9._-]*$", min_length=1, max_length=80)
     id: str = Field(pattern=r"^[a-z][a-z0-9._-]*$", min_length=1, max_length=80)
     version: str = Field(min_length=1, max_length=40)
+    configuration: dict[str, str | int | bool] = Field(default_factory=dict, max_length=16)
+
+    @field_validator("configuration")
+    @classmethod
+    def configuration_uses_identifiers(cls, configuration):
+        if any(not re.fullmatch(r"[a-z][a-z0-9_]*", key) for key in configuration):
+            raise ValueError("机制配置名称必须使用英文标识")
+        return configuration
+
+    def canonical_payload(self) -> dict:
+        payload = self.model_dump(mode="json")
+        if not payload["configuration"]:
+            payload.pop("configuration")
+        return payload
 
 
 class ResearchOrigin(BaseModel):
@@ -78,7 +93,9 @@ class HarnessProfile(BaseModel):
         return capabilities
 
     def canonical_payload(self) -> dict:
-        return self.model_dump(mode="json")
+        payload = self.model_dump(mode="json")
+        payload["mechanisms"] = [item.canonical_payload() for item in self.mechanisms]
+        return payload
 
     @property
     def fingerprint(self) -> str:
@@ -91,7 +108,7 @@ class HarnessProfile(BaseModel):
             "profile_version": self.version,
             "profile_sha256": self.fingerprint,
             "engine": self.engine.model_dump(),
-            "mechanisms": [item.model_dump() for item in self.mechanisms],
+            "mechanisms": [item.canonical_payload() for item in self.mechanisms],
             "research": self.research.model_dump(),
         }
 

@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "experiment_id": "ace-context-v1",
+  "method": "ace_offline",
+  "training_report_path": "output/deepseek-native-release-dev.json",
+  "training_report_sha256": "55d68a0434c09c2875ff08cfc6dcfefa036ace4ee9d693c2e00f7ec67ca99718",
+  "training_split": "dev",
+  "samples": 10,
+  "reflector_calls": 10,
+  "curator_calls": 1,
+  "proposed_operations": 22,
+  "applied_operations": 21,
+  "rejected_operations": 1,
+  "rejected_codes": [
+    "POLICY_OR_SCHEMA_REJECTED"
+  ],
+  "rejected_reason": "Curator 建议空结果时放宽价格；代码门禁将价格视为潜在硬约束并拒绝该条目。",
+  "playbook_path": "research/playbooks/lingcart-ace-v1-guarded.json",
+  "playbook_canonical_sha256": "0534dc0d910d07a9159984f1ed4bbca57aade4553d285817a00f17de1e37cc0e",
+  "playbook_file_sha256": "b7264f67a0a6c13578f3cb5e805dcae43a613e88f2616be863584c845cd67dff",
+  "learning_report_path": "output/research/ace-v1-learning-guarded.json",
+  "learning_report_sha256": "73339f8e165e6b06443af34452f274ff8084cd7bdc2f63b71c0dc892fdada2b1"
+}

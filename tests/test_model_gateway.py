@@ -24,6 +24,8 @@ _MODEL_ENV = {
     "LLM_PLANNER_MODEL",
     "LLM_AGENT_MODEL",
     "LLM_FINAL_RESPONSE_MODEL",
+    "LLM_ACE_REFLECTOR_MODEL",
+    "LLM_ACE_CURATOR_MODEL",
     "GEMINI_API_KEY",
     "GEMINI_API_KEYS",
     "GEMINI_MODEL",
@@ -40,7 +42,8 @@ _MODEL_ENV = {
 _MODEL_ENV.update({'OPENAI_COMPATIBLE_REASONING_EFFORT', 'LLM_GOAL_MODEL'})
 _MODEL_ENV.add('OPENAI_COMPATIBLE_STRICT_TOOLS')
 _MODEL_ENV.update(f'OPENAI_COMPATIBLE_{purpose}_{option}'
-                  for purpose in ('DEFAULT', 'ROUTER', 'GOAL', 'PLANNER', 'AGENT', 'FINAL_RESPONSE')
+                  for purpose in ('DEFAULT', 'ROUTER', 'GOAL', 'PLANNER', 'AGENT', 'FINAL_RESPONSE',
+                                  'ACE_REFLECTOR', 'ACE_CURATOR')
                   for option in ('THINKING_MODE', 'REASONING_EFFORT'))
 
 

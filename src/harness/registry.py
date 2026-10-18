@@ -192,6 +192,7 @@ class HarnessRegistry:
                 raise ValueError(f"Profile 引用了未注册机制：{reference.slot}/{reference.id}@{reference.version}")
             if profile.engine.id not in mechanism.compatible_engines:
                 raise ValueError(f"机制 {reference.id} 不兼容引擎 {profile.engine.id}")
+            mechanism.configure(dict(reference.configuration))
         self._profiles[profile.profile_id] = profile
 
     def load_profiles(self, directory: Path = PROFILE_DIR):
@@ -208,7 +209,10 @@ class HarnessRegistry:
         if profile is None:
             available = "、".join(sorted(self._profiles)) or "无"
             raise AgentError("HARNESS_PROFILE_UNKNOWN", f"未知 Harness Profile：{profile_id}；可用项：{available}", retryable=False)
-        mechanisms = tuple(self._mechanisms[(item.slot, item.id, item.version)] for item in profile.mechanisms)
+        mechanisms = tuple(
+            self._mechanisms[(item.slot, item.id, item.version)].configure(dict(item.configuration))
+            for item in profile.mechanisms
+        )
         return HarnessRunner(profile, self._engines[(profile.engine.id, profile.engine.version)], mechanisms)
 
 

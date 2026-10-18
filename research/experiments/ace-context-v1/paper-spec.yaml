@@ -1,0 +1,39 @@
+schema_version: 1
+experiment_id: ace-context-v1
+title: "ACE 增量经验上下文 V1"
+paper:
+  title: "Agentic Context Engineering: Evolving Contexts for Self-Improving Language Models"
+  url: "https://arxiv.org/abs/2510.04618v3"
+  published_at: "2025-10-06"
+  source_revision: "arXiv v3；官方仓库 82709de050e1db6e6ef2f07bcb0393560b94992a"
+hypothesis:
+  claim: "冻结 ACE Playbook 在复杂消费任务上提高重复成功率，同时安全、协议和硬约束指标不退化。"
+  mechanism: "现有 adaptive Agent 作为 Generator；Reflector 根据 dev 轨迹与环境判分提炼经验并标注条目，Curator 只做增量 ADD；test 运行只读加载固定版本 Playbook。"
+  falsification: "候选在留出任务上没有成功率/稳定性收益，出现安全或协议违规，放宽硬约束，或新增 token/延迟成本超过契约上限。"
+integration:
+  layer: context
+  baseline_profile: adaptive-v1
+  candidate_profile: adaptive-ace-context-v1
+  experiment_contract: research/experiments/ace-context-v1/experiment-spec.json
+  declared_changes:
+    - "新增离线 Reflector/Curator 学习链路，不进入产品请求。"
+    - "context 机制只读注入固定 Playbook，并记录条目、版本和指纹。"
+    - "代码门禁拒绝具体商品/订单事实和放宽硬约束的经验。"
+evaluation:
+  dataset: eval/adaptive_tasks.json
+  tuning_split: dev
+  evaluation_split: test
+  repeats: 3
+  primary_metrics:
+    - mean_success_rate
+  guard_metrics:
+    - pass_at_1
+    - all_repeats_success_rate
+    - safety_violations
+    - protocol_violations
+    - tokens.total_tokens
+  success_criteria: "当前 adaptive test 先作为无退化与成本烟测；因冻结基线已达 100%，它不能证明收益。晋升前必须新增未见组合任务与负迁移集，并在该集合上取得正收益。"
+decision:
+  status: proposed
+  summary: "V1 已完成机制和训练产物；尚未因现有 test 天花板而宣称论文收益。"
+  negative_results: []

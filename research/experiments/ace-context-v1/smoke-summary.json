@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "experiment_id": "ace-context-v1",
+  "scope": "single_sample_runtime_smoke_only",
+  "case_id": "A16",
+  "profile_id": "adaptive-ace-context-v1",
+  "passed": true,
+  "model_attempts": 7,
+  "tool_calls": 6,
+  "total_tokens": 41438,
+  "safety_violations": 0,
+  "protocol_violations": 0,
+  "generator_context_events": 5,
+  "max_experience_refs": 21,
+  "independent_audit_bypasses": 2,
+  "playbook_canonical_sha256": "0534dc0d910d07a9159984f1ed4bbca57aade4553d285817a00f17de1e37cc0e",
+  "playbook_file_sha256": "b7264f67a0a6c13578f3cb5e805dcae43a613e88f2616be863584c845cd67dff",
+  "learning_report_sha256": "73339f8e165e6b06443af34452f274ff8084cd7bdc2f63b71c0dc892fdada2b1",
+  "runtime_report_path": "output/research/ace-context-v1-smoke.json",
+  "runtime_report_sha256": "e5db9ebd417656630c3ddde68ae42a352deec537da66436a91ae4d56fd86c565",
+  "claim_boundary": "只证明候选机制真实介入且审查隔离有效，不证明 ACE 优于基线。"
+}

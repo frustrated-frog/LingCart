@@ -95,10 +95,10 @@ export interface Experiment {
   guard_metrics: MetricRule[]
   compatibility_review: string | null
   path: string
-  status: 'CURRENT_REPRODUCIBLE' | 'HISTORICAL_PASSED' | 'AWAITING_REPORT'
+  status: 'CURRENT_REPRODUCIBLE' | 'CURRENT_REJECTED' | 'HISTORICAL_PASSED' | 'HISTORICAL_REJECTED' | 'AWAITING_REPORT'
   report_path: string | null
   report_mismatches: string[]
-  report?: { metrics?: Record<string, unknown> } | null
+  report?: { metrics?: Record<string, unknown>, gate?: { passed: boolean, failures: string[] } } | null
 }
 
 export interface ProviderStatus {

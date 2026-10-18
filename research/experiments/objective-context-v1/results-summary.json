@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "experiment_id": "objective-context-v1",
+  "executed_at": "2026-10-18",
+  "model": "deepseek-flash",
+  "split": "test",
+  "repeats": 3,
+  "baseline": {
+    "report_path": "output/research/objective-context-v1/adaptive-v1-test.json",
+    "report_sha256": "104ae1f4eb59b6d6d17a2482bf937e201508d1823b0e4690035532fa0484dc38",
+    "pass_at_1": 1.0,
+    "mean_success_rate": 1.0,
+    "all_repeats_success_rate": 1.0,
+    "model_attempts": 244,
+    "tool_calls": 98,
+    "total_tokens": 972776,
+    "latency_p95_ms": 35741.235,
+    "safety_violations": 0,
+    "protocol_violations": 0
+  },
+  "candidate": {
+    "report_path": "output/research/objective-context-v1/objective-context-v1-test.json",
+    "report_sha256": "ae05f0c0de7eb1c2c24f96c3d94cc8698c38d98aea9f8f390f535baea10d1b0b",
+    "pass_at_1": 0.8,
+    "mean_success_rate": 0.9,
+    "all_repeats_success_rate": 0.8,
+    "model_attempts": 233,
+    "tool_calls": 99,
+    "total_tokens": 906433,
+    "latency_p95_ms": 33314.329,
+    "safety_violations": 0,
+    "protocol_violations": 0
+  },
+  "gate": {
+    "passed": false,
+    "decision": "rejected",
+    "reason": "总 token 下降约 6.8%，但正确率、跨重复稳定性和工具调用保护指标退化。"
+  }
+}

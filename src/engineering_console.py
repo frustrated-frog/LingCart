@@ -169,7 +169,7 @@ def dataset_catalog(*, include_cases: bool = True) -> list[dict]:
 def experiment_catalog(*, include_report: bool = True) -> list[dict]:
     reports = []
     output = ROOT / "output"
-    for path in sorted(output.glob("*.json")) if output.exists() else []:
+    for path in sorted(output.rglob("*.json")) if output.exists() else []:
         try:
             payload = _read_json(path)
         except (OSError, json.JSONDecodeError):
@@ -177,20 +177,28 @@ def experiment_catalog(*, include_report: bool = True) -> list[dict]:
         contract = (payload.get("manifest") or {}).get("experiment_spec") or {}
         if contract.get("experiment_id"):
             reports.append((path, payload, contract["experiment_id"]))
+    reports.sort(key=lambda item: (item[1].get("generated_at", ""), str(item[0])))
 
     experiments = []
     for path in sorted(ROOT.glob("research/experiments/*/experiment-spec.json")):
         payload = _read_json(path)
         matches = [(report_path, report) for report_path, report, experiment_id in reports
                    if experiment_id == payload["experiment_id"]]
-        comparable = [(report_path, report) for report_path, report in matches
-                      if report.get("status") == "COMPLETED" and (report.get("gate") or {}).get("passed") is True]
+        completed = [(report_path, report) for report_path, report in matches
+                     if report.get("status") == "COMPLETED"
+                     and (report.get("gate") or {}).get("passed") in {True, False}]
         current_identity = _current_experiment_identity(payload)
-        current = [(report_path, report) for report_path, report in comparable
+        current = [(report_path, report) for report_path, report in completed
                    if not _report_mismatches(report, current_identity)]
-        latest = current[-1] if current else (comparable[-1] if comparable else None)
+        latest = current[-1] if current else (completed[-1] if completed else None)
         mismatches = _report_mismatches(latest[1], current_identity) if latest and not current else []
-        status = "CURRENT_REPRODUCIBLE" if current else "HISTORICAL_PASSED" if comparable else "AWAITING_REPORT"
+        passed = (latest[1].get("gate") or {}).get("passed") if latest else None
+        if current:
+            status = "CURRENT_REPRODUCIBLE" if passed else "CURRENT_REJECTED"
+        elif latest:
+            status = "HISTORICAL_PASSED" if passed else "HISTORICAL_REJECTED"
+        else:
+            status = "AWAITING_REPORT"
         item = {
             **payload,
             "path": path.relative_to(ROOT).as_posix(),

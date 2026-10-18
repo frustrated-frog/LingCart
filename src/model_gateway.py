@@ -7,7 +7,10 @@ import time
 
 
 SUPPORTED_PROVIDERS = {"auto", "gemini", "groq", "openai", "openai_compatible"}
-MODEL_PURPOSES = {"router", "goal", "planner", "agent", "final_response", "default"}
+MODEL_PURPOSES = {
+    "router", "goal", "planner", "agent", "final_response", "default",
+    "ace_reflector", "ace_curator",
+}
 DEFAULT_MODELS = {
     "gemini": "gemini-2.5-flash",
     "groq": "llama-3.3-70b-versatile",

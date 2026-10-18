@@ -1,0 +1,444 @@
+{
+  "schema_version": 1,
+  "playbook_id": "lingcart-ace",
+  "version": 1,
+  "parent_sha256": "af699f7e76a03031d4d6eb0142cd220af8064005d47b8c259eee2c9ebb1a52e6",
+  "source": {
+    "method": "ace_offline",
+    "paper_id": "arXiv:2510.04618",
+    "training_report_path": "output/deepseek-native-release-dev.json",
+    "training_report_sha256": "55d68a0434c09c2875ff08cfc6dcfefa036ace4ee9d693c2e00f7ec67ca99718",
+    "training_split": "dev",
+    "sample_count": 10,
+    "model_config_sha256": "cc58bdb9cff738ae20221eadb6f2975b0f15c2d6f822f49da3e6eb2182c70f26",
+    "generated_at": "2026-10-18T12:16:20.881345+00:00"
+  },
+  "bullets": [
+    {
+      "bullet_id": "ace-00001",
+      "section": "goal_parsing",
+      "content": "将用户约束拆分为硬性约束（预算上限、明确排除的功能）与优先偏好（舒适度、续航等），并在最终答复中逐条对应说明，便于核验。",
+      "keywords": [
+        "硬约束",
+        "优先偏好",
+        "约束拆分"
+      ],
+      "helpful": 0,
+      "harmful": 0,
+      "source_reflections": [
+        "reflection-A01-r1",
+        "reflection-A02-r1",
+        "reflection-A03-r1"
+      ],
+      "source_cases": [
+        "A01",
+        "A02",
+        "A03"
+      ]
+    },
+    {
+      "bullet_id": "ace-00002",
+      "section": "goal_parsing",
+      "content": "一句话含多个独立诉求时，先显式拆分为独立子目标（如订单查询、商品推荐、政策问答），约束只绑定到对应子目标，避免外溢或遗漏。",
+      "keywords": [
+        "多意图",
+        "子目标拆分",
+        "约束绑定"
+      ],
+      "helpful": 0,
+      "harmful": 0,
+      "source_reflections": [
+        "reflection-A04-r1",
+        "reflection-A05-r1",
+        "reflection-A06-r1",
+        "reflection-A07-r1"
+      ],
+      "source_cases": [
+        "A04",
+        "A05",
+        "A06",
+        "A07"
+      ]
+    },
+    {
+      "bullet_id": "ace-00003",
+      "section": "goal_parsing",
+      "content": "用户对否定表述的纠正（如“不要主动降噪”）应作为硬约束保留，不得反转极性；价格上限等数值约束应在检索与推荐全流程持续施加。",
+      "keywords": [
+        "否定极性",
+        "硬约束保持",
+        "价格上限"
+      ],
+      "helpful": 0,
+      "harmful": 0,
+      "source_reflections": [
+        "reflection-A03-r1"
+      ],
+      "source_cases": [
+        "A03"
+      ]
+    },
+    {
+      "bullet_id": "ace-00004",
+      "section": "goal_parsing",
+      "content": "当用户已给出预算、功能排除项和可接受范围时，信息足够即直接执行，不必为形式追加澄清；历史对话若与当前请求无关，应判定其不构成额外约束。",
+      "keywords": [
+        "无需澄清",
+        "历史无关",
+        "直接执行"
+      ],
+      "helpful": 0,
+      "harmful": 0,
+      "source_reflections": [
+        "reflection-A02-r1",
+        "reflection-A08-r1",
+        "reflection-A10-r1"
+      ],
+      "source_cases": [
+        "A02",
+        "A08",
+        "A10"
+      ]
+    },
+    {
+      "bullet_id": "ace-00005",
+      "section": "planning",
+      "content": "推荐类任务先将预算上限转化为检索过滤条件缩小候选集，再在候选内按价格、核心配置、续航、库存等维度做统一横向对比后择优，避免在超预算商品上浪费比较成本。",
+      "keywords": [
+        "预算过滤",
+        "候选对比",
+        "多维比较"
+      ],
+      "helpful": 0,
+      "harmful": 0,
+      "source_reflections": [
+        "reflection-A01-r1",
+        "reflection-A05-r1",
+        "reflection-A08-r1",
+        "reflection-A10-r1"
+      ],
+      "source_cases": [
+        "A01",
+        "A05",
+        "A08",
+        "A10"
+      ]
+    },
+    {
+      "bullet_id": "ace-00006",
+      "section": "planning",
+      "content": "当用户明确排除某一选品理由（如“不要只因为便宜”）时，应在推荐理由中显式说明选择依据来自价格以外的维度，并点明所选并非最低价。",
+      "keywords": [
+        "选品偏好",
+        "非价格维度",
+        "显式回应"
+      ],
+      "helpful": 0,
+      "harmful": 0,
+      "source_reflections": [
+        "reflection-A08-r1"
+      ],
+      "source_cases": [
+        "A08"
+      ]
+    },
+    {
+      "bullet_id": "ace-00007",
+      "section": "planning",
+      "content": "贴近预算上限不等于最优，需用配置差异（如续航、降噪）证明溢价合理，否则应优先性价比更高的候选；同时保留略低于预算的备选以体现性价比判断。",
+      "keywords": [
+        "预算上限权衡",
+        "溢价合理性",
+        "备选保留"
+      ],
+      "helpful": 0,
+      "harmful": 0,
+      "source_reflections": [
+        "reflection-A05-r1",
+        "reflection-A06-r1",
+        "reflection-A10-r1"
+      ],
+      "source_cases": [
+        "A05",
+        "A06",
+        "A10"
+      ]
+    },
+    {
+      "bullet_id": "ace-00008",
+      "section": "tool_use",
+      "content": "决策输出必须严格匹配系统要求的 JSON 结构与字段；工具调用前核对参数名、取值编码与绑定字段是否与工具 schema 一致，防止格式错误与绑定审计拒绝。",
+      "keywords": [
+        "输出格式",
+        "schema一致",
+        "参数绑定"
+      ],
+      "helpful": 0,
+      "harmful": 0,
+      "source_reflections": [
+        "reflection-A03-r1",
+        "reflection-A01-r1"
+      ],
+      "source_cases": [
+        "A01",
+        "A03"
+      ]
+    },
+    {
+      "bullet_id": "ace-00009",
+      "section": "tool_use",
+      "content": "出现 BINDING_ALREADY_CURRENT 时说明当前绑定已正确，应停止重复绑定动作，直接推进到检索或比较步骤。",
+      "keywords": [
+        "重复绑定",
+        "状态已正确",
+        "推进下一步"
+      ],
+      "helpful": 0,
+      "harmful": 0,
+      "source_reflections": [
+        "reflection-A01-r1"
+      ],
+      "source_cases": [
+        "A01"
+      ]
+    },
+    {
+      "bullet_id": "ace-00010",
+      "section": "tool_use",
+      "content": "FAQ 类诉求直接调用专用问答工具获取政策原文，不要与商品检索混在同一步推理中；工具返回 SUCCEEDED 且内容足以回答时，应直接基于结果作答，不要用相同或近义理由重复调用同一工具。",
+      "keywords": [
+        "faq解耦",
+        "避免重复调用",
+        "基于结果作答"
+      ],
+      "helpful": 0,
+      "harmful": 0,
+      "source_reflections": [
+        "reflection-A06-r1",
+        "reflection-A07-r1"
+      ],
+      "source_cases": [
+        "A06",
+        "A07"
+      ]
+    },
+    {
+      "bullet_id": "ace-00011",
+      "section": "tool_use",
+      "content": "多实体查询（如多个订单）应拆成独立子目标逐一调用工具，保留“各自”的范围，避免合并或遗漏；工具返回成功后直接推进下一步，避免对同一查询重复调用。",
+      "keywords": [
+        "多实体查询",
+        "逐一调用",
+        "避免冗余"
+      ],
+      "helpful": 0,
+      "harmful": 0,
+      "source_reflections": [
+        "reflection-A05-r1",
+        "reflection-A04-r1"
+      ],
+      "source_cases": [
+        "A04",
+        "A05"
+      ]
+    },
+    {
+      "bullet_id": "ace-00012",
+      "section": "evidence",
+      "content": "推荐前必须先检索候选，并基于真实返回的价格与配置做选择，不得凭记忆编造商品或价格；推荐理由应引用检索结果中的具体属性（价格、形态、降噪、续航、库存）并与用户场景对齐。",
+      "keywords": [
+        "基于检索",
+        "禁止编造",
+        "属性引用"
+      ],
+      "helpful": 0,
+      "harmful": 0,
+      "source_reflections": [
+        "reflection-A04-r1",
+        "reflection-A01-r1",
+        "reflection-A08-r1"
+      ],
+      "source_cases": [
+        "A01",
+        "A04",
+        "A08"
+      ]
+    },
+    {
+      "bullet_id": "ace-00013",
+      "section": "evidence",
+      "content": "推荐时给出同价位/同类的对比维度（价格、核心配置、库存），明确说明为何选该款而非其他候选，并指出其相对优势（如降噪、续航）。",
+      "keywords": [
+        "横向对比",
+        "取舍说明",
+        "相对优势"
+      ],
+      "helpful": 0,
+      "harmful": 0,
+      "source_reflections": [
+        "reflection-A05-r1",
+        "reflection-A06-r1",
+        "reflection-A10-r1"
+      ],
+      "source_cases": [
+        "A05",
+        "A06",
+        "A10"
+      ]
+    },
+    {
+      "bullet_id": "ace-00014",
+      "section": "evidence",
+      "content": "推荐前先检索目录并确认关键属性（如主动降噪）的字段编码方式，避免把“无”误判为缺失或反之。",
+      "keywords": [
+        "字段语义",
+        "属性编码",
+        "避免误判"
+      ],
+      "helpful": 0,
+      "harmful": 0,
+      "source_reflections": [
+        "reflection-A02-r1"
+      ],
+      "source_cases": [
+        "A02"
+      ]
+    },
+    {
+      "bullet_id": "ace-00015",
+      "section": "verification",
+      "content": "任务完成前确认每个子目标都已闭环（如订单状态已给出、推荐已给出、政策已答复），再结束，避免提前 complete。",
+      "keywords": [
+        "子目标闭环",
+        "完成前检查",
+        "避免提前结束"
+      ],
+      "helpful": 0,
+      "harmful": 0,
+      "source_reflections": [
+        "reflection-A04-r1",
+        "reflection-A05-r1"
+      ],
+      "source_cases": [
+        "A04",
+        "A05"
+      ]
+    },
+    {
+      "bullet_id": "ace-00016",
+      "section": "verification",
+      "content": "工具调用后检查是否获得新增信息；若连续多次结果无实质变化，应停止重试并转向作答或说明限制，控制工具调用次数以降低超时或偏离风险。",
+      "keywords": [
+        "新增信息",
+        "停止重试",
+        "调用次数控制"
+      ],
+      "helpful": 0,
+      "harmful": 0,
+      "source_reflections": [
+        "reflection-A07-r1",
+        "reflection-A01-r1"
+      ],
+      "source_cases": [
+        "A01",
+        "A07"
+      ]
+    },
+    {
+      "bullet_id": "ace-00017",
+      "section": "verification",
+      "content": "即使任务通过，也应复盘无效决策次数，将重复绑定和格式错误视为流程噪声，优化决策生成以减少尝试轮次。",
+      "keywords": [
+        "复盘",
+        "无效决策",
+        "尝试轮次"
+      ],
+      "helpful": 0,
+      "harmful": 0,
+      "source_reflections": [
+        "reflection-A01-r1"
+      ],
+      "source_cases": [
+        "A01"
+      ]
+    },
+    {
+      "bullet_id": "ace-00018",
+      "section": "recovery",
+      "content": "被拒后应基于拒绝码定位具体字段问题再重试，而非重复同类输出；出现 MODEL_FORMAT_ERROR 时检查决策输出格式是否符合工具/动作 schema，减少无效重试。",
+      "keywords": [
+        "拒绝码定位",
+        "格式错误",
+        "定向重试"
+      ],
+      "helpful": 0,
+      "harmful": 0,
+      "source_reflections": [
+        "reflection-A03-r1",
+        "reflection-A01-r1"
+      ],
+      "source_cases": [
+        "A01",
+        "A03"
+      ]
+    },
+    {
+      "bullet_id": "ace-00019",
+      "section": "recovery",
+      "content": "用户明确给出兜底指令（如“找不到请询问我”）时，确认无匹配后应执行询问，而非编造商品或静默失败；价格等硬约束不可为凑结果而突破。",
+      "keywords": [
+        "兜底指令",
+        "执行询问",
+        "不突破硬约束"
+      ],
+      "helpful": 0,
+      "harmful": 0,
+      "source_reflections": [
+        "reflection-A09-r1"
+      ],
+      "source_cases": [
+        "A09"
+      ]
+    },
+    {
+      "bullet_id": "ace-00020",
+      "section": "communication",
+      "content": "推荐理由应逐条对应请求中的约束，说明为何该商品同时满足预算、排除项与可接受范围，并包含价格是否在预算内、关键偏好匹配点、库存/续航等支撑信息。",
+      "keywords": [
+        "逐条对应",
+        "约束匹配",
+        "支撑信息"
+      ],
+      "helpful": 0,
+      "harmful": 0,
+      "source_reflections": [
+        "reflection-A01-r1",
+        "reflection-A02-r1",
+        "reflection-A04-r1"
+      ],
+      "source_cases": [
+        "A01",
+        "A02",
+        "A04"
+      ]
+    },
+    {
+      "bullet_id": "ace-00021",
+      "section": "communication",
+      "content": "决策记录中的 reason 应填写实质依据，避免空字符串导致后续难以复核判断逻辑。",
+      "keywords": [
+        "reason实质化",
+        "可复核",
+        "避免空值"
+      ],
+      "helpful": 0,
+      "harmful": 0,
+      "source_reflections": [
+        "reflection-A02-r1"
+      ],
+      "source_cases": [
+        "A02"
+      ]
+    }
+  ]
+}
