@@ -11,6 +11,7 @@ from src.backend.db import Order, Payment, Product, Refund, get_engine, get_sess
 from src.backend.seed import seed
 from src.intake import PRODUCT_SEARCH, analyze_request
 from src.orchestrator import run_orchestrator
+from src.persistence import RunStore
 from src.workspace import list_orders, list_runs, save_run
 from tests.test_agent_base import FakeLLM, FakeToolCallMessage
 
@@ -130,6 +131,19 @@ def test_run_archive_survives_new_sessions_and_deduplicates():
     assert runs[0]["request"] == "查询订单 1002 的物流"
     assert runs[0]["result"]["events"] == result["events"]
     assert runs[0]["result"]["trace"] == result["trace"]
+
+
+def test_active_run_archive_uses_persisted_events_before_terminal_result():
+    store = RunStore()
+    claim = store.claim("live-inspector", "request", "查询订单", {})
+    event = {"run_id": claim["run_id"], "sequence": 1, "timestamp": "2026-01-01T00:00:00Z",
+             "type": "model_call", "purpose": "router"}
+    store.save_checkpoint(claim["run_id"], claim["token"], claim["snapshot"], event=event)
+
+    saved = next(run for run in list_runs() if run["run_id"] == claim["run_id"])
+    assert saved["result"]["status"] == "RUNNING"
+    assert saved["result"]["events"] == [event]
+    assert saved["result"]["terminal_reason"] is None
 
 
 def test_model_path_cannot_execute_unconfirmed_payment(monkeypatch):

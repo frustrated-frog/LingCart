@@ -1,5 +1,6 @@
 import { Navigate, Route, Routes } from 'react-router-dom'
 import { Layout } from './components/Layout'
+import { EngineeringGate } from './components/EngineeringGate'
 import { ConsolePage } from './pages/ConsolePage'
 import { DatasetsPage } from './pages/DatasetsPage'
 import { ExperimentsPage } from './pages/ExperimentsPage'
@@ -14,17 +15,19 @@ import { SandboxPage } from './pages/SandboxPage'
 export default function App() {
   return <Routes>
     <Route element={<Layout />}>
-      <Route index element={<ConsolePage />} />
-      <Route path="runs" element={<RunsPage />} />
-      <Route path="runs/:runId" element={<RunsPage />} />
-      <Route path="experiments" element={<ExperimentsPage />} />
-      <Route path="mechanisms" element={<MechanismsPage />} />
-      <Route path="datasets" element={<DatasetsPage />} />
+      <Route element={<EngineeringGate />}>
+        <Route index element={<ConsolePage />} />
+        <Route path="runs" element={<RunsPage />} />
+        <Route path="runs/:runId" element={<RunsPage />} />
+        <Route path="experiments" element={<ExperimentsPage />} />
+        <Route path="mechanisms" element={<MechanismsPage />} />
+        <Route path="datasets" element={<DatasetsPage />} />
+        <Route path="sandbox/tasks" element={<RunsPage businessMode />} />
+        <Route path="sandbox/tasks/:runId" element={<RunsPage businessMode />} />
+      </Route>
       <Route path="sandbox" element={<SandboxPage />} />
       <Route path="sandbox/products" element={<ProductsPage />} />
       <Route path="sandbox/orders" element={<OrdersPage />} />
-      <Route path="sandbox/tasks" element={<RunsPage businessMode />} />
-      <Route path="sandbox/tasks/:runId" element={<RunsPage businessMode />} />
       <Route path="sandbox/preferences" element={<PreferencesPage />} />
       <Route path="console" element={<Navigate to="/" replace />} />
       <Route path="*" element={<NotFoundPage />} />

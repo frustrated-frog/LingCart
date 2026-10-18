@@ -1,17 +1,20 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { ArrowUp, Check, CircleStop, Search, Sparkles } from 'lucide-react'
+import { ArrowUp, Check, CircleStop, CornerDownRight, RotateCcw, Search, Sparkles } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { api } from '../api/client'
-import { PageHeader, StatusBadge } from '../components/SystemUI'
+import { api, ApiError, streamRunEvents } from '../api/client'
+import { ExecutionSpine, PageHeader, StatusBadge } from '../components/SystemUI'
 import { getPreferenceProfileId, getSessionId, resetSessionId } from '../state/localSession'
-import type { ChatResponse, PendingAction } from '../types'
+import { clearRunOperation, loadRunOperation, saveRunOperation } from '../state/runOperation'
+import type { RunOperation } from '../state/runOperation'
+import type { ExecutionResult, PendingAction, RunEvent } from '../types'
 
 interface Message {
   role: 'user' | 'assistant'
   content: string
-  result?: ChatResponse
+  runId: string
+  result?: ExecutionResult
 }
 
 const quickPrompts = [
@@ -20,84 +23,243 @@ const quickPrompts = [
   ['检查退款资格', '查询订单 1001 是否可以退款'],
 ] as const
 
+function operationId(): string {
+  return crypto.randomUUID().replaceAll('-', '')
+}
+
+function mergeEvents(current: RunEvent[], incoming: RunEvent[]): RunEvent[] {
+  const keyed = new Map(current.map((event, index) => [event.sequence ?? index + 1, event]))
+  incoming.forEach((event, index) => keyed.set(event.sequence ?? current.length + index + 1, event))
+  return [...keyed.entries()].sort(([left], [right]) => left - right).map(([, event]) => event)
+}
+
 export function SandboxPage() {
   const [params, setParams] = useSearchParams()
-  const client = useQueryClient()
+  const queryClient = useQueryClient()
   const initialSession = useRef(getSessionId())
   const [sessionId, setSessionId] = useState(initialSession.current)
   const [messages, setMessages] = useState<Message[]>([])
   const [draft, setDraft] = useState(params.get('prompt') ?? '')
   const [adaptive, setAdaptive] = useState(false)
   const [paymentMethod, setPaymentMethod] = useState('card')
-  const conversation = useQuery({ queryKey: ['conversation', sessionId], queryFn: () => api.conversation(sessionId) })
+  const [operation, setOperation] = useState<RunOperation | null>(() => loadRunOperation(initialSession.current))
+  const [activeRunId, setActiveRunId] = useState<string | null>(() => operation?.runId ?? null)
+  const [liveEvents, setLiveEvents] = useState<RunEvent[]>([])
+  const [controlDraft, setControlDraft] = useState('')
+
+  const conversation = useQuery({
+    queryKey: ['conversation', sessionId],
+    queryFn: () => api.conversation(sessionId),
+    refetchInterval: activeRunId ? 1_500 : false,
+  })
+  const activeRun = useQuery({
+    queryKey: ['product-run', activeRunId, sessionId],
+    queryFn: () => api.productRun(activeRunId as string, sessionId),
+    enabled: Boolean(activeRunId),
+    refetchInterval: (query) => query.state.data?.result === null ? 750 : false,
+  })
+  const commands = useQuery({
+    queryKey: ['run-commands', activeRunId, sessionId],
+    queryFn: () => api.runCommands(activeRunId as string, sessionId),
+    enabled: Boolean(activeRunId) && activeRun.data?.result === null,
+    refetchInterval: activeRun.data?.result === null ? 1_000 : false,
+  })
 
   useEffect(() => {
-    if (params.get('new') === '1') {
-      const next = resetSessionId()
-      setSessionId(next)
-      setMessages([])
-      setParams({}, { replace: true })
-    }
+    if (params.get('new') !== '1') return
+    const next = resetSessionId()
+    setSessionId(next)
+    setMessages([])
+    setOperation(loadRunOperation(next))
+    setActiveRunId(null)
+    setLiveEvents([])
+    setParams({}, { replace: true })
   }, [params, setParams])
+
   useEffect(() => {
-    if (conversation.data && messages.length === 0) setMessages(conversation.data.messages.map((item) => ({ role: item.role, content: item.content })))
-  }, [conversation.data, messages.length])
+    const saved = conversation.data
+    if (!saved) return
+    setMessages((current) => {
+      const results = new Map(current.filter((item) => item.result).map((item) => [item.runId, item.result]))
+      return saved.messages.map((item) => ({
+        role: item.role,
+        content: item.content,
+        runId: item.run_id,
+        result: item.role === 'assistant' ? results.get(item.run_id) : undefined,
+      }))
+    })
+    if (saved.active_run_id) {
+      setActiveRunId(saved.active_run_id)
+      setOperation((current) => {
+        if (!current) return current
+        const recovered = { ...current, runId: saved.active_run_id as string }
+        saveRunOperation(sessionId, recovered)
+        return recovered
+      })
+    }
+  }, [conversation.data, sessionId])
+
+  useEffect(() => {
+    if (!activeRunId) return
+    setLiveEvents(activeRun.data?.events ?? [])
+    const last = activeRun.data?.events.at(-1)?.sequence ?? 0
+    const stream = streamRunEvents(activeRunId, sessionId,
+      (event) => setLiveEvents((current) => mergeEvents(current, [event])), last)
+    return () => stream.abort()
+  }, [activeRunId, sessionId])
+
+  useEffect(() => {
+    if (activeRun.data?.events) setLiveEvents((current) => mergeEvents(current, activeRun.data?.events ?? []))
+  }, [activeRun.data?.events])
+
+  useEffect(() => {
+    const result = activeRun.data?.result
+    if (!result || !activeRunId) return
+    setMessages((current) => {
+      const existing = current.findIndex((item) => item.role === 'assistant' && item.runId === activeRunId)
+      if (existing >= 0) return current.map((item, index) => index === existing ? { ...item, result } : item)
+      return [...current, { role: 'assistant', content: result.reply, runId: activeRunId, result }]
+    })
+    clearRunOperation(sessionId)
+    setOperation(null)
+    setActiveRunId(null)
+    setControlDraft('')
+    void queryClient.invalidateQueries({ queryKey: ['conversation', sessionId] })
+    void queryClient.invalidateQueries({ queryKey: ['runs'] })
+    void queryClient.invalidateQueries({ queryKey: ['engineering-overview'] })
+  }, [activeRun.data?.result, activeRunId, queryClient, sessionId])
 
   const send = useMutation({
-    mutationFn: async ({ message, action }: { message: string; action?: PendingAction }) => {
+    mutationFn: async (next: RunOperation) => {
       const profileId = getPreferenceProfileId()
       if (profileId) await api.bindPreferenceProfile(profileId, sessionId)
-      return api.chat({ message, session_id: sessionId, request_id: crypto.randomUUID().replaceAll('-', ''),
-        action_id: action?.action_id, harness_profile: adaptive ? 'adaptive-v1' : 'baseline-v1' })
+      return api.startRun({
+        message: next.message,
+        session_id: sessionId,
+        request_id: next.requestId,
+        action_id: next.actionId,
+        harness_profile: next.harnessProfile,
+        execution_mode: next.executionMode,
+      })
     },
-    onSuccess: (result) => {
-      setMessages((current) => [...current, { role: 'assistant', content: result.reply, result }])
-      void client.invalidateQueries({ queryKey: ['runs'] })
-      void client.invalidateQueries({ queryKey: ['engineering-overview'] })
+    retry: (count, error) => !(error instanceof ApiError) && count < 1,
+    onSuccess: (handle, current) => {
+      const accepted = { ...current, runId: handle.run_id }
+      saveRunOperation(sessionId, accepted)
+      setOperation(accepted)
+      setActiveRunId(handle.run_id)
+      void queryClient.invalidateQueries({ queryKey: ['conversation', sessionId] })
+    },
+    onError: async () => {
+      const saved = await api.conversation(sessionId).catch(() => null)
+      if (!saved?.active_run_id) return
+      setActiveRunId(saved.active_run_id)
+      setOperation((current) => {
+        if (!current) return current
+        const recovered = { ...current, runId: saved.active_run_id as string }
+        saveRunOperation(sessionId, recovered)
+        return recovered
+      })
+      send.reset()
     },
   })
 
+  const control = useMutation({
+    mutationFn: (input: { kind: 'steer' | 'cancel' | 'follow-up'; message: string; commandId: string; revision: number }) =>
+      api.controlRun(activeRunId as string, input.kind, {
+        session_id: sessionId,
+        message: input.message,
+        command_id: input.commandId,
+        expected_revision: input.revision,
+      }),
+    retry: (count, error) => !(error instanceof ApiError) && count < 1,
+    onSuccess: async () => {
+      setControlDraft('')
+      await commands.refetch()
+    },
+  })
+  const resume = useMutation({
+    mutationFn: () => api.resumeRun(activeRunId as string, sessionId),
+    onSuccess: (handle) => {
+      setActiveRunId(handle.run_id)
+      void activeRun.refetch()
+    },
+  })
+
+  const running = Boolean(activeRunId && activeRun.data?.result === null && activeRun.data?.status === 'RUNNING')
+  const interrupted = Boolean(activeRunId && activeRun.data?.result === null && activeRun.data?.status === 'INTERRUPTED')
+  const busy = send.isPending || running || interrupted
   const submit = (message: string, action?: PendingAction) => {
     const value = message.trim()
-    if (!value || send.isPending) return
-    setMessages((current) => [...current, { role: 'user', content: value }])
+    if (!value || busy) return
+    const next: RunOperation = {
+      requestId: operationId(),
+      message: value,
+      actionId: action?.action_id,
+      harnessProfile: adaptive ? 'adaptive-v1' : 'baseline-v1',
+      executionMode: adaptive ? 'adaptive' : 'auto',
+    }
+    saveRunOperation(sessionId, next)
+    setOperation(next)
+    setMessages((current) => [...current, { role: 'user', content: value, runId: `pending:${next.requestId}` }])
     setDraft('')
-    send.mutate({ message: value, action })
+    send.mutate(next)
   }
   const onSubmit = (event: FormEvent) => { event.preventDefault(); submit(draft) }
   const latestResult = [...messages].reverse().find((item) => item.result)?.result
-  const pending = latestResult?.pending_action ?? null
+  const pending = latestResult?.pending_action ?? activeRun.data?.result?.pending_action
+    ?? conversation.data?.state.pending_action ?? null
+  const events = liveEvents.length ? liveEvents : activeRun.data?.events ?? []
+  const revision = commands.data?.revision
+  const runControl = (kind: 'steer' | 'cancel' | 'follow-up') => {
+    const message = kind === 'cancel' ? '' : controlDraft.trim()
+    if ((kind !== 'cancel' && !message) || control.isPending || revision === undefined) return
+    control.mutate({ kind, message, commandId: operationId(), revision })
+  }
+  const retryOperation = () => { if (operation && !operation.runId) send.mutate(operation) }
 
   return <>
     <PageHeader code="BUSINESS SANDBOX / 10" title="消费工作台"
-      subtitle="用真实业务路径产生可检查的运行证据。商品、订单、支付和退款均连接本地演示数据库。" marker="DEMO DATA" />
+      subtitle="用真实业务路径产生可检查的运行证据。任务异步执行，可实时观察、调整、排队后续请求或中止。" marker="DEMO DATA" />
     <div className="sandbox-layout">
       <section className="conversation-panel">
         <div className="conversation-toolbar">
           <div><span>CONVERSATION</span><code>{sessionId.slice(0, 12)}</code></div>
-          <label className="mode-switch"><input type="checkbox" checked={adaptive} onChange={(event) => setAdaptive(event.target.checked)} /><span>Adaptive planning</span></label>
+          <label className="mode-switch"><input type="checkbox" checked={adaptive} disabled={busy} onChange={(event) => setAdaptive(event.target.checked)} /><span>Adaptive planning</span></label>
         </div>
         <div className="message-list">
           {messages.length === 0 && <div className="conversation-empty"><Sparkles size={24} /><h2>告诉 Agent 你的目标</h2><p>从明确的业务请求开始，或启用 Adaptive planning 观察自主规划链路。</p></div>}
-          {messages.map((message, index) => <article className={`message ${message.role}`} key={`${message.role}-${index}`}>
+          {messages.map((message, index) => <article className={`message ${message.role}`} key={`${message.runId}-${message.role}-${index}`}>
             <div className="message-role">{message.role === 'user' ? 'YOU' : 'LINGCART AGENT'}</div>
             <div className="message-copy">{message.content}</div>
             {message.result && <div className="message-meta"><StatusBadge status={message.result.status} /><span>{message.result.agent} · {message.result.run_id.slice(0, 10)} · {message.result.trace.length} tools</span></div>}
           </article>)}
-          {send.isPending && <article className="message assistant pending"><div className="message-role">LINGCART AGENT</div><div className="thinking-line"><i /><span>正在执行并核验结果</span></div></article>}
-          {send.isError && <div className="inline-error">{send.error.message}</div>}
+          {(send.isPending || running) && <article className="message assistant pending"><div className="message-role">LINGCART AGENT</div><div className="thinking-line"><i /><span>{send.isPending ? '正在提交可恢复任务' : '正在执行并持久化事件'}</span></div></article>}
+          {send.isError && <div className="inline-error">{send.error.message}<button onClick={retryOperation} disabled={!operation || Boolean(operation.runId)}>使用同一请求编号重试</button></div>}
         </div>
+
+        {activeRunId && <section className="live-run-panel">
+          <div className="live-run-head"><div><span>LIVE RUN</span><code>{activeRunId.slice(0, 12)}</code></div><StatusBadge status={activeRun.data?.status ?? 'RUNNING'} /></div>
+          <ExecutionSpine events={events} />
+          {running && <div className="run-control-composer">
+            <textarea aria-label="运行时指令" rows={2} value={controlDraft} onChange={(event) => setControlDraft(event.target.value)} placeholder="补充约束，或排队下一项任务…" />
+            <div><button onClick={() => runControl('steer')} disabled={!controlDraft.trim() || control.isPending || revision === undefined}><CornerDownRight size={14} />调整当前目标</button><button onClick={() => runControl('follow-up')} disabled={!controlDraft.trim() || control.isPending || revision === undefined}>排队后续任务</button><button className="danger" onClick={() => runControl('cancel')} disabled={control.isPending || revision === undefined}><CircleStop size={14} />停止运行</button></div>
+          </div>}
+          {interrupted && <div className="run-recovery"><p>任务在完成前中断，检查点和已完成工具结果仍然保留。</p><button className="primary" onClick={() => resume.mutate()} disabled={resume.isPending}><RotateCcw size={14} />从检查点恢复</button></div>}
+          {(control.isError || resume.isError) && <div className="inline-error">{(control.error ?? resume.error)?.message}</div>}
+        </section>}
+
         {pending && <ApprovalPanel action={pending} paymentMethod={paymentMethod} setPaymentMethod={setPaymentMethod}
           onConfirm={() => submit(pending.type === 'PROCESS_PAYMENT' ? `确认使用 ${paymentMethod} 支付` : '确认继续', pending)}
-          onCancel={() => submit('取消，先不要执行', pending)} disabled={send.isPending} />}
+          onCancel={() => submit('取消，先不要执行', pending)} disabled={busy} />}
         <form className="composer" onSubmit={onSubmit}>
-          <textarea aria-label="消费需求" value={draft} onChange={(event) => setDraft(event.target.value)} placeholder="继续提问，或补充你的需求…" rows={3} />
-          <button aria-label="发送需求" disabled={!draft.trim() || send.isPending}><ArrowUp size={18} /></button>
+          <textarea aria-label="消费需求" value={draft} onChange={(event) => setDraft(event.target.value)} placeholder={busy ? '当前任务结束后可发送新需求；运行时约束请在上方补充' : '继续提问，或补充你的需求…'} rows={3} disabled={busy} />
+          <button aria-label="发送需求" disabled={!draft.trim() || busy}><ArrowUp size={18} /></button>
         </form>
       </section>
       <aside className="sandbox-aside">
-        <div className="aside-block"><span>QUICK STARTS</span><h3>常用任务</h3>{quickPrompts.map(([label, prompt]) => <button onClick={() => submit(prompt)} disabled={send.isPending} key={label}><Search size={14} /><div><b>{label}</b><small>{prompt}</small></div></button>)}</div>
-        <div className="aside-block evidence-note"><span>EXECUTION EVIDENCE</span><h3>每次处理都可追溯</h3><p>运行完成后会进入 Run Inspector，保留 Profile、事件、工具参数、目标证据与终止原因。</p></div>
+        <div className="aside-block"><span>QUICK STARTS</span><h3>常用任务</h3>{quickPrompts.map(([label, prompt]) => <button onClick={() => submit(prompt)} disabled={busy} key={label}><Search size={14} /><div><b>{label}</b><small>{prompt}</small></div></button>)}</div>
+        <div className="aside-block evidence-note"><span>DURABLE EXECUTION</span><h3>刷新页面不会丢任务</h3><p>请求编号、活动 Run、检查点、审批状态和事件序列均由持久层恢复；网络重试复用同一幂等键。</p></div>
       </aside>
     </div>
   </>
@@ -108,7 +270,7 @@ function ApprovalPanel({ action, paymentMethod, setPaymentMethod, onConfirm, onC
   onConfirm: () => void; onCancel: () => void; disabled: boolean
 }) {
   const title = action.type === 'PROCESS_PAYMENT' ? '支付' : '退款'
-  return <div className="approval-panel"><div><span>APPROVAL REQUIRED</span><h3>确认订单 #{action.order_id} 的{title}操作</h3><p>只有明确确认后才会修改本地演示数据库。</p></div>
+  return <div className="approval-panel"><div><span>APPROVAL REQUIRED</span><h3>确认订单 #{action.order_id} 的{title}操作</h3><p>审批状态已持久化；刷新后仍会恢复，只有明确确认才会修改本地演示数据库。</p></div>
     {action.type === 'PROCESS_PAYMENT' && <label>支付方式<select value={paymentMethod} onChange={(event) => setPaymentMethod(event.target.value)}><option value="card">银行卡</option><option value="paypal">PayPal</option></select></label>}
     <div className="approval-actions"><button className="primary" onClick={onConfirm} disabled={disabled}><Check size={14} />确认{title}</button><button onClick={onCancel} disabled={disabled}><CircleStop size={14} />取消操作</button></div>
   </div>

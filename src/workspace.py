@@ -1,12 +1,13 @@
 """Read models and run archive shared by the API and React workspace."""
 
-import json
+from collections import defaultdict
 from datetime import UTC, datetime
+import json
 
 from sqlalchemy import select
 
 from src import tools
-from src.backend.db import AgentRun, Order, Payment, Refund, WorkspaceRun
+from src.backend.db import AgentRun, AgentStep, Order, Payment, Refund, WorkspaceRun
 
 _ORDER_NAMES = {"Wireless Headphones": "无线耳机", "Mechanical Keyboard": "机械键盘", "USB-C Hub": "USB-C 扩展坞",
                 "Standing Desk": "升降桌", "Desk Lamp": "台灯", "Bluetooth Speaker": "蓝牙音箱",
@@ -43,11 +44,29 @@ def list_runs(limit: int = 100) -> list[dict]:
     with tools._session() as session:
         durable = session.scalars(select(AgentRun).order_by(AgentRun.created_at.desc()).limit(limit)).all()
         legacy = session.scalars(select(WorkspaceRun).order_by(WorkspaceRun.created_at.desc()).limit(limit)).all()
+        events_by_run: dict[str, list[dict]] = defaultdict(list)
+        if durable:
+            steps = session.scalars(select(AgentStep).where(AgentStep.run_id.in_([run.run_id for run in durable]))
+                                    .order_by(AgentStep.run_id, AgentStep.sequence)).all()
+            for step in steps:
+                events_by_run[step.run_id].append(step.payload)
         results = {run.run_id: dict(run_id=run.run_id, conversation_id=run.conversation_id, request=run.request,
                                    created_at=run.created_at.replace(tzinfo=UTC).isoformat(), result=run.payload) for run in legacy}
         for run in durable:
+            events = events_by_run[run.run_id]
+            result = dict(run.result or {})
+            # AgentStep is the durable source of truth while a run is active.  The
+            # terminal result only receives an event copy when finish() commits.
+            result.update({
+                "run_id": run.run_id,
+                "status": run.status,
+                "events": events,
+            })
+            result.setdefault("agent", "runtime")
+            result.setdefault("trace", [])
+            result.setdefault("terminal_reason", "RECOVERY_REQUIRED" if run.status == "INTERRUPTED" else None)
+            result.setdefault("reply", "任务中断，等待恢复" if run.status == "INTERRUPTED" else "任务正在执行")
             results[run.run_id] = dict(run_id=run.run_id, conversation_id=run.session_id, request=run.request,
                                       created_at=run.created_at.replace(tzinfo=UTC).isoformat(),
-                                      result=run.result or dict(run_id=run.run_id, status=run.status, agent="runtime", trace=[], events=[],
-                                                               terminal_reason="RECOVERY_REQUIRED", reply="任务尚未完成"))
+                                      result=result)
         return sorted(results.values(), key=lambda run: run["created_at"], reverse=True)[:limit]

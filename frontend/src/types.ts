@@ -95,8 +95,9 @@ export interface Experiment {
   guard_metrics: MetricRule[]
   compatibility_review: string | null
   path: string
-  status: 'COMPLETED' | 'AWAITING_REPORT'
+  status: 'CURRENT_REPRODUCIBLE' | 'HISTORICAL_PASSED' | 'AWAITING_REPORT'
   report_path: string | null
+  report_mismatches: string[]
   report?: { metrics?: Record<string, unknown> } | null
 }
 
@@ -231,8 +232,7 @@ export interface PendingAction {
   [key: string]: unknown
 }
 
-export interface ChatResponse extends RunResult {
-  session_id: string
+export interface ExecutionResult extends RunResult {
   run_id: string
   reply: string
   agent: string
@@ -243,13 +243,45 @@ export interface ChatResponse extends RunResult {
   trace: Array<{ agent?: string; tool?: string; args?: Record<string, unknown>; result?: unknown }>
   pending_action?: PendingAction | null
   usage: { input_tokens: number | null; output_tokens: number | null; total_tokens: number | null }
+}
+
+export interface ChatResponse extends ExecutionResult {
+  session_id: string
   cached: boolean
 }
 
 export interface Conversation {
-  state: Record<string, unknown>
+  state: { pending_action?: PendingAction | null; [key: string]: unknown }
   messages: Array<{ role: 'user' | 'assistant'; content: string; run_id: string }>
   active_run_id: string | null
+}
+
+export interface ProductRun {
+  run_id: string
+  session_id: string
+  request: string
+  status: string
+  created_at: string
+  result: ExecutionResult | null
+  checkpoint: Record<string, unknown>
+  events: RunEvent[]
+}
+
+export interface RunHandle {
+  run_id: string
+  session_id: string
+  status: string
+  cached: boolean
+  result?: ExecutionResult
+}
+
+export interface RunCommand {
+  command_id: string
+  run_id: string
+  kind: 'STEER' | 'CANCEL' | 'FOLLOW_UP'
+  payload: Record<string, unknown>
+  status: string
+  outcome: Record<string, unknown> | null
 }
 
 export interface Preference {

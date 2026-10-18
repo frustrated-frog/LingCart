@@ -12,6 +12,8 @@ React application in production. Core endpoints:
     POST /runs/{run_id}/resume  explicitly resume interrupted work
 """
 
+import hmac
+import ipaddress
 import logging
 import os
 from pathlib import Path
@@ -53,6 +55,54 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+def _loopback_client(request: Request) -> bool:
+    """Only trust a directly connected loopback client, never Host/XFF headers."""
+
+    host = request.client.host if request.client else ""
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+def _local_browser_origin(request: Request) -> bool:
+    host = request.url.hostname or ""
+    if host.casefold() == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+@app.middleware("http")
+async def protect_engineering_api(request: Request, call_next):
+    """Keep research traces private unless accessed locally or with an operator key.
+
+    The engineering endpoints contain prompts, checkpoints and tool arguments.  A
+    configured key therefore switches the API into explicit operator mode; without
+    one, only a direct loopback connection is accepted.  Proxy headers are ignored
+    deliberately because trusting them requires deployment-specific proxy setup.
+    """
+
+    if request.url.path == "/engineering" or request.url.path.startswith("/engineering/"):
+        expected = os.getenv("LINGCART_ENGINEERING_KEY", "").strip()
+        supplied = request.headers.get("x-engineering-key", "")
+        forwarded = any(request.headers.get(name) for name in ("forwarded", "x-forwarded-for", "x-real-ip"))
+        allowed = (bool(expected) and hmac.compare_digest(supplied, expected)) or (
+            not expected and not forwarded and _loopback_client(request) and _local_browser_origin(request)
+        )
+        if not allowed:
+            return JSONResponse(
+                status_code=403,
+                content={"detail": {
+                    "code": "ENGINEERING_ACCESS_DENIED",
+                    "message": "工程控制台仅允许本机访问，或需要有效的 Engineering Key",
+                }},
+            )
+    return await call_next(request)
 
 
 

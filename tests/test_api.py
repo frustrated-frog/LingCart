@@ -9,13 +9,14 @@ from src.backend.seed import seed
 
 
 @pytest.fixture(autouse=True)
-def isolated_database():
+def isolated_database(monkeypatch):
+    monkeypatch.setenv("LINGCART_ENGINEERING_KEY", "test-engineering-key")
     engine = get_engine("sqlite:///:memory:")
     tools.configure_db(engine)
     with get_session_factory(engine)() as session:
         seed(session)
 
-client = TestClient(api.app)
+client = TestClient(api.app, headers={"X-Engineering-Key": "test-engineering-key"})
 
 FAKE_RESULT = {
     "reply": "Your order 1001 has been delivered.",
@@ -60,6 +61,21 @@ def test_engineering_overview_exposes_real_registry_and_aggregates_only():
         'baseline-v1', 'adaptive-v1', 'adaptive-objective-context-v1'}
     assert all('cases' not in item for item in payload['datasets'])
     assert all('result' not in item for item in payload['runs'])
+
+
+def test_engineering_api_rejects_remote_requests_without_operator_key():
+    untrusted = TestClient(api.app)
+    response = untrusted.get('/engineering/overview')
+    assert response.status_code == 403
+    assert response.json()['detail']['code'] == 'ENGINEERING_ACCESS_DENIED'
+
+
+def test_engineering_api_allows_only_direct_local_access_without_key(monkeypatch):
+    monkeypatch.delenv('LINGCART_ENGINEERING_KEY')
+    local = TestClient(api.app, base_url='http://127.0.0.1', client=('127.0.0.1', 51000))
+    assert local.get('/engineering/overview').status_code == 200
+    proxied = local.get('/engineering/overview', headers={'X-Forwarded-For': '203.0.113.10'})
+    assert proxied.status_code == 403
 
 
 def test_engineering_dataset_detail_and_business_catalog_are_api_backed():

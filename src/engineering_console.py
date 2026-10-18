@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from collections import Counter
 from datetime import UTC, datetime
+import hashlib
 import json
 from pathlib import Path
 from typing import Any
@@ -46,6 +47,68 @@ CATEGORY_LABELS = {
 
 def _read_json(path: Path) -> Any:
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _fingerprint(value: Any) -> str:
+    return hashlib.sha256(json.dumps(value, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
+
+
+def _current_experiment_identity(spec: dict) -> dict:
+    """Build the identities that must still match before a report is called current."""
+
+    from eval.run_live_eval import environment_manifest
+    from dotenv import load_dotenv
+    from src.model_gateway import ModelGatewayConfigurationError, load_gateway_config
+
+    load_dotenv(ROOT / ".env")
+    dataset_path = ROOT / spec["dataset"]
+    dataset = _read_json(dataset_path)
+    runner = get_runner(spec["candidate_profile"])
+    candidate = runner.provenance()
+    environment = environment_manifest(dataset, runner.execution_mode, dataset_path)
+    purpose_models = {}
+    for purpose in ("router", "goal", "planner", "agent", "final_response"):
+        try:
+            config = load_gateway_config(purpose=purpose)
+            purpose_models[purpose] = [{
+                "provider": provider.provider,
+                "model": provider.model,
+                "thinking_mode": provider.thinking_mode,
+                "reasoning_effort": provider.reasoning_effort,
+                "strict_tools": provider.strict_tools,
+            } for provider in config.providers]
+        except ModelGatewayConfigurationError:
+            purpose_models[purpose] = None
+    return {
+        "experiment_spec": spec,
+        "dataset_path": spec["dataset"],
+        "dataset_sha256": _fingerprint(dataset),
+        "suite": spec["suite"],
+        "split": spec["evaluation_split"],
+        "repeats": spec["repeats"],
+        "harness_profile": candidate,
+        "source_tree_sha256": environment["source_tree_sha256"],
+        "evaluation_protocol_sha256": environment["evaluation_protocol_sha256"],
+        "business_protocol_sha256": environment["business_protocol_sha256"],
+        "dependency_lock_sha256": environment["dependency_lock_sha256"],
+        "purpose_models": purpose_models,
+    }
+
+
+def _report_mismatches(report: dict, current: dict) -> list[str]:
+    manifest = report.get("manifest") or {}
+    mismatches = []
+    for key in ("experiment_spec", "dataset_path", "dataset_sha256", "suite", "split", "repeats",
+                "source_tree_sha256", "evaluation_protocol_sha256", "business_protocol_sha256",
+                "dependency_lock_sha256", "purpose_models"):
+        if manifest.get(key) != current.get(key):
+            mismatches.append(key)
+    recorded_profile = manifest.get("harness_profile") or {}
+    current_profile = current.get("harness_profile") or {}
+    for key in ("profile_id", "profile_sha256", "execution_sha256"):
+        if recorded_profile.get(key) != current_profile.get(key):
+            mismatches.append(f"harness_profile.{key}")
+    return mismatches
 
 
 def profile_catalog() -> list[dict]:
@@ -122,12 +185,18 @@ def experiment_catalog(*, include_report: bool = True) -> list[dict]:
                    if experiment_id == payload["experiment_id"]]
         comparable = [(report_path, report) for report_path, report in matches
                       if report.get("status") == "COMPLETED" and (report.get("gate") or {}).get("passed") is True]
-        latest = comparable[-1] if comparable else None
+        current_identity = _current_experiment_identity(payload)
+        current = [(report_path, report) for report_path, report in comparable
+                   if not _report_mismatches(report, current_identity)]
+        latest = current[-1] if current else (comparable[-1] if comparable else None)
+        mismatches = _report_mismatches(latest[1], current_identity) if latest and not current else []
+        status = "CURRENT_REPRODUCIBLE" if current else "HISTORICAL_PASSED" if comparable else "AWAITING_REPORT"
         item = {
             **payload,
             "path": path.relative_to(ROOT).as_posix(),
-            "status": "COMPLETED" if latest else "AWAITING_REPORT",
+            "status": status,
             "report_path": latest[0].relative_to(ROOT).as_posix() if latest else None,
+            "report_mismatches": mismatches,
         }
         if include_report:
             item["report"] = latest[1] if latest else None

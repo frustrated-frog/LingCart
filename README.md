@@ -137,6 +137,8 @@ LLM_BASE_URL=https://provider.example.com/v1
 - `GET /engineering/overview`：工程控制台聚合投影。
 - `GET /engineering/runs/{run_id}`：完整运行检查数据。
 
+工程接口包含用户请求、检查点和工具参数，默认只接受直接回环访问。远程或容器部署必须设置 `LINGCART_ENGINEERING_KEY`，浏览器会在会话级输入该 Key，并通过 `X-Engineering-Key` 请求头访问；不要把它写入 `VITE_*` 变量或前端构建产物。
+
 ## API 示例
 
 ```bash
