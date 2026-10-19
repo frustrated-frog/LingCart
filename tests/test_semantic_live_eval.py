@@ -35,6 +35,10 @@ def _result(*, status="SUCCEEDED", reason="COMPLETED"):
         },
         "plan": {"steps": [{"tool": "read_clock", "args": {"timezone": "America/New_York"}}]},
         "trace": [{"tool": "read_clock"}],
+        "events": [{
+            "type": "model_call", "status": "SUCCEEDED", "purpose": "dialogue_understanding",
+            "provider": "test", "model": "fixture", "provider_slot": 1,
+        }],
         "usage": {"total_tokens": 42},
         "budget": {"consumed": {"model_calls": 1}},
     }
@@ -78,6 +82,19 @@ def test_live_cli_requires_an_immutable_output_path(monkeypatch):
     assert error.value.code == 2
 
 
+def test_live_cli_rejects_tracked_changes_before_loading_model(monkeypatch, tmp_path):
+    monkeypatch.setattr(semantic_eval, "load_cases", lambda _path: _dataset())
+    monkeypatch.setattr(semantic_eval, "_tracked_worktree_clean", lambda: False)
+
+    with pytest.raises(SystemExit) as error:
+        semantic_eval.main([
+            "--live", "--case", "time", "--max-executions", "1",
+            "--output", str(tmp_path / "report.json"),
+        ])
+
+    assert error.value.code == 2
+
+
 def test_case_selection_is_explicit_and_rejects_unknown_ids():
     selected = semantic_eval.select_cases(_dataset(), case_ids=["identity", "time", "identity"])
 
@@ -116,6 +133,9 @@ def test_injected_evaluation_records_raw_protocol_and_cost(monkeypatch):
     assert report["metrics"]["total_tokens"] == 42
     assert report["samples"][0]["understanding"]["objectives"][0]["kind"] == "SYSTEM_TIME"
     assert report["samples"][0]["plan"]["steps"][0]["tool"] == "read_clock"
+    assert report["samples"][0]["model_providers"] == [{
+        "purpose": "dialogue_understanding", "provider": "test", "model": "fixture", "provider_slot": 1,
+    }]
     assert seen_limits[0].max_model_calls == 2
 
 

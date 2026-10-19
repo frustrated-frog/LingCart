@@ -131,6 +131,14 @@ def _git_commit() -> str | None:
     return completed.stdout.strip() or None if completed.returncode == 0 else None
 
 
+def _tracked_worktree_clean() -> bool:
+    completed = subprocess.run(
+        ["git", "diff", "--quiet", "HEAD", "--"], cwd=ROOT, check=False,
+        capture_output=True,
+    )
+    return completed.returncode == 0
+
+
 def _dataset_digest(dataset: dict) -> str:
     payload = json.dumps(dataset, ensure_ascii=False, sort_keys=True).encode()
     return hashlib.sha256(payload).hexdigest()
@@ -189,6 +197,15 @@ def evaluate(
                     "understanding": result.get("understanding"),
                     "plan": result.get("plan"),
                     "tools": [entry.get("tool") for entry in result.get("trace") or []],
+                    "model_providers": [
+                        {
+                            key: event.get(key)
+                            for key in ("purpose", "provider", "model", "provider_slot")
+                            if event.get(key) is not None
+                        }
+                        for event in result.get("events") or []
+                        if event.get("type") == "model_call" and event.get("status") == "SUCCEEDED"
+                    ],
                 }
                 samples.append(sample)
                 print(
@@ -230,7 +247,7 @@ def evaluate(
             "repeats": repeats,
             "modes": list(modes),
             "max_model_calls_per_run": max_model_calls_per_run,
-            "model_status": readiness,
+            "model_preflight": readiness,
         },
         "metrics": {
             "executions": len(samples),
@@ -314,6 +331,8 @@ def main(argv: list[str] | None = None) -> None:
         parser.error("真实评测必须通过 --output 保存不可变报告")
     if args.output.exists():
         parser.error(f"拒绝覆盖已有报告：{args.output}")
+    if not _tracked_worktree_clean():
+        parser.error("真实评测要求受版本控制的文件保持干净，请先提交实现再运行")
 
     from src.llm import get_model_status
 
@@ -329,6 +348,7 @@ def main(argv: list[str] | None = None) -> None:
         readiness=readiness,
         sleep_seconds=args.sleep,
     )
+    report["manifest"]["model_status_after"] = get_model_status()
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(report["metrics"], ensure_ascii=False, indent=2))

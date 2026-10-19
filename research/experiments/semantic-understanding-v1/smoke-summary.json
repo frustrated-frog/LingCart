@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "experiment_id": "semantic-understanding-v1",
+  "run_kind": "single-case-live-smoke",
+  "source_commit": "7e511b5b225a858ecae7bbae400127995e2dce26",
+  "dataset_sha256": "abe10433b2d6a1da1bfa09d7a8eab40d456ec382b285e6d1c0d6b129f88e7488",
+  "case_id": "trusted-timezone-normalization",
+  "mode": "auto",
+  "provider": "openai_compatible",
+  "model": "deepseek-flash",
+  "result": {
+    "passed": true,
+    "status": "SUCCEEDED",
+    "terminal_reason": "COMPLETED",
+    "objective": "SYSTEM_TIME",
+    "tool": "read_clock",
+    "normalized_timezone": "America/New_York",
+    "model_calls": 1,
+    "total_tokens": 1763,
+    "latency_ms": 2201.22
+  },
+  "raw_report_path": "output/semantic-live-smoke-7e511b5.json",
+  "raw_report_sha256": "9751b1558bc877cc5f1370ffcc40cbce165e1cd83fd1b4c112028e772f6d16dd",
+  "claim_boundary": "只证明一条真实模型语义理解、实体规范化与可信时钟执行链路可用，不代表完整数据集、重复稳定性或 Auto/Adaptive 一致性通过。"
+}
