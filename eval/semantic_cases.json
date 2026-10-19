@@ -3,63 +3,161 @@
   "cases": [
     {
       "id": "negated-handoff-order-shipment",
+      "risk_group": "negation",
       "message": "不要转人工，先帮我查订单 1002 的物流",
       "must_use_semantic": true,
       "expected": {"objectives": ["SHIPMENT_TRACKING"], "forbidden_commands": ["HUMAN_HANDOFF"], "statuses": ["SUCCEEDED"]}
     },
     {
       "id": "negative-catalog-constraint",
+      "risk_group": "negation",
       "message": "推荐预算 500 元的耳机，不要主动降噪",
       "must_use_semantic": true,
       "expected": {"objectives": ["PRODUCT_DISCOVERY"], "objective_fields": {"PRODUCT_DISCOVERY": {"excluded_terms": ["主动降噪"]}}, "statuses": ["SUCCEEDED"]}
     },
     {
       "id": "open-product-discovery",
+      "risk_group": "discovery",
       "message": "给我推荐买些什么",
       "must_use_semantic": true,
       "expected": {"objectives": ["PRODUCT_DISCOVERY"], "statuses": ["SUCCEEDED"]}
     },
     {
       "id": "multi-goal-order-and-calculation",
+      "risk_group": "multi-goal",
       "message": "瞅瞅 1002 那单进展，然后计算 2+2",
       "must_use_semantic": true,
       "expected": {"objectives": ["ORDER_STATUS", "CALCULATE"], "statuses": ["SUCCEEDED"]}
     },
     {
       "id": "trusted-timezone-normalization",
+      "risk_group": "trusted-facts",
       "message": "纽约现在几点",
       "must_use_semantic": true,
       "expected": {"objectives": ["SYSTEM_TIME"], "plan_args": {"read_clock": {"timezone": "America/New_York"}}, "statuses": ["SUCCEEDED"]}
     },
     {
       "id": "identity-command",
+      "risk_group": "conversation",
       "message": "你是谁，能做什么？",
       "must_use_semantic": true,
       "expected": {"commands_any": ["IDENTITY", "CAPABILITIES"], "statuses": ["SUCCEEDED"]}
     },
     {
       "id": "realtime-evidence-boundary",
+      "risk_group": "evidence-boundary",
       "message": "今天上海金价是多少",
       "must_use_semantic": true,
       "expected": {"objectives": ["GENERAL_ANSWER"], "objective_fields": {"GENERAL_ANSWER": {"evidence_requirement": "REALTIME_EXTERNAL"}}, "statuses": ["PARTIAL"], "terminal_reason": "EVIDENCE_UNAVAILABLE"}
     },
     {
       "id": "stable-general-answer",
+      "risk_group": "general-knowledge",
       "message": "解释什么是机会成本",
       "must_use_semantic": true,
       "expected": {"objectives": ["GENERAL_ANSWER"], "statuses": ["SUCCEEDED"]}
     },
     {
       "id": "correction-scope",
+      "risk_group": "correction",
       "message": "不是查订单 1002 的状态，而是查物流",
       "must_use_semantic": true,
       "expected": {"objectives": ["SHIPMENT_TRACKING"], "forbidden_objectives": ["ORDER_STATUS"], "statuses": ["SUCCEEDED"]}
     },
     {
       "id": "mixed-supported-and-unsupported",
+      "risk_group": "mixed-capability",
       "message": "查订单 1002 的状态，然后替我买一张去冰岛的机票",
       "must_use_semantic": true,
       "expected": {"objectives": ["ORDER_STATUS"], "commands_any": ["UNSUPPORTED"], "statuses": ["PARTIAL"]}
+    },
+    {
+      "id": "current-date-and-weekday",
+      "risk_group": "trusted-facts",
+      "message": "今天是几月几日，星期几？",
+      "must_use_semantic": true,
+      "expected": {"objectives": ["SYSTEM_TIME"], "tools": ["read_clock"], "statuses": ["SUCCEEDED"]}
+    },
+    {
+      "id": "english-tokyo-time",
+      "risk_group": "trusted-facts",
+      "message": "What time is it in Tokyo right now?",
+      "must_use_semantic": true,
+      "expected": {"objectives": ["SYSTEM_TIME"], "plan_args": {"read_clock": {"timezone": "Asia/Tokyo"}}, "tools": ["read_clock"], "statuses": ["SUCCEEDED"]}
+    },
+    {
+      "id": "natural-calculation",
+      "risk_group": "trusted-facts",
+      "message": "帮我算一下 (18+6)/3",
+      "must_use_semantic": true,
+      "expected": {"objectives": ["CALCULATE"], "tools": ["calculate"], "statuses": ["SUCCEEDED"]}
+    },
+    {
+      "id": "english-shipment-paraphrase",
+      "risk_group": "multilingual",
+      "message": "Could you check where order 1002 is right now?",
+      "must_use_semantic": true,
+      "expected": {"objectives": ["SHIPMENT_TRACKING"], "tools": ["get_tracking"], "statuses": ["SUCCEEDED"]}
+    },
+    {
+      "id": "negated-payment-query",
+      "risk_group": "negation",
+      "message": "不要支付订单 1001，只查一下它的支付状态",
+      "must_use_semantic": true,
+      "expected": {"objectives": ["PAYMENT_STATUS"], "forbidden_objectives": ["PAYMENT_PROCESS"], "tools": ["get_payment_status"], "forbidden_tools": ["process_payment"], "statuses": ["SUCCEEDED"]}
+    },
+    {
+      "id": "multi-goal-time-and-order",
+      "risk_group": "multi-goal",
+      "message": "告诉我今天的日期，然后查订单 1002 的状态",
+      "must_use_semantic": true,
+      "expected": {"objectives": ["SYSTEM_TIME", "ORDER_STATUS"], "tools": ["read_clock", "get_order_status"], "statuses": ["SUCCEEDED"]}
+    },
+    {
+      "id": "weather-evidence-boundary",
+      "risk_group": "evidence-boundary",
+      "message": "伦敦现在天气怎么样？",
+      "must_use_semantic": true,
+      "expected": {"objectives": ["GENERAL_ANSWER"], "objective_fields": {"GENERAL_ANSWER": {"evidence_requirement": "REALTIME_EXTERNAL"}}, "statuses": ["PARTIAL"], "terminal_reason": "EVIDENCE_UNAVAILABLE"}
+    },
+    {
+      "id": "capability-paraphrase",
+      "risk_group": "conversation",
+      "message": "第一次来，你都可以替我做哪些事情？",
+      "must_use_semantic": true,
+      "expected": {"commands_any": ["CAPABILITIES"], "statuses": ["SUCCEEDED"]}
+    },
+    {
+      "id": "unsupported-booking-action",
+      "risk_group": "mixed-capability",
+      "message": "帮我预订明晚在巴黎的酒店",
+      "must_use_semantic": true,
+      "expected": {"commands_any": ["UNSUPPORTED"], "statuses": ["FAILED"], "terminal_reason": "UNSUPPORTED_INTENT"}
+    },
+    {
+      "id": "history-order-pronoun",
+      "risk_group": "cross-turn",
+      "history": [
+        {"role": "human", "content": "我想查订单 1002"},
+        {"role": "assistant", "content": "已经记下订单 1002。"}
+      ],
+      "message": "它现在到哪了？",
+      "must_use_semantic": true,
+      "expected": {"objectives": ["SHIPMENT_TRACKING"], "tools": ["get_tracking"], "statuses": ["SUCCEEDED"]}
+    },
+    {
+      "id": "two-timezones-two-objectives",
+      "risk_group": "multi-goal",
+      "message": "纽约和伦敦现在分别几点？",
+      "must_use_semantic": true,
+      "expected": {"objectives": ["SYSTEM_TIME"], "objective_counts": {"SYSTEM_TIME": 2}, "tools": ["read_clock"], "statuses": ["SUCCEEDED"]}
+    },
+    {
+      "id": "stable-and-realtime-knowledge",
+      "risk_group": "mixed-capability",
+      "message": "解释什么是通货膨胀，然后告诉我今天的黄金价格",
+      "must_use_semantic": true,
+      "expected": {"objectives": ["GENERAL_ANSWER"], "objective_counts": {"GENERAL_ANSWER": 2}, "statuses": ["PARTIAL"], "terminal_reason": "EVIDENCE_UNAVAILABLE"}
     }
   ]
 }

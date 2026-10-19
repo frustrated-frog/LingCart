@@ -12,12 +12,14 @@ def _dataset():
             {
                 "id": "time",
                 "message": "纽约现在几点",
+                "risk_group": "trusted-facts",
                 "must_use_semantic": True,
                 "expected": {"objectives": ["SYSTEM_TIME"], "statuses": ["SUCCEEDED"]},
             },
             {
                 "id": "identity",
                 "message": "你是谁",
+                "risk_group": "conversation",
                 "must_use_semantic": True,
                 "expected": {"commands_any": ["IDENTITY"], "statuses": ["SUCCEEDED"]},
             },
@@ -102,6 +104,11 @@ def test_case_selection_is_explicit_and_rejects_unknown_ids():
     with pytest.raises(ValueError, match="未知语义评测案例"):
         semantic_eval.select_cases(_dataset(), case_ids=["missing"])
 
+    grouped = semantic_eval.select_cases(_dataset(), groups=["conversation"])
+    assert [case["id"] for case in grouped] == ["identity"]
+    with pytest.raises(ValueError, match="未知语义风险组"):
+        semantic_eval.select_cases(_dataset(), groups=["missing"])
+
 
 def test_injected_evaluation_records_raw_protocol_and_cost(monkeypatch):
     from src.intake import TaskIntake
@@ -112,8 +119,9 @@ def test_injected_evaluation_records_raw_protocol_and_cost(monkeypatch):
     )
     seen_limits = []
 
-    def runner(_message, *, limits):
+    def runner(_message, *, history, limits):
         seen_limits.append(limits)
+        assert history is None
         return _result()
 
     dataset = _dataset()
@@ -155,8 +163,8 @@ def test_auto_adaptive_terminal_mismatch_fails_both_samples(monkeypatch):
         max_model_calls_per_run=2,
         readiness={"configured": True},
         runners={
-            "auto": lambda _message, *, limits: _result(),
-            "adaptive": lambda _message, *, limits: _result(status="PARTIAL", reason="MODEL_STOPPED"),
+            "auto": lambda _message, *, history, limits: _result(),
+            "adaptive": lambda _message, *, history, limits: _result(status="PARTIAL", reason="MODEL_STOPPED"),
         },
     )
 
@@ -170,3 +178,47 @@ def test_dataset_digest_is_stable_across_key_order():
     second = json.loads(json.dumps(first, ensure_ascii=False))
 
     assert semantic_eval._dataset_digest(first) == semantic_eval._dataset_digest(second)
+
+
+def test_history_is_passed_as_typed_messages(monkeypatch):
+    from src.intake import TaskIntake
+
+    monkeypatch.setattr(
+        "src.intake.analyze_request",
+        lambda message: TaskIntake(request=message, execution_mode="LLM_REQUIRED", reason="test"),
+    )
+    case = {
+        **_dataset()["cases"][0],
+        "history": [
+            {"role": "human", "content": "订单号是 1002"},
+            {"role": "assistant", "content": "已经记下订单号。"},
+        ],
+    }
+
+    def runner(_message, *, history, limits):
+        assert [item.type for item in history] == ["human", "ai"]
+        assert [item.content for item in history] == ["订单号是 1002", "已经记下订单号。"]
+        return _result()
+
+    semantic_eval.evaluate(
+        _dataset(), cases=[case], repeats=1, modes=("auto",), max_model_calls_per_run=2,
+        readiness={"configured": True}, runners={"auto": runner},
+    )
+
+
+def test_gate_requires_real_provider_evidence(monkeypatch):
+    from src.intake import TaskIntake
+
+    monkeypatch.setattr(
+        "src.intake.analyze_request",
+        lambda message: TaskIntake(request=message, execution_mode="LLM_REQUIRED", reason="test"),
+    )
+    report = semantic_eval.evaluate(
+        _dataset(), cases=_dataset()["cases"][:1], repeats=1, modes=("auto",),
+        max_model_calls_per_run=2, readiness={"configured": True},
+        runners={"auto": lambda _message, *, history, limits: _result()},
+    )
+    assert any("不是由真实模型" in failure for failure in semantic_eval.evaluate_gate(report))
+
+    report["execution_source"] = "real_model"
+    assert semantic_eval.evaluate_gate(report) == []

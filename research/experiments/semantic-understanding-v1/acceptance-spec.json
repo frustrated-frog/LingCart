@@ -1,0 +1,74 @@
+{
+  "schema_version": 1,
+  "experiment_id": "semantic-understanding-v1",
+  "dataset": "eval/semantic_cases.json",
+  "dataset_cases": 22,
+  "risk_groups": [
+    "conversation",
+    "correction",
+    "cross-turn",
+    "discovery",
+    "evidence-boundary",
+    "general-knowledge",
+    "mixed-capability",
+    "multi-goal",
+    "multilingual",
+    "negation",
+    "trusted-facts"
+  ],
+  "stages": [
+    {
+      "id": "single-smoke",
+      "case_ids": ["trusted-timezone-normalization"],
+      "modes": ["auto"],
+      "repeats": 1,
+      "max_executions": 1,
+      "max_model_calls_per_run": 2
+    },
+    {
+      "id": "risk-sample",
+      "case_ids": [
+        "negated-handoff-order-shipment",
+        "multi-goal-time-and-order",
+        "history-order-pronoun",
+        "weather-evidence-boundary",
+        "unsupported-booking-action"
+      ],
+      "modes": ["auto"],
+      "repeats": 1,
+      "max_executions": 5,
+      "max_model_calls_per_run": 3
+    },
+    {
+      "id": "auto-baseline",
+      "selection": "all-cases",
+      "modes": ["auto"],
+      "repeats": 1,
+      "max_executions": 22,
+      "max_model_calls_per_run": 4
+    },
+    {
+      "id": "mode-consistency",
+      "case_ids": [
+        "trusted-timezone-normalization",
+        "negated-payment-query",
+        "multi-goal-time-and-order",
+        "history-order-pronoun",
+        "mixed-supported-and-unsupported"
+      ],
+      "modes": ["auto", "adaptive"],
+      "repeats": 1,
+      "max_executions": 10,
+      "max_model_calls_per_run": 6
+    }
+  ],
+  "gate": {
+    "pass_rate": 1.0,
+    "goal_recall": 1.0,
+    "false_fast_path_rate": 0.0,
+    "auto_adaptive_consistency": 1.0,
+    "require_provider_evidence": true,
+    "require_source_and_dataset_fingerprints": true
+  },
+  "progression_rule": "只有当前阶段通过并完成失败分析后才能提高下一阶段的调用预算；不得为获得通过结果跳过或删除失败案例。"
+}

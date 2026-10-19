@@ -25,6 +25,7 @@ DATASET = Path(__file__).with_name("semantic_cases.json")
 DEFAULT_MAX_EXECUTIONS = 2
 DEFAULT_MAX_MODEL_CALLS_PER_RUN = 4
 MODES = ("auto", "adaptive")
+HISTORY_ROLES = {"human", "assistant"}
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
@@ -37,12 +38,22 @@ def load_cases(path: Path) -> dict:
     for case in dataset["cases"]:
         if not case.get("id") or case["id"] in seen or not case.get("message") or not case.get("expected"):
             raise ValueError(f"invalid or duplicate semantic case: {case.get('id')!r}")
+        history = case.get("history", [])
+        if not isinstance(history, list) or any(
+            not isinstance(item, dict)
+            or item.get("role") not in HISTORY_ROLES
+            or not isinstance(item.get("content"), str)
+            or not item["content"].strip()
+            for item in history
+        ):
+            raise ValueError(f"invalid history for semantic case: {case['id']!r}")
         seen.add(case["id"])
     return dataset
 
 
 def select_cases(dataset: dict, *, case_ids: list[str] | None = None,
-                 max_cases: int | None = None, all_cases: bool = False) -> list[dict]:
+                 groups: list[str] | None = None, max_cases: int | None = None,
+                 all_cases: bool = False) -> list[dict]:
     cases = list(dataset["cases"])
     if case_ids:
         index = {case["id"]: case for case in cases}
@@ -50,6 +61,13 @@ def select_cases(dataset: dict, *, case_ids: list[str] | None = None,
         if missing:
             raise ValueError("未知语义评测案例：" + ", ".join(missing))
         cases = [index[case_id] for case_id in dict.fromkeys(case_ids)]
+    elif groups:
+        requested = set(groups)
+        available = {case.get("risk_group", "ungrouped") for case in cases}
+        missing = sorted(requested - available)
+        if missing:
+            raise ValueError("未知语义风险组：" + ", ".join(missing))
+        cases = [case for case in cases if case.get("risk_group", "ungrouped") in requested]
     elif not all_cases:
         cases = cases[:max_cases or 1]
     if max_cases is not None:
@@ -90,6 +108,9 @@ def score_result(case: dict, result: dict, intake) -> dict:
     for kind in expected.get("forbidden_objectives", []):
         if kind in kinds:
             failures.append(f"forbidden objective {kind}")
+    for kind, count in expected.get("objective_counts", {}).items():
+        if kinds.count(kind) != count:
+            failures.append(f"objective count {kind}={kinds.count(kind)}, expected {count}")
     for kind in expected.get("forbidden_commands", []):
         if kind in command_kinds:
             failures.append(f"forbidden command {kind}")
@@ -108,6 +129,13 @@ def score_result(case: dict, result: dict, intake) -> dict:
         failures.append(f"status {result.get('status')}")
     if expected.get("terminal_reason") and result.get("terminal_reason") != expected["terminal_reason"]:
         failures.append(f"terminal reason {result.get('terminal_reason')}")
+    tools = [entry.get("tool") for entry in result.get("trace") or []]
+    for name in expected.get("tools", []):
+        if name not in tools:
+            failures.append(f"missing tool {name}")
+    for name in expected.get("forbidden_tools", []):
+        if name in tools:
+            failures.append(f"forbidden tool {name}")
     false_fast_path = bool(case.get("must_use_semantic") and intake.execution_mode != "LLM_REQUIRED")
     if false_fast_path:
         failures.append(f"unsafe fast path {intake.execution_mode}")
@@ -121,6 +149,13 @@ def score_result(case: dict, result: dict, intake) -> dict:
         "objectives": kinds,
         "commands": command_kinds,
     }
+
+
+def _history_messages(case: dict) -> list:
+    from langchain_core.messages import AIMessage, HumanMessage
+
+    factories = {"human": HumanMessage, "assistant": AIMessage}
+    return [factories[item["role"]](content=item["content"]) for item in case.get("history", [])]
 
 
 def _git_commit() -> str | None:
@@ -178,14 +213,16 @@ def evaluate(
         for repeat in range(1, repeats + 1):
             for mode in modes:
                 intake = analyze_request(case["message"])
+                history = _history_messages(case)
                 base_limits = BudgetLimits.adaptive() if mode == "adaptive" else BudgetLimits()
                 limits = replace(base_limits, max_model_calls=max_model_calls_per_run)
                 started = time.perf_counter()
-                result = runners[mode](case["message"], limits=limits)
+                result = runners[mode](case["message"], history=history or None, limits=limits)
                 score = score_result(case, result, intake)
                 budget = result.get("budget") or {}
                 sample = {
                     "case_id": case["id"],
+                    "risk_group": case.get("risk_group", "ungrouped"),
                     "repeat": repeat,
                     "mode": mode,
                     **score,
@@ -244,6 +281,7 @@ def evaluate(
             "git_commit": _git_commit(),
             "dataset_sha256": _dataset_digest(dataset),
             "selected_case_ids": [case["id"] for case in cases],
+            "risk_groups": sorted({case.get("risk_group", "ungrouped") for case in cases}),
             "repeats": repeats,
             "modes": list(modes),
             "max_model_calls_per_run": max_model_calls_per_run,
@@ -263,6 +301,37 @@ def evaluate(
     }
 
 
+def evaluate_gate(report: dict) -> list[str]:
+    """Validate one report's evidence without turning a Smoke into a broad claim."""
+
+    failures = []
+    manifest = report.get("manifest") or {}
+    metrics = report.get("metrics") or {}
+    samples = report.get("samples") or []
+    if report.get("execution_source") != "real_model":
+        failures.append("报告不是由真实模型执行产生")
+    if not manifest.get("git_commit") or not manifest.get("dataset_sha256"):
+        failures.append("报告缺少源码提交或数据集指纹")
+    if not samples or metrics.get("executions") != len(samples):
+        failures.append("报告样本集合不完整")
+    if metrics.get("pass_rate") != 1:
+        failures.append("存在未通过的语义案例")
+    if metrics.get("goal_recall") != 1:
+        failures.append("存在用户目标遗漏")
+    if metrics.get("false_fast_path_rate") != 0:
+        failures.append("存在不安全的 Fast Path 接管")
+    if set(manifest.get("modes") or []) == set(MODES) and metrics.get("auto_adaptive_consistency") != 1:
+        failures.append("Auto 与 Adaptive 终止语义不一致")
+    for sample in samples:
+        model_calls = sample.get("model_calls")
+        providers = sample.get("model_providers") or []
+        if not isinstance(model_calls, int) or model_calls < 1:
+            failures.append(f"案例 {sample.get('case_id')} 缺少真实模型调用计数")
+        if not providers:
+            failures.append(f"案例 {sample.get('case_id')} 缺少成功 Provider 证据")
+    return failures
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
     execution = parser.add_mutually_exclusive_group()
@@ -270,6 +339,7 @@ def build_parser() -> argparse.ArgumentParser:
     execution.add_argument("--dry-run", action="store_true", help="兼容旧命令；只校验并打印执行计划")
     parser.add_argument("--dataset", type=Path, default=DATASET)
     parser.add_argument("--case", action="append", dest="case_ids", help="只运行指定案例，可重复传入")
+    parser.add_argument("--group", action="append", dest="groups", help="运行指定风险组，可重复传入")
     parser.add_argument("--max-cases", type=int)
     parser.add_argument("--all-cases", action="store_true", help="选择完整数据集，仍受执行预算限制")
     parser.add_argument("--mode", choices=("auto", "adaptive", "both"), default="auto")
@@ -285,8 +355,11 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> None:
     parser = build_parser()
     args = parser.parse_args(argv)
-    if args.all_cases and (args.case_ids or args.max_cases is not None):
-        parser.error("--all-cases 不能与 --case 或 --max-cases 同时使用")
+    selectors = sum(bool(value) for value in (args.all_cases, args.case_ids, args.groups))
+    if selectors > 1:
+        parser.error("--all-cases、--case 与 --group 只能选择一种")
+    if args.all_cases and args.max_cases is not None:
+        parser.error("--all-cases 不能与 --max-cases 同时使用")
     if args.max_executions < 1:
         parser.error("--max-executions 必须大于 0")
     if args.max_model_calls_per_run < 1:
@@ -299,6 +372,7 @@ def main(argv: list[str] | None = None) -> None:
         cases = select_cases(
             dataset,
             case_ids=args.case_ids,
+            groups=args.groups,
             max_cases=args.max_cases,
             all_cases=args.all_cases,
         )
@@ -311,6 +385,7 @@ def main(argv: list[str] | None = None) -> None:
         "mode": "live" if args.live else "dry_run",
         "dataset_sha256": _dataset_digest(dataset),
         "selected_case_ids": [case["id"] for case in cases],
+        "risk_groups": sorted({case.get("risk_group", "ungrouped") for case in cases}),
         "repeats": args.repeats,
         "execution_modes": list(modes),
         "planned_executions": executions,
@@ -349,10 +424,12 @@ def main(argv: list[str] | None = None) -> None:
         sleep_seconds=args.sleep,
     )
     report["manifest"]["model_status_after"] = get_model_status()
+    gate_failures = evaluate_gate(report)
+    report["gate"] = {"passed": not gate_failures, "failures": gate_failures}
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    print(json.dumps(report["metrics"], ensure_ascii=False, indent=2))
-    raise SystemExit(0 if all(sample["passed"] for sample in report["samples"]) else 1)
+    print(json.dumps({"metrics": report["metrics"], "gate": report["gate"]}, ensure_ascii=False, indent=2))
+    raise SystemExit(0 if not gate_failures else 1)
 
 
 if __name__ == "__main__":
