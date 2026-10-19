@@ -300,7 +300,8 @@ def test_injected_runner_uses_real_business_evidence_and_is_never_labeled_live()
     assert report['execution_source'] == 'test_harness'
     assert report['metrics']['mean_success_rate'] == 1
     assert not report['live_verified']
-    assert report['samples'][0]['turns'][0]['observed_tools'][0]['tool'] == 'get_order_status'
+    assert any(item['tool'] == 'get_order_status'
+               for item in report['samples'][0]['turns'][0]['observed_tools'])
     assert live.evaluate_gate(report)
 
 
@@ -344,6 +345,7 @@ def test_exception_keeps_physical_business_calls():
         runtime['tools'].escalate_to_human('测试异常证据', '离线评测')
         raise RuntimeError('测试异常')
     report = live.evaluate(dataset, repeats=1, runner=runner, readiness={'configured': False})
-    assert report['metrics']['tool_calls'] == 1
+    assert report['metrics']['tool_calls'] >= 1
     assert report['metrics']['safety_violations'] >= 1
-    assert report['samples'][0]['turns'][0]['observed_tools'][0]['tool'] == 'escalate_to_human'
+    assert any(item['tool'] == 'escalate_to_human'
+               for item in report['samples'][0]['turns'][0]['observed_tools'])

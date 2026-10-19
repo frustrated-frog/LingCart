@@ -26,12 +26,12 @@ from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_DATASET = Path(__file__).with_name("task_cases.json")
-DEFAULT_BASELINE = Path(__file__).with_name("baseline_v4.json")
+DEFAULT_BASELINE = Path(__file__).with_name("baseline_v5.json")
 TOOLS = {
-    "get_order_status", "get_order_details", "track_shipment",
+    "read_clock", "calculate", "get_order_status", "get_order_details", "track_shipment",
     "check_refund_eligibility", "initiate_refund", "get_payment_status",
     "process_payment", "answer_faq", "escalate_to_human", "search_products",
-    "compare_products",
+    "get_catalog_facets", "discover_products", "compare_products",
 }
 MUTATIONS = {"process_payment", "initiate_refund"}
 STATUSES = {
@@ -600,7 +600,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--dry-run", action="store_true", help="validate JSON only; no application imports")
     parser.add_argument("--output", type=Path, help="write a detailed JSON report")
     parser.add_argument("--case", action="append", help="run one case ID; repeat to select several")
-    parser.add_argument("--gate", action="store_true", help="compare the full report with eval/baseline_v4.json")
+    parser.add_argument("--gate", action="store_true", help="compare the full report with eval/baseline_v5.json")
     parser.add_argument("--baseline", type=Path, help="use this baseline and enable the evaluation gate")
     args = parser.parse_args(argv)
     dataset = load_dataset(args.dataset)

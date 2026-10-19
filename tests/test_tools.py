@@ -1,8 +1,10 @@
 import pytest
+from pydantic import ValidationError
 
 from src import tools
 from src.backend.db import get_engine, get_session_factory
 from src.backend.seed import seed
+from src.runtime import tool_spec
 
 
 @pytest.fixture(autouse=True)
@@ -30,6 +32,14 @@ def test_calculator_accepts_arithmetic_and_rejects_code():
     assert "error" in tools.calculate("__import__('os').getcwd()")
     assert "error" in tools.calculate("2 ** 100")
     assert "error" in tools.calculate("9" * 180)
+
+
+def test_discovery_limit_is_enforced_by_tool_schema_before_backend_execution():
+    schema = tool_spec("discover_products", tools.discover_products).schema
+
+    assert schema.model_validate({"limit": 12}).limit == 12
+    with pytest.raises(ValidationError):
+        schema.model_validate({"limit": 30})
 
 
 def test_get_order_status_not_found():

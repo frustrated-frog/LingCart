@@ -374,7 +374,9 @@ def _argument_schema(name, fn):
         return schema
     fields = {}
     try:
-        hints = get_type_hints(function)
+        # Preserve Annotated constraints so provider/tool schemas expose the
+        # same numeric and string boundaries enforced before backend calls.
+        hints = get_type_hints(function, include_extras=True)
     except (NameError, TypeError):
         hints = {}
     for key, parameter in inspect.signature(function).parameters.items():

@@ -11,7 +11,9 @@ import time
 import uuid
 from contextlib import contextmanager
 from contextvars import ContextVar
+from typing import Annotated
 
+from pydantic import Field
 from sqlalchemy import select, text
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -276,7 +278,8 @@ def get_catalog_facets(available_only: bool = True) -> dict:
 
 
 def discover_products(query: str = "", category: str | None = None, max_price: float | None = None,
-                      soft_preferences: list[str] | None = None, excluded_terms: list[str] | None = None, limit: int = 4,
+                      soft_preferences: list[str] | None = None, excluded_terms: list[str] | None = None,
+                      limit: Annotated[int, Field(ge=1, le=12)] = 4,
                       context_seed: str = "") -> dict:
     """Return an evidence-bound, diverse discovery slate from the live catalog."""
     if max_price is not None and max_price < 0:
