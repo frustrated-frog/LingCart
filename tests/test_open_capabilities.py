@@ -16,8 +16,12 @@ from src.capability_registry import (
     PRODUCT_DISCOVERY,
     SYSTEM_TIME,
     CALCULATE,
+    OperationContract,
+    use_capability_registry,
 )
 from src.dialogue_understanding import TurnUnderstanding, to_task_plan
+from src.errors import AgentError
+from src.runtime import ToolSpec
 
 
 class ScriptedModel:
@@ -86,6 +90,64 @@ def test_registry_can_describe_a_new_capability_without_parser_changes():
         "id": "echo", "kind": "DEMO_ECHO", "source_quote": "hello", "question": "hello"
     }]))
     assert parsed.objectives[0].kind == "DEMO_ECHO"
+
+
+def test_registered_capability_executes_validates_renders_and_reports_outcome_without_task_plan_changes(monkeypatch):
+    message = "回显 hello"
+
+    def echo(text: str) -> dict:
+        return {"echo": text, "source": "DEMO_ECHO"}
+
+    registration = CapabilityRegistration(
+        CapabilitySpec(
+            capability_id="demo.echo.v2",
+            objective_kind="DEMO_ECHO",
+            description="回显一段已验证文本",
+            target_type="text",
+            evidence_requirement="DETERMINISTIC_COMPUTATION",
+            accepted_fields=("parameters",),
+            required_parameters=("text",),
+            parameter_schema={"text": "string"},
+        ),
+        lambda objective, _request: (
+            CompiledOperation("echo", "demo", "demo_echo", {"text": objective["parameters"]["text"]}),
+        ),
+        operations={
+            "demo_echo": OperationContract(
+                handler=ToolSpec(echo),
+                required_result_fields=("echo", "source"),
+                result_validator=lambda result, args: result["echo"] == args["text"] and result["source"] == "DEMO_ECHO",
+                renderer=lambda result, _args: "回显结果：" + result["echo"],
+                outcome_mapper=lambda _result, _args: "SATISFIED",
+            )
+        },
+    )
+    registry = CapabilityRegistry((registration,))
+    model = ScriptedModel(understanding(message, objectives=[{
+        "id": "echo", "kind": "DEMO_ECHO", "source_quote": message,
+        "target_type": "text", "evidence_requirement": "DETERMINISTIC_COMPUTATION",
+        "parameters": {"text": "hello"},
+    }]))
+    monkeypatch.setattr(orchestrator, "get_llm", lambda **_kwargs: model)
+
+    with use_capability_registry(registry):
+        result = orchestrator.run_orchestrator(message)
+
+    assert result["status"] == "SUCCEEDED"
+    assert result["reply"] == "回显结果：hello"
+    assert result["trace"][0]["tool"] == "demo_echo"
+    assert result["plan"]["verification"]["goal_outcomes"] == [{
+        "objective_id": "echo", "outcome": "SATISFIED", "step_ids": ["step-1"]
+    }]
+
+
+def test_registered_operation_cannot_invent_a_completion_outcome():
+    contract = OperationContract(handler=ToolSpec(lambda: {}), outcome_mapper=lambda _result, _args: "MAYBE")
+
+    with pytest.raises(AgentError, match="未知目标状态") as error:
+        contract.outcome({}, {})
+
+    assert error.value.code == "INVALID_CAPABILITY_OUTCOME"
 
 
 def test_open_ended_recommendation_returns_verified_diverse_candidates(monkeypatch):
@@ -220,10 +282,12 @@ def test_realtime_question_reports_missing_evidence_instead_of_guessing(monkeypa
 
     result = orchestrator.run_orchestrator(message)
 
-    assert result["status"] == "SUCCEEDED"
+    assert result["status"] == "PARTIAL"
+    assert result["terminal_reason"] == "EVIDENCE_UNAVAILABLE"
     assert result["route"] == "KNOWLEDGE"
     assert "没有可验证的联网数据源" in result["reply"]
     assert result["budget"]["consumed"]["model_calls"] == 1
+    assert result["plan"]["verification"]["goal_outcomes"][0]["outcome"] == "UNAVAILABLE_EVIDENCE"
 
 
 def test_current_date_uses_runtime_clock_not_model_memory(monkeypatch):
@@ -242,6 +306,44 @@ def test_current_date_uses_runtime_clock_not_model_memory(monkeypatch):
     assert result["trace"][0]["result"]["timezone"] == "Asia/Shanghai"
     assert result["trace"][0]["result"]["date"] in result["reply"]
     assert result["budget"]["consumed"]["model_calls"] == 1
+
+
+@pytest.mark.parametrize("model_timezone", [None, "America/New_York", "纽约"])
+def test_location_is_resolved_to_a_grounded_iana_timezone(monkeypatch, model_timezone):
+    message = "纽约现在几点"
+    objective = {
+        "id": "clock", "kind": SYSTEM_TIME, "source_quote": message,
+        "evidence_requirement": "RUNTIME_ENVIRONMENT",
+    }
+    if model_timezone is not None:
+        objective["timezone"] = model_timezone
+    monkeypatch.setattr(orchestrator, "get_llm", lambda **_kwargs: ScriptedModel(
+        understanding(message, objectives=[objective])
+    ))
+
+    result = orchestrator.run_orchestrator(message)
+
+    assert result["status"] == "SUCCEEDED"
+    assert result["trace"][0]["args"]["timezone"] == "America/New_York"
+    provenance = result["plan"]["steps"][0]["argument_provenance"]["timezone"]
+    assert provenance["resolver"] == "trusted_timezone"
+    assert provenance["source_quote"] == message
+
+
+def test_timezone_resolver_uses_current_turn_when_model_quote_is_too_narrow(monkeypatch):
+    message = "纽约现在几点"
+    monkeypatch.setattr(orchestrator, "get_llm", lambda **_kwargs: ScriptedModel(
+        understanding(message, objectives=[{
+            "id": "clock", "kind": SYSTEM_TIME, "source_quote": "现在几点",
+            "evidence_requirement": "RUNTIME_ENVIRONMENT",
+        }])
+    ))
+
+    result = orchestrator.run_orchestrator(message)
+
+    assert result["status"] == "SUCCEEDED"
+    assert result["trace"][0]["args"]["timezone"] == "America/New_York"
+    assert result["plan"]["steps"][0]["argument_provenance"]["timezone"]["source_quote"] == message
 
 
 def test_arithmetic_uses_bounded_calculator(monkeypatch):
@@ -292,8 +394,11 @@ def test_unknown_model_capability_never_reaches_execution(monkeypatch):
     result = orchestrator.run_orchestrator(message)
 
     assert result["status"] == "FAILED"
-    assert result["terminal_reason"] == "UNKNOWN_CAPABILITY"
+    assert result["terminal_reason"] == "UNSUPPORTED_INTENT"
+    assert result["route"] == "UNSUPPORTED"
     assert result["trace"] == []
+    assert result["budget"]["consumed"]["model_calls"] == 2
+    assert any(event["type"] == "unknown_capability_downgraded" for event in result["events"])
 
 
 def test_compiler_records_capability_and_objective_identity():

@@ -19,7 +19,10 @@ class TaskStep:
     depends_on: list[str] = field(default_factory=list)
     capability_id: str | None = None
     objective_id: str | None = None
+    objective_ids: list[str] = field(default_factory=list)
+    argument_provenance: dict[str, dict] = field(default_factory=dict)
     status: str = "PENDING"
+    outcome: str = "PENDING"
     result: object = None
     error: dict | None = None
 
@@ -31,7 +34,15 @@ class TaskPlan:
     verification: dict = field(default_factory=dict)
 
     def payload(self):
-        return asdict(self)
+        payload = asdict(self)
+        for step in payload["steps"]:
+            if not step.get("objective_ids"):
+                step.pop("objective_ids", None)
+            if not step.get("argument_provenance"):
+                step.pop("argument_provenance", None)
+            if step.get("outcome") == "PENDING":
+                step.pop("outcome", None)
+        return payload
 
     def validate(self, max_steps, max_depth):
         if len(self.steps) > max_steps:
@@ -78,10 +89,11 @@ def build_plan(intake):
     if FAQ in intents:
         add("faq", "answer_faq", {"question": intake.request})
     if PRODUCT_SEARCH in intents:
-        args = {key: intake.entities[key] for key in ("query", "category", "max_price") if intake.entities.get(key) is not None}
+        args = {key: intake.entities[key] for key in ("query", "category", "max_price", "excluded_terms")
+                if intake.entities.get(key) not in (None, [])}
         add("shopping", "search_products", args)
     if PRODUCT_DISCOVERY in intents:
-        args = {key: intake.entities[key] for key in ("query", "category", "max_price", "soft_preferences")
+        args = {key: intake.entities[key] for key in ("query", "category", "max_price", "soft_preferences", "excluded_terms")
                 if intake.entities.get(key) not in (None, "", [])}
         args["context_seed"] = intake.request
         add("shopping", "discover_products", args)
@@ -94,6 +106,9 @@ def _facts(step):
     result, name, order_id = step.result, step.tool, step.args.get("order_id")
     if step.status in {"FAILED", "SKIPPED"}:
         return f"{step.specialist} 步骤未完成：{(step.error or {}).get('message', '前置查询未完成')}"
+    contract = get_capability_registry().operation_contract(name)
+    if contract is not None:
+        return contract.render_result(result, step.args)
     if name == "answer_faq":
         return result['answer']
     if name == "read_clock":
@@ -140,6 +155,11 @@ def _facts(step):
 def verify_observation(step):
     """Evidence must refer to this goal and contain the fields used in replies."""
     result, name = step.result, step.tool
+    contract = get_capability_registry().operation_contract(name)
+    if contract is not None:
+        if not contract.validate_result(result, step.args):
+            raise AgentError("INVALID_TOOL_RESULT", "工具结果不符合注册能力的输出契约", retryable=False)
+        return
     required = {
         "read_clock": {"date", "time", "weekday", "timezone", "observed_at", "data_source"},
         "calculate": {"expression", "result", "data_source"},
@@ -214,13 +234,15 @@ def execute_plan(intake, run_id, *, plan=None, source="deterministic", incomplet
     if context and context.snapshot.get("plan_definition"):
         definition = dict(goals=plan.goals, steps=[dict(step_id=s.step_id, specialist=s.specialist,
             tool=s.tool, args=s.args, depends_on=s.depends_on, capability_id=s.capability_id,
-            objective_id=s.objective_id) for s in plan.steps])
+            objective_id=s.objective_id, objective_ids=s.objective_ids,
+            argument_provenance=s.argument_provenance) for s in plan.steps])
         if definition != context.snapshot["plan_definition"]:
             raise AgentError("CHECKPOINT_CONFLICT", "恢复时的任务计划发生变化", retryable=False)
     else:
         definition = dict(goals=plan.goals, steps=[dict(step_id=s.step_id, specialist=s.specialist,
             tool=s.tool, args=s.args, depends_on=s.depends_on, capability_id=s.capability_id,
-            objective_id=s.objective_id) for s in plan.steps])
+            objective_id=s.objective_id, objective_ids=s.objective_ids,
+            argument_provenance=s.argument_provenance) for s in plan.steps])
         if context:
             context.checkpoint(plan_definition=definition)
         if len(plan.steps) > 1:
@@ -252,10 +274,12 @@ def execute_plan(intake, run_id, *, plan=None, source="deterministic", incomplet
                         else:
                             pending.update(amount=observation["amount"], method=observation.get("method"))
                         step.status = "WAITING_APPROVAL"
+                        step.outcome = "WAITING_APPROVAL"
                         step.result = {"message": f"订单 {step.args['order_id']} 的操作尚未执行，请明确确认后继续。"}
                         recorder.record("approval_required", step_id=step.step_id, action=pending)
                     else:
                         step.status = "REJECTED"
+                        step.outcome = "SATISFIED"
                         step.result = {"message": f"订单 {step.args['order_id']} 当前不满足操作条件，无需重复提交。"}
                 elif step.tool == MODEL_ANSWER_OPERATION:
                     from src.general_answer import generate_general_answer
@@ -265,6 +289,8 @@ def execute_plan(intake, run_id, *, plan=None, source="deterministic", incomplet
                                     evidence_requirement=step.args.get("evidence_requirement"),
                                     provenance=step.result.get("provenance"))
                     verify_observation(step)
+                    step.outcome = ("UNAVAILABLE_EVIDENCE"
+                                    if step.result.get("provenance") == "NO_REALTIME_SOURCE" else "SATISFIED")
                 else:
                     step.result, event = executor.execute(step.tool, step.args)
                     trace.append(_trace_entry(run_id, step.specialist, step.tool, step.args, step.result, event))
@@ -275,28 +301,52 @@ def execute_plan(intake, run_id, *, plan=None, source="deterministic", incomplet
                                 else "BUSINESS_DATA_NOT_FOUND")
                         raise AgentError(code, step.result["error"], retryable=False)
                     verify_observation(step)
+                    contract = get_capability_registry().operation_contract(step.tool)
+                    step.outcome = contract.outcome(step.result, step.args) if contract else "SATISFIED"
             except AgentError as error:
                 step.status = "FAILED"
+                step.outcome = "FAILED"
                 step.error = {"code": error.code, "message": str(error), "retryable": error.retryable}
                 errors.append(step.error)
                 if "BUDGET" in error.code or error.code in {"RUN_LEASE_LOST", "UNCERTAIN_TOOL_OUTCOME"}:
                     stop_error = step.error
             recorder.record("step_completed", step_id=step.step_id, specialist=step.specialist, status=step.status, error=step.error)
         completed[step.step_id] = step
+        if step.status == "SKIPPED":
+            step.outcome = "FAILED"
         if context:
             context.phase = "PLAN"
             context.checkpoint(plan=plan.payload())
-    satisfied = [step.step_id for step in plan.steps if step.status in {"SUCCEEDED", "REUSED", "WAITING_APPROVAL", "REJECTED"}]
-    missing = [step.step_id for step in plan.steps if step.step_id not in satisfied]
-    plan.verification = dict(satisfied_steps=satisfied, incomplete_steps=missing, waiting_steps=[s.step_id for s in plan.steps if s.status == "WAITING_APPROVAL"],
-                             all_goals_satisfied=bool(plan.steps) and not missing and pending is None,
+    satisfied = [step.step_id for step in plan.steps if step.outcome == "SATISFIED"]
+    missing = [step.step_id for step in plan.steps if step.outcome not in {"SATISFIED", "WAITING_APPROVAL"}]
+    goal_rows: dict[str, list[TaskStep]] = {}
+    for index, step in enumerate(plan.steps):
+        identities = step.objective_ids or ([step.objective_id] if step.objective_id else [f"goal-{index + 1}"])
+        for identity in identities:
+            goal_rows.setdefault(identity, []).append(step)
+    goal_outcomes = []
+    for objective_id, steps in goal_rows.items():
+        outcomes = {step.outcome for step in steps}
+        outcome = ("FAILED" if "FAILED" in outcomes else
+                   "UNAVAILABLE_EVIDENCE" if "UNAVAILABLE_EVIDENCE" in outcomes else
+                   "WAITING_APPROVAL" if "WAITING_APPROVAL" in outcomes else "SATISFIED")
+        goal_outcomes.append({"objective_id": objective_id, "outcome": outcome,
+                              "step_ids": [step.step_id for step in steps]})
+    plan.verification = dict(satisfied_steps=satisfied, incomplete_steps=missing,
+                             waiting_steps=[s.step_id for s in plan.steps if s.outcome == "WAITING_APPROVAL"],
+                             goal_outcomes=goal_outcomes,
+                             all_goals_satisfied=bool(plan.steps) and all(row["outcome"] == "SATISFIED" for row in goal_outcomes),
                              side_effects_executed=False)
     recorder.record("verification", **plan.verification)
-    status = "WAITING_APPROVAL" if pending else ("PARTIAL" if satisfied else "FAILED") if missing else "SUCCEEDED"
+    unavailable = any(step.outcome == "UNAVAILABLE_EVIDENCE" for step in plan.steps)
+    status = ("WAITING_APPROVAL" if pending else "PARTIAL" if unavailable
+              else ("PARTIAL" if satisfied else "FAILED") if missing else "SUCCEEDED")
     if not plan.steps:
         status = "FAILED"
         errors.append({"code": "EMPTY_TASK_PLAN", "message": "没有可验证的业务步骤", "retryable": False})
-    reason = errors[-1]["code"] if errors else "APPROVAL_REQUIRED" if pending else "BUSINESS_RULE_REJECTED" if any(s.status == "REJECTED" for s in plan.steps) else "COMPLETED"
+    reason = (errors[-1]["code"] if errors else "APPROVAL_REQUIRED" if pending else
+              "EVIDENCE_UNAVAILABLE" if unavailable else "BUSINESS_RULE_REJECTED"
+              if any(s.status == "REJECTED" for s in plan.steps) else "COMPLETED")
     if not errors and not pending and any(s.tool == "prepare_payment" and s.status == "REJECTED" for s in plan.steps):
         reason = "NO_ACTION_NEEDED"
     # An empty search is a verified outcome, not a claim that products exist.

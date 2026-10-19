@@ -48,11 +48,15 @@ class TaskIntake:
     execution_mode: str = LLM_REQUIRED
     confidence: float = 0.0
     reason: str = ""
+    route_hints: tuple[str, ...] = ()
+    semantic_hazards: tuple[str, ...] = ()
 
     def to_dict(self) -> dict:
         payload = asdict(self)
         payload["intents"] = list(self.intents)
         payload["missing_slots"] = list(self.missing_slots)
+        payload["route_hints"] = list(self.route_hints)
+        payload["semantic_hazards"] = list(self.semantic_hazards)
         return payload
 
 
@@ -63,6 +67,33 @@ def _has_any(text: str, phrases: tuple[str, ...]) -> bool:
 def _extract_order_id(text: str) -> int | None:
     matches = _ORDER_ID.findall(text)
     return int(matches[-1]) if matches else None
+
+
+def _semantic_hazards(text: str) -> tuple[str, ...]:
+    """Detect scope operators that make lexical fast-path interpretation unsafe.
+
+    This guard deliberately does not try to resolve polarity or intent.  It
+    only withholds zero-token execution so structured understanding can model
+    the operator and its scope.
+    """
+    patterns = {
+        "NEGATION_SCOPE": r"(?:不要|不需要|不用|无需|(?<!分)别|并非|不是|(?<!能)不能|不想|排除|去掉|不包含|not\b|don't\b|do not\b|without\b|exclude\b|never\b)",
+        "CORRECTION_SCOPE": r"(?:不是.+(?:而是|是)|改成|改为|算了|更正|actually\b|instead\b|rather than\b)",
+        "EXCEPTION_SCOPE": r"(?:除了.+(?:都|之外)|除非|except\b|unless\b)",
+    }
+    folded = text.casefold()
+    return tuple(name for name, pattern in patterns.items() if re.search(pattern, folded, re.IGNORECASE))
+
+
+def handoff_is_negated(text: str) -> bool:
+    """Return whether a handoff mention is explicitly under negative scope."""
+
+    return bool(re.search(
+        r"(?:不要|不需要|不用|无需|(?<!分)别|不想|不能)\s*(?:再\s*)?(?:帮我)?\s*(?:转人工|找人工|人工客服|真人客服)"
+        r"|(?:don't|do not|not|never)\s+(?:transfer|connect|talk|escalate).{0,20}(?:human|agent)",
+        text.casefold(),
+        re.IGNORECASE,
+    ))
 
 
 def _catalog_terms(text: str) -> tuple[str | None, list[str]]:
@@ -144,11 +175,15 @@ def analyze_request(user_message: str, *, _check_clause_coverage: bool = True) -
     if len(order_ids) > 1:
         entities["order_ids"] = order_ids
     intents: list[str] = []
+    hazards = _semantic_hazards(normalized)
 
-    if _has_any(
+    handoff_mentioned = _has_any(
         normalized,
         ("转人工", "人工客服", "真人客服", "找人工", "human agent", "talk to a human", "live agent"),
-    ):
+    )
+    handoff_negated = handoff_is_negated(normalized)
+    explicit_handoff = handoff_mentioned and not handoff_negated
+    if explicit_handoff:
         return TaskIntake(
             request=request,
             intents=("ESCALATE",),
@@ -268,7 +303,18 @@ def analyze_request(user_message: str, *, _check_clause_coverage: bool = True) -
                         execution_mode=LLM_REQUIRED,
                         confidence=0.0,
                         reason="复合请求包含确定性规则无法完整覆盖的子句",
+                        route_hints=tuple(intents),
                     )
+    if hazards:
+        return TaskIntake(
+            request=request,
+            entities=entities,
+            execution_mode=LLM_REQUIRED,
+            confidence=0.0,
+            reason="请求包含否定、修正或例外作用域，禁止确定性快路径直接解释",
+            route_hints=tuple(dict.fromkeys(intents)),
+            semantic_hazards=hazards,
+        )
     order_intents = {
         ORDER_STATUS,
         ORDER_DETAILS,

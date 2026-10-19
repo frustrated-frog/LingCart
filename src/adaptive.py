@@ -15,7 +15,8 @@ from src.adaptive_decision import Decision, ShoppingGoal, decide, predicate_hold
 from src.adaptive_goals import check_claims, new_ledger, outcome_report, record_outcome, recommendation_text, verification
 from src.direct_executor import _READ_ONLY_TOOLS, _finish
 from src.errors import AgentError, classify_exception
-from src.intake import DIRECT, PAYMENT_PROCESS, PRODUCT_SEARCH, REFUND_REQUEST, TaskIntake, analyze_request
+from src.intake import (DIRECT, LLM_REQUIRED, PAYMENT_PROCESS, PRODUCT_COMPARE, PRODUCT_DISCOVERY,
+                        PRODUCT_SEARCH, REFUND_REQUEST, TaskIntake, analyze_request)
 from src.runtime import BudgetLimits, RunRuntime, ToolEffect, ToolExecutor, TraceRecorder, current_runtime, runtime_scope, tool_spec
 from src.task_plan import TaskPlan, TaskStep, verify_observation
 from src.constraint_bindings import effective_goal, propose_bindings, fingerprint, require_bindings_approved, constraint_refs
@@ -197,7 +198,7 @@ def _validate_tool(decision, state, plan, history):
     try:
         if set(decision.args) - set(spec.schema.model_fields):
             raise ValueError('Unknown tool argument')
-        args = spec.schema.model_validate(decision.args, strict=True).model_dump()
+        args = spec.schema.model_validate(decision.args, strict=True).model_dump(exclude_unset=True)
     except ValueError as error:
         raise AgentError('INVALID_TOOL_ARGUMENTS', '模型提交的工具参数无效', retryable=False) from error
     if decision.tool == 'compare_products':
@@ -475,9 +476,34 @@ def _complete(context, recorder, state, plan, decision):
 
 
 def _run(context, user_message, history, pending_action):
-    from src.orchestrator import run_orchestrator
+    from src.orchestrator import _execute_understanding, run_orchestrator
     intake = analyze_request(user_message)
     saved = context.snapshot.get('adaptive')
+    shopping_hints = {PRODUCT_SEARCH, PRODUCT_DISCOVERY, PRODUCT_COMPARE}
+    # Fresh open-set turns first use the same capability protocol as Auto.
+    # High-recall shopping hints stay in the deeper Adaptive shopping loop;
+    # hints are never themselves permission to execute a capability.
+    if (not saved and not pending_action and intake.execution_mode == LLM_REQUIRED
+            and not (set(intake.route_hints) & shopping_hints)):
+        from src.dialogue_understanding import understand_turn
+        from src.llm import get_llm
+        understanding = understand_turn(
+            user_message,
+            history,
+            pending_action,
+            model=get_llm(purpose='dialogue_understanding'),
+        )
+        result = _execute_understanding(
+            user_message, history, pending_action, intake, context.run_id, understanding=understanding,
+        )
+        result.setdefault('plan', {
+            'goal': None,
+            'steps': [],
+            'verification': {'goal_outcomes': [], 'all_goals_satisfied': False,
+                             'side_effects_executed': False},
+        })
+        result['execution_mode'] = 'auto'
+        return result
     if pending_action or (not saved and (PAYMENT_PROCESS in intake.intents or REFUND_REQUEST in intake.intents
             or (intake.execution_mode == DIRECT and intake.intents and PRODUCT_SEARCH not in intake.intents
                 and 'PRODUCT_COMPARE' not in intake.intents))):

@@ -209,7 +209,8 @@ def _product_dict(product: Product) -> dict:
 
 
 def search_products(query: str = "", category: str | None = None, max_price: float | None = None,
-                    available_only: bool = True, limit: int = 12) -> dict:
+                    available_only: bool = True, limit: int = 12,
+                    excluded_terms: list[str] | None = None) -> dict:
     """Search the local, fictional demo catalog. Prices are in CNY."""
     if max_price is not None and max_price < 0:
         return {"error": "预算不能为负数"}
@@ -225,12 +226,22 @@ def search_products(query: str = "", category: str | None = None, max_price: flo
             statement = statement.where(Product.stock > 0)
         products = session.scalars(statement).all()
         terms = query.strip().casefold().split()
-        matched = [product for product in products if all(term in (
-            f"{product.product_id} {product.name} {product.summary} "
-            + json.dumps(product.specs, ensure_ascii=False)).casefold() for term in terms)]
+        exclusions = [term.strip().casefold() for term in (excluded_terms or []) if term.strip()]
+        documents = {
+            product.product_id: (f"{product.product_id} {product.name} {product.summary} "
+                                 + json.dumps(product.specs, ensure_ascii=False)).casefold()
+            for product in products
+        }
+        matched = [product for product in products
+                   if all(term in documents[product.product_id] for term in terms)
+                   and not any(term in documents[product.product_id] for term in exclusions)]
+        filters = {"query": query, "category": category, "max_price": max_price,
+                   "available_only": available_only}
+        if excluded_terms:
+            filters["excluded_terms"] = excluded_terms
         return {"products": [_product_dict(product) for product in matched[:limit]], "total": len(matched),
-                "filters": {"query": query, "category": category, "max_price": max_price,
-                            "available_only": available_only}, "data_source": "DEMO_CATALOG"}
+                "filters": filters,
+                "data_source": "DEMO_CATALOG"}
 
 
 def get_catalog_facets(available_only: bool = True) -> dict:
@@ -265,7 +276,7 @@ def get_catalog_facets(available_only: bool = True) -> dict:
 
 
 def discover_products(query: str = "", category: str | None = None, max_price: float | None = None,
-                      soft_preferences: list[str] | None = None, limit: int = 4,
+                      soft_preferences: list[str] | None = None, excluded_terms: list[str] | None = None, limit: int = 4,
                       context_seed: str = "") -> dict:
     """Return an evidence-bound, diverse discovery slate from the live catalog."""
     if max_price is not None and max_price < 0:
@@ -279,6 +290,13 @@ def discover_products(query: str = "", category: str | None = None, max_price: f
         if max_price is not None:
             statement = statement.where(Product.price <= max_price)
         products = session.scalars(statement).all()
+        exclusions = [term.strip().casefold() for term in (excluded_terms or []) if term.strip()]
+        if exclusions:
+            products = [product for product in products if not any(
+                term in (f"{product.product_id} {product.name} {product.category} {product.summary} "
+                         + json.dumps(product.specs, ensure_ascii=False)).casefold()
+                for term in exclusions
+            )]
         terms = query.strip().casefold().split()
         unresolved_query = None
         if terms:

@@ -99,17 +99,18 @@ def _explicit_escalation(intake: TaskIntake, run_id: str, user_message: str) -> 
     return result
 
 
-def _execute_understanding(user_message, history, pending_action, intake, run_id):
+def _execute_understanding(user_message, history, pending_action, intake, run_id, *, understanding=None):
     """Interpret an open-set turn, then hand only validated goals to executors."""
 
     from src.dialogue_understanding import command_kinds, render_direct_commands, to_task_plan, understand_turn
 
-    understanding = understand_turn(
-        user_message,
-        history,
-        pending_action,
-        model=get_llm(purpose="dialogue_understanding"),
-    )
+    if understanding is None:
+        understanding = understand_turn(
+            user_message,
+            history,
+            pending_action,
+            model=get_llm(purpose="dialogue_understanding"),
+        )
     kinds = command_kinds(understanding)
     payload = understanding.model_dump()
 

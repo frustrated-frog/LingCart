@@ -77,6 +77,31 @@ def test_explicit_human_request_is_not_confused_with_failure():
     assert result.execution_mode == ESCALATION_REQUESTED
 
 
+def test_negated_handoff_is_withheld_from_the_deterministic_fast_path():
+    result = analyze_request("不要转人工，先帮我查订单 1002 的物流")
+
+    assert result.execution_mode == LLM_REQUIRED
+    assert result.intents == ()
+    assert result.route_hints == (SHIPMENT_TRACKING,)
+    assert result.semantic_hazards == ("NEGATION_SCOPE",)
+
+
+def test_positive_handoff_remains_explicit_when_a_different_action_is_negated():
+    result = analyze_request("订单 1003 我不想自动支付，请转人工客服")
+
+    assert result.execution_mode == ESCALATION_REQUESTED
+    assert result.intents == ("ESCALATE",)
+
+
+def test_negative_product_constraint_is_not_treated_as_a_positive_search_term():
+    result = analyze_request("推荐预算 500 元的耳机，不要主动降噪")
+
+    assert result.execution_mode == LLM_REQUIRED
+    assert result.intents == ()
+    assert result.route_hints
+    assert result.semantic_hazards == ("NEGATION_SCOPE",)
+
+
 def test_out_of_domain_request_uses_open_set_model_fallback():
     result = analyze_request("帮我查一下今天的股票价格")
     assert result.execution_mode == LLM_REQUIRED

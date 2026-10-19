@@ -10,7 +10,7 @@ import json
 import re
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, ValidationError, model_validator
 
 from src.agents.base import as_text
 from src.capability_registry import get_capability_registry
@@ -19,6 +19,7 @@ from src.intake import (
     CLARIFICATION_REQUIRED,
     DIRECT,
     TaskIntake,
+    handoff_is_negated,
 )
 from src.runtime import ToolExecutor, current_runtime
 from src.task_plan import TaskPlan, TaskStep
@@ -55,6 +56,8 @@ class DialogueCommand(StrictModel):
 
 
 class BusinessObjective(StrictModel):
+    _argument_provenance: dict[str, dict] = PrivateAttr(default_factory=dict)
+
     id: str = Field(pattern=r"^[a-zA-Z][a-zA-Z0-9_-]{0,39}$")
     kind: str = Field(pattern=r"^[A-Z][A-Z0-9_]{1,63}$")
     source_quote: str = Field(min_length=1, max_length=500)
@@ -68,8 +71,10 @@ class BusinessObjective(StrictModel):
     max_price: float | None = Field(None, ge=0)
     product_ids: list[str] = Field(default_factory=list, max_length=4)
     soft_preferences: list[str] = Field(default_factory=list, max_length=12)
+    excluded_terms: list[str] = Field(default_factory=list, max_length=12)
     timezone: str | None = Field(None, min_length=1, max_length=80)
     expression: str | None = Field(None, min_length=1, max_length=200)
+    parameters: dict[str, object] = Field(default_factory=dict, max_length=16)
 
     @model_validator(mode="after")
     def objective_fields(self):
@@ -104,7 +109,8 @@ _PROMPT = """You are LingCart's dialogue-understanding layer. Interpret the late
 exactly one JSON object matching the schema. Never answer, call tools, invent entities, or force a business label.
 
 Emit independent commands/objectives and preserve every outcome, negation, correction and scope. source_quote must
-be an exact substring of the latest HUMAN message. History may ground referenced entity values, but never a stale intent.
+be the smallest exact substring of the latest HUMAN message that states that command or outcome; never quote the whole
+turn to hide separate goals. History may ground referenced entity values, but never a stale intent.
 
 Commands: GREETING=social greeting; IDENTITY=who/what LingCart is; CAPABILITIES=what it can do;
 ACKNOWLEDGEMENT=thanks only; CLARIFY=one focused Chinese question when consequential ambiguity blocks action;
@@ -121,6 +127,8 @@ recommendation/browsing, including open-ended requests with no category or prefe
 GENERAL_ANSWER handles stable knowledge; use evidence REALTIME_EXTERNAL for current news/prices/weather so execution
 states the missing-source boundary. SYSTEM_TIME handles current date/time/weekday (null timezone means runtime default).
 CALCULATE handles a literal arithmetic expression. Use CLARIFY only for required, consequential ambiguity.
+For PRODUCT_SEARCH or PRODUCT_DISCOVERY, put explicit exclusions such as “不要主动降噪” in excluded_terms, never
+in query or soft_preferences. For a capability-specific open parameter, use parameters exactly as its catalog schema.
 """
 
 
@@ -135,6 +143,73 @@ def _human_sources(user_message: str, history: list | None) -> list[str]:
     ]
 
 
+def _coordinated_goal_clauses(user_message: str) -> list[str]:
+    """Return clauses that explicitly signal separate requested outcomes."""
+
+    marker = re.compile(
+        r"(?:[。！？!?；;\n]+|(?:[，,]\s*)?(?:再|然后|另外|同时|顺便|并且|还要|接着|then|also)\s*)",
+        re.IGNORECASE,
+    )
+    return [clause.strip(" ，,。.!！?？;；") for clause in marker.split(user_message) if clause.strip(" ，,。.!！?？;；")]
+
+
+def _validate_goal_coverage(understanding: TurnUnderstanding, user_message: str) -> None:
+    """Reject structural multi-goal omissions before any capability executes.
+
+    This is a reverse invariant: each explicitly coordinated user clause needs
+    its own grounded declaration.  It does not infer which capability to use.
+    """
+
+    clauses = _coordinated_goal_clauses(user_message)
+    if len(clauses) < 2:
+        return
+    quotes = [*(command.source_quote for command in understanding.commands),
+              *(objective.source_quote for objective in understanding.objectives)]
+    uncovered = [clause for clause in clauses if not any(quote in clause for quote in quotes)]
+    if uncovered:
+        raise AgentError(
+            "INCOMPLETE_REQUEST_COVERAGE",
+            "以下并列目标没有独立声明：" + "；".join(uncovered),
+            retryable=False,
+        )
+
+
+def _parameter_leaves(value: object, path: str = "parameters") -> list[tuple[str, object]]:
+    if isinstance(value, dict):
+        return [leaf for key, item in value.items() for leaf in _parameter_leaves(item, f"{path}.{key}")]
+    if isinstance(value, list):
+        return [leaf for index, item in enumerate(value) for leaf in _parameter_leaves(item, f"{path}.{index}")]
+    return [(path, value)]
+
+
+def _canonicalize_protocol(payload: object) -> object:
+    """Normalize schema-level polarity and registry-boundary mistakes.
+
+    The model still selects semantics.  This function only prevents a negated
+    command from becoming a terminal action and maps the reserved command name
+    UNSUPPORTED out of the objective namespace before strict validation.
+    """
+
+    if not isinstance(payload, dict):
+        return payload
+    normalized = dict(payload)
+    commands = list(payload.get("commands") or [])
+    objectives = []
+    for objective in payload.get("objectives") or []:
+        if isinstance(objective, dict) and objective.get("kind") == "UNSUPPORTED":
+            commands.append({"kind": "UNSUPPORTED", "source_quote": objective.get("source_quote"), "message": None})
+        else:
+            objectives.append(objective)
+    commands = [command for command in commands if not (
+        isinstance(command, dict)
+        and command.get("kind") == "HUMAN_HANDOFF"
+        and handoff_is_negated(str(command.get("source_quote") or ""))
+    )]
+    normalized["commands"] = commands
+    normalized["objectives"] = objectives
+    return normalized
+
+
 def _validate_grounding(understanding: TurnUnderstanding, user_message: str, history: list | None) -> None:
     sources = _human_sources(user_message, history)
     registry = get_capability_registry()
@@ -143,7 +218,11 @@ def _validate_grounding(understanding: TurnUnderstanding, user_message: str, his
     if any(quote not in user_message for quote in quoted):
         raise AgentError("UNGROUNDED_INTENT", "对话理解必须引用当前用户原文", retryable=False)
     for objective in understanding.objectives:
-        registry.validate_arguments(objective.model_dump())
+        normalized, provenance = registry.normalize_arguments(objective.model_dump(), tuple(sources))
+        for name in type(objective).model_fields:
+            if name in normalized:
+                setattr(objective, name, normalized[name])
+        objective._argument_provenance = provenance
         if objective.order_id is not None and not any(
             re.search(r"(?<!\d)" + str(objective.order_id) + r"(?!\d)", source) for source in sources
         ):
@@ -163,11 +242,21 @@ def _validate_grounding(understanding: TurnUnderstanding, user_message: str, his
         if any(not any(preference.casefold() in source.casefold() for source in sources)
                for preference in objective.soft_preferences):
             raise AgentError("UNGROUNDED_PLAN_ENTITY", "商品偏好必须来自用户或对话历史", retryable=False)
-        if objective.timezone is not None and not any(objective.timezone.casefold() in source.casefold()
-                                                       for source in sources):
+        if any(not any(term.casefold() in source.casefold() for source in sources)
+               for term in objective.excluded_terms):
+            raise AgentError("UNGROUNDED_PLAN_ENTITY", "商品排除条件必须来自用户或对话历史", retryable=False)
+        if (objective.timezone is not None and "timezone" not in provenance
+                and not any(objective.timezone.casefold() in source.casefold() for source in sources)):
             raise AgentError("UNGROUNDED_PLAN_ENTITY", "时区必须来自用户或使用运行时默认值", retryable=False)
         if objective.expression is not None and not any(objective.expression in source for source in sources):
             raise AgentError("UNGROUNDED_PLAN_ENTITY", "计算表达式必须来自用户原文", retryable=False)
+        for path, value in _parameter_leaves(objective.parameters):
+            if path in provenance or value is None or isinstance(value, bool):
+                continue
+            grounded = any(str(value).casefold() in source.casefold() for source in sources)
+            if not grounded:
+                raise AgentError("UNGROUNDED_PLAN_ENTITY", f"开放参数 {path} 必须来自用户或受信解析器", retryable=False)
+    _validate_goal_coverage(understanding, user_message)
 
 
 def _prompt(user_message: str, history: list | None, pending_action: dict | None, error: str | None = None) -> str:
@@ -227,7 +316,8 @@ def understand_turn(user_message: str, history: list | None, pending_action: dic
         try:
             if getattr(response, "tool_calls", []):
                 raise ValueError("Dialogue understanding cannot call tools")
-            understanding = TurnUnderstanding.model_validate(json.loads(as_text(response.content)))
+            raw_payload = json.loads(as_text(response.content))
+            understanding = TurnUnderstanding.model_validate(_canonicalize_protocol(raw_payload))
             _validate_grounding(understanding, user_message, history)
             if context:
                 context.record(
@@ -238,7 +328,28 @@ def understand_turn(user_message: str, history: list | None, pending_action: dic
                 )
             return understanding
         except AgentError as exc:
-            if exc.code != "INVALID_CAPABILITY_ARGUMENTS" or attempt > 0:
+            repairable = {"UNKNOWN_CAPABILITY", "INVALID_CAPABILITY_ARGUMENTS", "INCOMPLETE_REQUEST_COVERAGE"}
+            if exc.code == "UNKNOWN_CAPABILITY" and attempt > 0:
+                registered = {item["objective_kind"] for item in get_capability_registry().prompt_catalog()}
+                unknown = [objective for objective in understanding.objectives if objective.kind not in registered]
+                if unknown and len(understanding.commands) + len(unknown) <= 8:
+                    # After one failed repair, preserve every grounded unknown
+                    # outcome as UNSUPPORTED instead of losing executable sibling
+                    # goals or ever granting an unregistered capability.
+                    fallback = TurnUnderstanding(
+                        reason=(understanding.reason + "；未注册能力经一次修复后仍未知，按能力边界降级").strip("；"),
+                        commands=[*understanding.commands, *[
+                            DialogueCommand(kind="UNSUPPORTED", source_quote=objective.source_quote)
+                            for objective in unknown
+                        ]],
+                        objectives=[objective for objective in understanding.objectives if objective.kind in registered],
+                    )
+                    _validate_grounding(fallback, user_message, history)
+                    if context:
+                        context.record("unknown_capability_downgraded",
+                                       capabilities=[objective.kind for objective in unknown])
+                    return fallback
+            if exc.code not in repairable or attempt > 0:
                 raise
             error_text = str(exc)[:600]
             if context:
@@ -289,7 +400,11 @@ def to_task_plan(understanding: TurnUnderstanding, request: str) -> tuple[TaskIn
         for operation in registry.compile(objective.model_dump(), request):
             identity = ToolExecutor.fingerprint(operation.operation, operation.arguments)
             if identity in known:
-                local_refs[operation.ref] = known[identity]
+                existing_id = known[identity]
+                existing = next(step for step in steps if step.step_id == existing_id)
+                if objective.id not in existing.objective_ids:
+                    existing.objective_ids.append(objective.id)
+                local_refs[operation.ref] = existing_id
                 continue
             dependencies = [local_refs[dependency] for dependency in operation.depends_on]
             step = TaskStep(
@@ -300,6 +415,8 @@ def to_task_plan(understanding: TurnUnderstanding, request: str) -> tuple[TaskIn
                 depends_on=dependencies,
                 capability_id=registration.spec.capability_id,
                 objective_id=objective.id,
+                objective_ids=[objective.id],
+                argument_provenance=dict(objective._argument_provenance),
             )
             known[identity] = step.step_id
             local_refs[operation.ref] = step.step_id

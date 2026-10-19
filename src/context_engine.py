@@ -89,8 +89,18 @@ class ContextEngine:
         from src.context_budget import ContextBudgetError, _text_length
         from src.agents.base import as_text
 
-        def overview(step):
+        def step_payload(step):
             item = deepcopy(step.__dict__)
+            if not item.get('objective_ids'):
+                item.pop('objective_ids', None)
+            if not item.get('argument_provenance'):
+                item.pop('argument_provenance', None)
+            if item.get('outcome') == 'PENDING':
+                item.pop('outcome', None)
+            return item
+
+        def overview(step):
+            item = step_payload(step)
             result = item['result']
             if result is not None:
                 products = result.get('products') if isinstance(result, dict) else None
@@ -146,7 +156,7 @@ class ContextEngine:
         order = priority + [i for i in reversed(range(len(plan.steps))) if i not in priority]
         for index in order:
             summary = payload['observations'][index]
-            payload['observations'][index] = deepcopy(plan.steps[index].__dict__)
+            payload['observations'][index] = step_payload(plan.steps[index])
             saved_history = list(payload['history'])
             saved_omitted = list(payload['context_manifest']['omitted_history_indices'])
             # 新获取的完整记录先于旧历史。否则 inspect 的每一页都可能立即被归档，

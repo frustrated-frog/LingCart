@@ -8,6 +8,7 @@ from src.adaptive import run_adaptive
 from src.backend.db import Payment, get_engine, get_session_factory
 from src.backend.seed import seed
 from src.dialogue_understanding import TurnUnderstanding, to_task_plan
+from src.task_plan import execute_plan
 
 
 class ScriptedModel:
@@ -122,6 +123,73 @@ def test_semantic_handoff_requires_an_explicit_human_request(monkeypatch):
     assert result["trace"][0]["tool"] == "escalate_to_human"
 
 
+def test_negated_handoff_executes_the_positive_goal_without_escalating(monkeypatch):
+    message = "不要转人工，先帮我查订单 1002 的物流"
+    model = ScriptedModel(interpretation(objectives=[
+        {"id": "shipment", "kind": "SHIPMENT_TRACKING", "source_quote": "查订单 1002 的物流", "order_id": 1002}
+    ]))
+    monkeypatch.setattr(orchestrator, "get_llm", lambda **_kwargs: model)
+
+    result = orchestrator.run_orchestrator(message)
+
+    assert result["status"] == "SUCCEEDED"
+    assert result["trace"][0]["tool"] == "track_shipment"
+    assert all(entry["tool"] != "escalate_to_human" for entry in result["trace"])
+
+
+def test_negated_handoff_command_from_model_is_removed_before_terminal_validation(monkeypatch):
+    message = "不要转人工，先帮我查订单 1002 的物流"
+    model = ScriptedModel(interpretation(
+        commands=[{"kind": "HUMAN_HANDOFF", "source_quote": "不要转人工", "message": None}],
+        objectives=[{"id": "shipment", "kind": "SHIPMENT_TRACKING",
+                     "source_quote": "查订单 1002 的物流", "order_id": 1002}],
+    ))
+    monkeypatch.setattr(orchestrator, "get_llm", lambda **_kwargs: model)
+
+    result = orchestrator.run_orchestrator(message)
+
+    assert result["status"] == "SUCCEEDED"
+    assert result["trace"][0]["tool"] == "track_shipment"
+    assert result["budget"]["consumed"]["model_calls"] == 1
+
+
+def test_negative_product_constraint_is_a_hard_catalog_exclusion(monkeypatch):
+    message = "推荐预算 500 元的耳机，不要主动降噪"
+    model = ScriptedModel(interpretation(objectives=[{
+        "id": "headphones", "kind": "PRODUCT_SEARCH", "source_quote": message,
+        "category": "耳机", "max_price": 500, "excluded_terms": ["主动降噪"],
+    }]))
+    monkeypatch.setattr(orchestrator, "get_llm", lambda **_kwargs: model)
+
+    result = orchestrator.run_orchestrator(message)
+
+    assert result["status"] == "SUCCEEDED"
+    assert result["trace"][0]["args"]["excluded_terms"] == ["主动降噪"]
+    assert result["trace"][0]["result"]["products"]
+    assert all("主动降噪" not in str(product) for product in result["trace"][0]["result"]["products"])
+
+
+def test_missing_coordinated_goal_gets_one_repair_before_execution(monkeypatch):
+    message = "瞅瞅 1002 那单进展，然后计算 2+2"
+    model = ScriptedModel(
+        interpretation(objectives=[
+            {"id": "status", "kind": "ORDER_STATUS", "source_quote": "1002 那单进展", "order_id": 1002},
+        ]),
+        interpretation(objectives=[
+            {"id": "status", "kind": "ORDER_STATUS", "source_quote": "1002 那单进展", "order_id": 1002},
+            {"id": "math", "kind": "CALCULATE", "source_quote": "计算 2+2", "expression": "2+2"},
+        ]),
+    )
+    monkeypatch.setattr(orchestrator, "get_llm", lambda **_kwargs: model)
+
+    result = orchestrator.run_orchestrator(message)
+
+    assert result["status"] == "SUCCEEDED"
+    assert [item["tool"] for item in result["trace"]] == ["get_order_status", "calculate"]
+    assert result["budget"]["consumed"]["model_calls"] == 2
+    assert any(event["type"] == "dialogue_protocol_retry" for event in result["events"])
+
+
 def test_missing_required_slot_clarifies_after_semantic_recognition(monkeypatch):
     message = "帮我看一下前几天买的那个包裹走到哪了"
     model = ScriptedModel(interpretation(objectives=[
@@ -228,6 +296,44 @@ def test_supported_and_unsupported_parts_finish_as_partial(monkeypatch):
     assert result["events"][-1]["status"] == "PARTIAL"
 
 
+def test_unregistered_model_capability_gets_one_repair_to_unsupported(monkeypatch):
+    message = "查订单 1002 的状态，然后替我买一张去冰岛的机票"
+    model = ScriptedModel(
+        interpretation(objectives=[
+            {"id": "status", "kind": "ORDER_STATUS", "source_quote": "订单 1002 的状态", "order_id": 1002},
+            {"id": "travel", "kind": "BOOK_FLIGHT", "source_quote": "替我买一张去冰岛的机票"},
+        ]),
+        interpretation(
+            commands=[{"kind": "UNSUPPORTED", "source_quote": "替我买一张去冰岛的机票", "message": None}],
+            objectives=[{"id": "status", "kind": "ORDER_STATUS",
+                         "source_quote": "订单 1002 的状态", "order_id": 1002}],
+        ),
+    )
+    monkeypatch.setattr(orchestrator, "get_llm", lambda **_kwargs: model)
+
+    result = orchestrator.run_orchestrator(message)
+
+    assert result["status"] == "PARTIAL"
+    assert result["terminal_reason"] == "PARTIAL_UNSUPPORTED_INTENT"
+    assert result["trace"][0]["tool"] == "get_order_status"
+    assert result["budget"]["consumed"]["model_calls"] == 2
+
+
+def test_reserved_unsupported_kind_is_canonicalized_to_a_command(monkeypatch):
+    message = "查订单 1002 的状态，然后替我买一张去冰岛的机票"
+    model = ScriptedModel(interpretation(objectives=[
+        {"id": "status", "kind": "ORDER_STATUS", "source_quote": "订单 1002 的状态", "order_id": 1002},
+        {"id": "travel", "kind": "UNSUPPORTED", "source_quote": "替我买一张去冰岛的机票"},
+    ]))
+    monkeypatch.setattr(orchestrator, "get_llm", lambda **_kwargs: model)
+
+    result = orchestrator.run_orchestrator(message)
+
+    assert result["status"] == "PARTIAL"
+    assert result["trace"][0]["tool"] == "get_order_status"
+    assert result["budget"]["consumed"]["model_calls"] == 1
+
+
 def test_stale_history_cannot_supply_a_current_dialogue_command(monkeypatch):
     message = "订单 1002 现在怎么样"
     history = [HumanMessage(content="我想跟人工聊聊")]
@@ -259,14 +365,11 @@ def test_followup_may_use_a_grounded_order_from_human_history(monkeypatch):
 
 def test_adaptive_mode_uses_the_same_dialogue_command_vocabulary(monkeypatch):
     message = "方便说说你到底是什么助手吗"
-    payload = {
-        "reason": "身份问题",
-        "goal": None,
-        "clarification": None,
-        "next_steps": None,
-        "commands": [{"kind": "IDENTITY", "source_quote": message, "message": None}],
-    }
-    monkeypatch.setattr("src.adaptive_decision.get_llm", lambda **_kwargs: ScriptedModel(payload))
+    payload = interpretation(
+        reason="身份问题",
+        commands=[{"kind": "IDENTITY", "source_quote": message, "message": None}],
+    )
+    monkeypatch.setattr("src.llm.get_llm", lambda **_kwargs: ScriptedModel(payload))
 
     result = run_adaptive(message)
 
@@ -274,6 +377,42 @@ def test_adaptive_mode_uses_the_same_dialogue_command_vocabulary(monkeypatch):
     assert result["route"] == "CONVERSATIONAL"
     assert result["trace"] == []
     assert "我是 LingCart" in result["reply"]
+
+
+@pytest.mark.parametrize(
+    "message,objective,tool",
+    [
+        ("今天是哪年哪月哪日", {"id": "clock", "kind": "SYSTEM_TIME", "source_quote": "今天是哪年哪月哪日"}, "read_clock"),
+        ("计算 7*8", {"id": "math", "kind": "CALCULATE", "source_quote": "计算 7*8", "expression": "7*8"}, "calculate"),
+    ],
+)
+def test_adaptive_open_set_utility_turns_use_the_shared_capability_path(monkeypatch, message, objective, tool):
+    monkeypatch.setattr("src.llm.get_llm", lambda **_kwargs: ScriptedModel(
+        interpretation(objectives=[objective])
+    ))
+
+    result = run_adaptive(message)
+
+    assert result["status"] == "SUCCEEDED"
+    assert result["execution_mode"] == "auto"
+    assert result["trace"][0]["tool"] == tool
+    assert not result["autonomous_executed"]
+
+
+def test_adaptive_general_answer_uses_the_shared_registered_capability(monkeypatch):
+    message = "解释什么是机会成本"
+    semantic_model = ScriptedModel(interpretation(objectives=[{
+        "id": "knowledge", "kind": "GENERAL_ANSWER", "source_quote": message, "question": message,
+    }]))
+    monkeypatch.setattr("src.llm.get_llm", lambda **_kwargs: semantic_model)
+    monkeypatch.setattr("src.general_answer.get_llm", lambda **_kwargs: ScriptedModel("机会成本是放弃的最佳替代方案的价值。"))
+
+    result = run_adaptive(message)
+
+    assert result["status"] == "SUCCEEDED"
+    assert result["route"] == "KNOWLEDGE"
+    assert result["execution_mode"] == "auto"
+    assert "最佳替代方案" in result["reply"]
 
 
 def test_compiler_deduplicates_shared_read_dependencies():
@@ -286,3 +425,18 @@ def test_compiler_deduplicates_shared_read_dependencies():
 
     assert [step.tool for step in plan.steps] == ["get_order_status", "check_refund_eligibility"]
     assert plan.steps[1].depends_on == ["step-1"]
+
+
+def test_deduplicated_evidence_is_attributed_to_every_declared_goal():
+    parsed = TurnUnderstanding.model_validate(interpretation(objectives=[
+        {"id": "status", "kind": "ORDER_STATUS", "source_quote": "订单 1002", "order_id": 1002},
+        {"id": "refund", "kind": "REFUND_ELIGIBILITY", "source_quote": "订单 1002", "order_id": 1002},
+    ]))
+    intake, plan = to_task_plan(parsed, "订单 1002")
+
+    result = execute_plan(intake, "shared-evidence", plan=plan, source="test")
+
+    outcomes = {row["objective_id"]: row["outcome"]
+                for row in result["plan"]["verification"]["goal_outcomes"]}
+    assert outcomes == {"status": "SATISFIED", "refund": "SATISFIED"}
+    assert result["plan"]["steps"][0]["objective_ids"] == ["status", "refund"]

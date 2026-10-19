@@ -491,7 +491,10 @@ class ToolExecutor:
                 raise TypeError("工具参数必须是对象")
             if spec.schema and set(args) - set(spec.schema.model_fields):
                 raise TypeError("包含未知工具参数")
-            args = spec.schema.model_validate(args, strict=True).model_dump() if spec.schema else args
+            # Preserve only caller-supplied values. Function defaults remain the
+            # function's responsibility; otherwise adding an optional schema
+            # field changes fingerprints and breaks compatible wrappers.
+            args = spec.schema.model_validate(args, strict=True).model_dump(exclude_unset=True) if spec.schema else args
         except (ValidationError, TypeError) as exc:
             self._fail(AgentError(ErrorCode.INVALID_TOOL_ARGUMENTS, str(exc), retryable=False), name, args)
         context = current_runtime()

@@ -6,6 +6,8 @@ branch in the dialogue parser or orchestrator.
 """
 from __future__ import annotations
 
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 import hashlib
 import json
@@ -46,6 +48,49 @@ class CompiledOperation:
 
 
 Compiler = Callable[[Mapping[str, object], str], tuple[CompiledOperation, ...]]
+Normalizer = Callable[[dict, tuple[str, ...]], tuple[dict, dict[str, dict]]]
+ResultValidator = Callable[[object, Mapping[str, object]], bool]
+ResultRenderer = Callable[[object, Mapping[str, object]], str]
+OutcomeMapper = Callable[[object, Mapping[str, object]], str]
+
+
+@dataclass(frozen=True)
+class OperationContract:
+    """Execution and observation contract for a dynamically registered tool."""
+
+    handler: object
+    required_result_fields: tuple[str, ...] = ()
+    result_validator: ResultValidator | None = None
+    renderer: ResultRenderer | None = None
+    outcome_mapper: OutcomeMapper | None = None
+
+    def validate_result(self, result: object, arguments: Mapping[str, object]) -> bool:
+        fields_ok = isinstance(result, dict) and set(self.required_result_fields) <= result.keys()
+        if not fields_ok:
+            return False
+        try:
+            return self.result_validator is None or bool(self.result_validator(result, arguments))
+        except Exception:
+            return False
+
+    def render_result(self, result: object, arguments: Mapping[str, object]) -> str:
+        try:
+            rendered = self.renderer(result, arguments) if self.renderer else str(result)
+        except Exception as exc:
+            raise AgentError("CAPABILITY_RENDER_FAILED", "注册能力无法安全渲染已验证结果", retryable=False) from exc
+        if not isinstance(rendered, str) or not rendered.strip():
+            raise AgentError("CAPABILITY_RENDER_FAILED", "注册能力返回了空或无效文本", retryable=False)
+        return rendered
+
+    def outcome(self, result: object, arguments: Mapping[str, object]) -> str:
+        try:
+            outcome = self.outcome_mapper(result, arguments) if self.outcome_mapper else "SATISFIED"
+        except Exception as exc:
+            raise AgentError("INVALID_CAPABILITY_OUTCOME", "注册能力无法判定目标结果", retryable=False) from exc
+        allowed = {"SATISFIED", "UNAVAILABLE_EVIDENCE", "WAITING_APPROVAL", "FAILED"}
+        if outcome not in allowed:
+            raise AgentError("INVALID_CAPABILITY_OUTCOME", f"注册能力返回未知目标状态：{outcome}", retryable=False)
+        return outcome
 
 
 @dataclass(frozen=True)
@@ -61,6 +106,9 @@ class CapabilitySpec:
     accepted_fields: tuple[str, ...] = ()
     min_items: Mapping[str, int] = field(default_factory=dict)
     max_items: Mapping[str, int] = field(default_factory=dict)
+    required_parameters: tuple[str, ...] = ()
+    parameter_schema: Mapping[str, str] = field(default_factory=dict)
+    normalizer_version: str | None = None
     alternative_evidence_requirements: tuple[str, ...] = ()
     supports_under_specified_goal: bool = False
     side_effect: str = "READ_ONLY"
@@ -77,6 +125,9 @@ class CapabilitySpec:
             "accepted_fields": list(self.accepted_fields),
             "min_items": dict(self.min_items),
             "max_items": dict(self.max_items),
+            "required_parameters": list(self.required_parameters),
+            "parameter_schema": dict(self.parameter_schema),
+            "normalizer_version": self.normalizer_version,
             "evidence_requirements": [self.evidence_requirement, *self.alternative_evidence_requirements],
             "supports_under_specified_goal": self.supports_under_specified_goal,
             "side_effect": self.side_effect,
@@ -88,6 +139,8 @@ class CapabilityRegistration:
     spec: CapabilitySpec
     compiler: Compiler
     tools: Mapping[str, object] = field(default_factory=dict)
+    normalizer: Normalizer | None = None
+    operations: Mapping[str, OperationContract] = field(default_factory=dict)
 
 
 class CapabilityRegistry:
@@ -96,6 +149,7 @@ class CapabilityRegistry:
     def __init__(self, registrations: tuple[CapabilityRegistration, ...] = ()):
         self._registrations: dict[str, CapabilityRegistration] = {}
         self._tools: dict[str, object] = {}
+        self._operations: dict[str, OperationContract] = {}
         for registration in registrations:
             self.register(registration)
 
@@ -107,8 +161,17 @@ class CapabilityRegistry:
             existing = self._tools.get(name)
             if existing is not None and existing is not handler:
                 raise ValueError(f"Operation {name} has conflicting handlers")
+        for name, contract in registration.operations.items():
+            existing = self._operations.get(name)
+            if existing is not None and existing != contract:
+                raise ValueError(f"Operation {name} has conflicting contracts")
+            existing_handler = self._tools.get(name)
+            if existing_handler is not None and existing_handler is not contract.handler:
+                raise ValueError(f"Operation {name} has conflicting handlers")
         self._registrations[kind] = registration
         self._tools.update(registration.tools)
+        self._operations.update(registration.operations)
+        self._tools.update({name: contract.handler for name, contract in registration.operations.items()})
 
     def registration(self, objective_kind: str) -> CapabilityRegistration:
         try:
@@ -130,7 +193,19 @@ class CapabilityRegistry:
             value = objective.get(name)
             if not isinstance(value, (list, tuple)) or len(value) < minimum:
                 missing.append(name)
+        parameters = objective.get("parameters") if isinstance(objective.get("parameters"), dict) else {}
+        missing.extend(f"parameters.{name}" for name in spec.required_parameters
+                       if parameters.get(name) in (None, "", []))
         return tuple(dict.fromkeys(missing))
+
+    def normalize_arguments(self, objective: Mapping[str, object], sources: tuple[str, ...]) -> tuple[dict, dict[str, dict]]:
+        registration = self.registration(str(objective["kind"]))
+        normalized = dict(objective)
+        provenance: dict[str, dict] = {}
+        if registration.normalizer is not None:
+            normalized, provenance = registration.normalizer(normalized, sources)
+        self.validate_arguments(normalized)
+        return normalized, provenance
 
     def validate_arguments(self, objective: Mapping[str, object]) -> None:
         """Enforce a capability's declared contract without parser branches."""
@@ -140,13 +215,41 @@ class CapabilityRegistry:
         }
         supplied = {
             name for name, value in objective.items()
-            if name not in protocol_fields and value not in (None, "", [])
+            if name not in protocol_fields and value not in (None, "", [], {})
         }
         unexpected = supplied - set(spec.accepted_fields)
         if unexpected:
             raise AgentError(
                 "INVALID_CAPABILITY_ARGUMENTS",
                 f"能力 {spec.objective_kind} 不接受字段：{', '.join(sorted(unexpected))}",
+                retryable=False,
+            )
+        parameters = objective.get("parameters")
+        if parameters not in (None, {}) and not isinstance(parameters, dict):
+            raise AgentError("INVALID_CAPABILITY_ARGUMENTS", "parameters 必须是对象", retryable=False)
+        parameters = parameters or {}
+        unknown_parameters = set(parameters) - set(spec.parameter_schema)
+        if unknown_parameters:
+            raise AgentError(
+                "INVALID_CAPABILITY_ARGUMENTS",
+                f"能力 {spec.objective_kind} 不接受参数：{', '.join(sorted(unknown_parameters))}",
+                retryable=False,
+            )
+        type_checks = {
+            "string": lambda value: isinstance(value, str),
+            "integer": lambda value: isinstance(value, int) and not isinstance(value, bool),
+            "number": lambda value: isinstance(value, (int, float)) and not isinstance(value, bool),
+            "boolean": lambda value: isinstance(value, bool),
+            "array": lambda value: isinstance(value, list),
+            "object": lambda value: isinstance(value, dict),
+        }
+        invalid_parameters = [name for name, value in parameters.items()
+                              if spec.parameter_schema.get(name) not in type_checks
+                              or not type_checks[spec.parameter_schema[name]](value)]
+        if invalid_parameters:
+            raise AgentError(
+                "INVALID_CAPABILITY_ARGUMENTS",
+                f"能力 {spec.objective_kind} 的参数类型无效：{', '.join(sorted(invalid_parameters))}",
                 retryable=False,
             )
         for name, maximum in spec.max_items.items():
@@ -176,12 +279,38 @@ class CapabilityRegistry:
     def execution_tools(self) -> dict[str, object]:
         return dict(self._tools)
 
+    def operation_contract(self, operation: str) -> OperationContract | None:
+        return self._operations.get(operation)
+
     def prompt_catalog(self) -> list[dict]:
         return [registration.spec.public_payload() for registration in self._registrations.values()]
 
     @property
     def version(self) -> str:
-        encoded = json.dumps(self.prompt_catalog(), ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        def identity(value: object | None) -> str | None:
+            if value is None:
+                return None
+            value = getattr(value, "function", value)
+            return f"{getattr(value, '__module__', type(value).__module__)}:{getattr(value, '__qualname__', type(value).__qualname__)}"
+
+        manifest = []
+        for registration in self._registrations.values():
+            manifest.append({
+                "spec": registration.spec.public_payload(),
+                "compiler": identity(registration.compiler),
+                "normalizer": identity(registration.normalizer),
+                "operations": {
+                    name: {
+                        "handler": identity(contract.handler),
+                        "required_result_fields": list(contract.required_result_fields),
+                        "result_validator": identity(contract.result_validator),
+                        "renderer": identity(contract.renderer),
+                        "outcome_mapper": identity(contract.outcome_mapper),
+                    }
+                    for name, contract in sorted(registration.operations.items())
+                },
+            })
+        encoded = json.dumps(manifest, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(encoded.encode("utf-8")).hexdigest()[:16]
 
 
@@ -226,11 +355,11 @@ def _faq(objective: Mapping[str, object], _request: str) -> tuple[CompiledOperat
 
 def _search(objective: Mapping[str, object], _request: str) -> tuple[CompiledOperation, ...]:
     return (CompiledOperation("catalog", "shopping", "search_products",
-                              _args(objective, ("query", "category", "max_price"))),)
+                              _args(objective, ("query", "category", "max_price", "excluded_terms"))),)
 
 
 def _discover(objective: Mapping[str, object], request: str) -> tuple[CompiledOperation, ...]:
-    arguments = _args(objective, ("query", "category", "max_price", "soft_preferences"))
+    arguments = _args(objective, ("query", "category", "max_price", "soft_preferences", "excluded_terms"))
     arguments["context_seed"] = request
     return (CompiledOperation("candidate-set", "shopping", "discover_products", arguments),)
 
@@ -262,10 +391,13 @@ def _calculate(objective: Mapping[str, object], _request: str) -> tuple[Compiled
 def _spec(kind: str, capability_id: str, description: str, target: str, evidence: str,
           compiler: Compiler, *, required: tuple[str, ...] = (), accepted: tuple[str, ...] = (),
           min_items: Mapping[str, int] | None = None, max_items: Mapping[str, int] | None = None,
+          required_parameters: tuple[str, ...] = (), parameter_schema: Mapping[str, str] | None = None,
+          normalizer_version: str | None = None,
           alternative_evidence: tuple[str, ...] = (),
           under_specified: bool = False, side_effect: str = "READ_ONLY",
           missing_question: str = "请补充完成这个请求所需的关键信息。",
-          handlers: Mapping[str, object] | None = None) -> CapabilityRegistration:
+          handlers: Mapping[str, object] | None = None, normalizer: Normalizer | None = None,
+          operations: Mapping[str, OperationContract] | None = None) -> CapabilityRegistration:
     return CapabilityRegistration(
         CapabilitySpec(
             capability_id=capability_id,
@@ -277,6 +409,9 @@ def _spec(kind: str, capability_id: str, description: str, target: str, evidence
             accepted_fields=accepted,
             min_items=min_items or {},
             max_items=max_items or {},
+            required_parameters=required_parameters,
+            parameter_schema=parameter_schema or {},
+            normalizer_version=normalizer_version,
             alternative_evidence_requirements=alternative_evidence,
             supports_under_specified_goal=under_specified,
             side_effect=side_effect,
@@ -284,16 +419,21 @@ def _spec(kind: str, capability_id: str, description: str, target: str, evidence
         ),
         compiler,
         handlers or {},
+        normalizer,
+        operations or {},
     )
 
 
 def _builtin_registrations() -> tuple[CapabilityRegistration, ...]:
+    from src.entity_resolution import normalize_clock_objective
+
     order_fields = ("order_id",)
     order_question = "请提供要处理的订单号，例如“查询订单 1004 的状态和物流”。"
     return (
         _spec(SYSTEM_TIME, "system.clock.read", "读取当前日期、时间和星期；需要当前时间事实时必须使用",
               "runtime_clock", "RUNTIME_ENVIRONMENT", _clock, accepted=("timezone",),
-              under_specified=True, handlers={"read_clock": tools.read_clock}),
+              under_specified=True, handlers={"read_clock": tools.read_clock},
+              normalizer=normalize_clock_objective, normalizer_version="trusted_timezone/1"),
         _spec(CALCULATE, "system.math.calculate", "执行只包含数字、括号和基础运算符的受限算术",
               "arithmetic", "DETERMINISTIC_COMPUTATION", _calculate, required=("expression",),
               accepted=("expression",), missing_question="请提供要计算的具体算式。",
@@ -333,11 +473,11 @@ def _builtin_registrations() -> tuple[CapabilityRegistration, ...]:
               missing_question="请说明你想了解哪项服务规则。",
               handlers={"answer_faq": tools.answer_faq}),
         _spec(PRODUCT_SEARCH, "catalog.search", "按用户明确条件搜索真实商品目录", "product",
-              "CATALOG", _search, accepted=("query", "category", "max_price"),
+              "CATALOG", _search, accepted=("query", "category", "max_price", "excluded_terms"),
               under_specified=True, handlers={"search_products": tools.search_products}),
         _spec(PRODUCT_DISCOVERY, "catalog.discover", "在偏好不完整时生成真实、差异化的探索候选并继续偏好获取",
               "product", "CATALOG", _discover,
-              accepted=("query", "category", "max_price", "soft_preferences"),
+              accepted=("query", "category", "max_price", "soft_preferences", "excluded_terms"),
               under_specified=True, handlers={"discover_products": tools.discover_products}),
         _spec(PRODUCT_COMPARE, "catalog.compare", "比较用户明确指定的两到三款真实商品", "product",
               "CATALOG", _compare, required=("product_ids",), accepted=("product_ids",),
@@ -353,8 +493,20 @@ def _builtin_registrations() -> tuple[CapabilityRegistration, ...]:
 
 
 _DEFAULT_REGISTRY = CapabilityRegistry(_builtin_registrations())
+_ACTIVE_REGISTRY: ContextVar[CapabilityRegistry | None] = ContextVar("capability_registry", default=None)
 
 
 def get_capability_registry() -> CapabilityRegistry:
-    return _DEFAULT_REGISTRY
+    return _ACTIVE_REGISTRY.get() or _DEFAULT_REGISTRY
+
+
+@contextmanager
+def use_capability_registry(registry: CapabilityRegistry):
+    """Temporarily install a registry for an isolated run or contract test."""
+
+    token = _ACTIVE_REGISTRY.set(registry)
+    try:
+        yield registry
+    finally:
+        _ACTIVE_REGISTRY.reset(token)
 

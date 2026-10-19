@@ -80,6 +80,13 @@ def decision_functions(state, plan, history=None):
         if name == 'compare_products' and len(product_ids) < 2:
             continue
         schema = deepcopy(tool_spec(name, item).schema.model_json_schema())
+        # Adaptive shopping represents exclusions as audited Constraint rows.
+        # Keep the lower-level semantic-router argument out of this native
+        # protocol so there is one polarity authority in the shopping loop.
+        if name == 'search_products':
+            schema['properties'].pop('excluded_terms', None)
+            if 'required' in schema:
+                schema['required'] = [field for field in schema['required'] if field != 'excluded_terms']
         if name == 'compare_products':
             schema['properties']['product_ids']['items']['enum'] = product_ids
         schema['properties']['reason'] = {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'description': '可选的调用说明；无说明用null。'}
