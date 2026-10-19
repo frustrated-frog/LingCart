@@ -202,11 +202,14 @@ def summarize(samples, repeats):
 
 
 def evaluate(dataset, *, repeats=3, split='all', case_ids=(), execution_mode='auto', harness_profile=None,
-             experiment_spec=None, dataset_path=DATASET, runner=None, readiness=None):
+             experiment_spec=None, dataset_path=DATASET, runner=None, readiness=None,
+             max_model_calls_per_run=6):
     """runner 注入只用于基础设施测试，报告会明确标识为 test_harness。"""
     injected_runner = runner is not None
     if not 1 <= repeats <= 10:
         raise ValueError('重复次数必须在 1 至 10 之间')
+    if not isinstance(max_model_calls_per_run, int) or isinstance(max_model_calls_per_run, bool) or max_model_calls_per_run < 1:
+        raise ValueError('每个 Run 的模型调用上限必须是正整数')
     suite = dataset.get('suite', 'support')
     if suite == 'adaptive' and execution_mode != 'adaptive':
         raise ValueError('自主专项任务必须使用 adaptive 入口')
@@ -222,6 +225,7 @@ def evaluate(dataset, *, repeats=3, split='all', case_ids=(), execution_mode='au
     runtime = offline._runtime()
     from src.durable import run_conversation
     from src.llm import get_model_status
+    from dataclasses import replace
     from src.runtime import BudgetLimits
     from src.trace_projector import project_trace
     report = {'schema_version': 2, 'generated_at': datetime.now(UTC).isoformat(),
@@ -269,6 +273,7 @@ def evaluate(dataset, *, repeats=3, split='all', case_ids=(), execution_mode='au
         report.update(status='NOT_RUN', reason='MODEL_NOT_CONFIGURED', message='尚未配置模型，未执行真实评测', metrics=summarize([], repeats))
         return report
     limits = BudgetLimits.adaptive() if suite == 'adaptive' else BudgetLimits(max_seconds=45)
+    limits = replace(limits, max_model_calls=min(limits.max_model_calls, max_model_calls_per_run))
     report['manifest']['limits'] = limits.__dict__
     selected = [case for case in dataset['cases']
                 if (split == 'all' or case['split'] == split) and (not case_ids or case['id'] in case_ids)]
@@ -558,6 +563,8 @@ def main(argv=None):
     parser.add_argument('--split', choices=['all', 'dev', 'test'], default='all')
     parser.add_argument('--case', action='append', default=[], help='仅执行指定案例；可重复传入，仅用于 Smoke')
     parser.add_argument('--max-samples', type=int, default=2, help='实时执行允许的最大样本数，默认 2')
+    parser.add_argument('--max-model-calls-per-run', type=int, default=6,
+                        help='每个 Run 最多允许的模型调用数；只能收紧 Runtime 预算，默认 6')
     parser.add_argument('--execution-mode', choices=['auto', 'adaptive'], default='auto')
     parser.add_argument('--harness-profile', help='使用已注册的 Harness Profile，例如 baseline-v1')
     parser.add_argument('--experiment-spec', type=Path, help='机器可校验的 JSON 实验契约')
@@ -579,6 +586,8 @@ def main(argv=None):
         parser.error('所选 split 与案例过滤条件没有可执行样本')
     if args.max_samples < 1:
         parser.error('--max-samples 必须大于 0')
+    if args.max_model_calls_per_run < 1:
+        parser.error('--max-model-calls-per-run 必须大于 0')
     if args.gate and experiment_spec and args.baseline is None:
         parser.error('论文对照 Gate 必须通过 --baseline 提供冻结基线报告')
     if experiment_spec and args.case:
@@ -603,7 +612,8 @@ def main(argv=None):
         report = evaluate(dataset, repeats=args.repeats, split=args.split, case_ids=tuple(args.case),
                           execution_mode=args.execution_mode,
                           harness_profile=args.harness_profile, experiment_spec=experiment_spec,
-                          dataset_path=args.dataset)
+                          dataset_path=args.dataset,
+                          max_model_calls_per_run=args.max_model_calls_per_run)
     failures = evaluate_gate(report, json.loads(args.baseline.read_text()) if args.baseline else None) if args.gate else []
     if args.gate:
         report['gate'] = {'passed': not failures, 'failures': failures}

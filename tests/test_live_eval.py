@@ -30,6 +30,20 @@ def test_live_case_filter_and_sample_budget_prevent_accidental_batch_calls(monke
         live.main(['--repeats', '1'])
 
 
+def test_live_model_call_budget_can_only_reduce_runtime_limit():
+    dataset = live.load_dataset()
+    dataset['cases'] = [dataset['cases'][0]]
+
+    def runner(_message, **kwargs):
+        return {'status': 'FAILED', 'reply': '预算测试', 'trace': [], 'events': [],
+                'error': {'code': 'TEST', 'message': '预算测试'}}
+
+    report = live.evaluate(dataset, repeats=1, runner=runner, readiness={'configured': False},
+                           max_model_calls_per_run=99)
+
+    assert report['manifest']['limits']['max_model_calls'] == 8
+
+
 def test_unconfigured_provider_is_not_a_successful_live_baseline():
     report = live.evaluate(live.load_dataset(), readiness={'configured': False})
     assert report['status'] == 'NOT_RUN'
