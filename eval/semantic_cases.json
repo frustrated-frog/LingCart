@@ -1,0 +1,65 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "id": "negated-handoff-order-shipment",
+      "message": "不要转人工，先帮我查订单 1002 的物流",
+      "must_use_semantic": true,
+      "expected": {"objectives": ["SHIPMENT_TRACKING"], "forbidden_commands": ["HUMAN_HANDOFF"], "statuses": ["SUCCEEDED"]}
+    },
+    {
+      "id": "negative-catalog-constraint",
+      "message": "推荐预算 500 元的耳机，不要主动降噪",
+      "must_use_semantic": true,
+      "expected": {"objectives": ["PRODUCT_DISCOVERY"], "objective_fields": {"PRODUCT_DISCOVERY": {"excluded_terms": ["主动降噪"]}}, "statuses": ["SUCCEEDED"]}
+    },
+    {
+      "id": "open-product-discovery",
+      "message": "给我推荐买些什么",
+      "must_use_semantic": true,
+      "expected": {"objectives": ["PRODUCT_DISCOVERY"], "statuses": ["SUCCEEDED"]}
+    },
+    {
+      "id": "multi-goal-order-and-calculation",
+      "message": "瞅瞅 1002 那单进展，然后计算 2+2",
+      "must_use_semantic": true,
+      "expected": {"objectives": ["ORDER_STATUS", "CALCULATE"], "statuses": ["SUCCEEDED"]}
+    },
+    {
+      "id": "trusted-timezone-normalization",
+      "message": "纽约现在几点",
+      "must_use_semantic": true,
+      "expected": {"objectives": ["SYSTEM_TIME"], "plan_args": {"read_clock": {"timezone": "America/New_York"}}, "statuses": ["SUCCEEDED"]}
+    },
+    {
+      "id": "identity-command",
+      "message": "你是谁，能做什么？",
+      "must_use_semantic": true,
+      "expected": {"commands_any": ["IDENTITY", "CAPABILITIES"], "statuses": ["SUCCEEDED"]}
+    },
+    {
+      "id": "realtime-evidence-boundary",
+      "message": "今天上海金价是多少",
+      "must_use_semantic": true,
+      "expected": {"objectives": ["GENERAL_ANSWER"], "objective_fields": {"GENERAL_ANSWER": {"evidence_requirement": "REALTIME_EXTERNAL"}}, "statuses": ["PARTIAL"], "terminal_reason": "EVIDENCE_UNAVAILABLE"}
+    },
+    {
+      "id": "stable-general-answer",
+      "message": "解释什么是机会成本",
+      "must_use_semantic": true,
+      "expected": {"objectives": ["GENERAL_ANSWER"], "statuses": ["SUCCEEDED"]}
+    },
+    {
+      "id": "correction-scope",
+      "message": "不是查订单 1002 的状态，而是查物流",
+      "must_use_semantic": true,
+      "expected": {"objectives": ["SHIPMENT_TRACKING"], "forbidden_objectives": ["ORDER_STATUS"], "statuses": ["SUCCEEDED"]}
+    },
+    {
+      "id": "mixed-supported-and-unsupported",
+      "message": "查订单 1002 的状态，然后替我买一张去冰岛的机票",
+      "must_use_semantic": true,
+      "expected": {"objectives": ["ORDER_STATUS"], "commands_any": ["UNSUPPORTED"], "statuses": ["PARTIAL"]}
+    }
+  ]
+}
