@@ -16,8 +16,8 @@
       "version": "1",
       "configuration": {
         "playbook_path": "research/playbooks/lingcart-ace-v1-guarded.json",
-        "max_bullets": 24,
-        "max_chars": 12000
+        "max_bullets": 8,
+        "max_chars": 5000
       }
     },
     {"slot": "memory", "id": "objective-ledger", "version": "1"},

@@ -190,6 +190,14 @@ def test_existing_profiles_keep_configuration_out_of_their_canonical_identity():
     assert all("configuration" not in item for item in baseline.canonical_payload()["mechanisms"])
 
 
+def test_ace_candidate_caps_experience_context_instead_of_injecting_full_playbook():
+    runner = get_registry().resolve("adaptive-ace-context-v1")
+    context = next(item for item in runner.provenance()["mechanisms"] if item["slot"] == "context")
+
+    assert context["configuration"]["max_bullets"] == 8
+    assert context["configuration"]["max_chars"] == 5000
+
+
 def test_learning_report_rejects_test_leakage():
     report = {
         "execution_source": "live_provider",

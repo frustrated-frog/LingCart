@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "experiment_id": "ace-context-challenge-v1",
+  "scope": "paired_single_case_diagnostic_smoke",
+  "source_revision": "720bc1ca5eb81db4ad34ad1afbe17aac5adb1c7f",
+  "case_id": "ACE-C01",
+  "runtime_limits": {
+    "samples_per_profile": 1,
+    "max_model_calls_per_run": 6
+  },
+  "baseline": {
+    "profile_id": "adaptive-v1",
+    "passed": false,
+    "terminal_reason": "MODEL_ROUND_BUDGET_EXHAUSTED",
+    "model_attempts": 6,
+    "tool_calls": 3,
+    "total_tokens": 23290,
+    "safety_violations": 0,
+    "protocol_violations": 0,
+    "runtime_report_path": "output/ace-c01-baseline-720bc1c.json",
+    "runtime_report_sha256": "680b88939587fe7a1fd4d200cf497afdc67f9c906a5c31429d1d63ebaa3f5d44"
+  },
+  "candidate": {
+    "profile_id": "adaptive-ace-context-v1",
+    "passed": false,
+    "terminal_reason": "MODEL_ROUND_BUDGET_EXHAUSTED",
+    "model_attempts": 6,
+    "tool_calls": 2,
+    "total_tokens": 30657,
+    "safety_violations": 0,
+    "protocol_violations": 0,
+    "runtime_report_path": "output/ace-c01-candidate-720bc1c.json",
+    "runtime_report_sha256": "e9f65177b3fc7169253e55c28acca022173323e2ae7b1651d3fbdca8531120fb"
+  },
+  "diagnosis": [
+    "两个 Profile 都在完成推荐前耗尽六次模型调用，不能宣称 ACE 有收益。",
+    "模型为 discover_products 生成 limit=30，但后端真实范围为 1..12；工具 schema 未暴露该边界。",
+    "候选 Profile 单样本 Token 比基线增加 7367，原因之一是 21 条 Playbook 经验被整体注入。",
+    "规格约束的字段绑定与独立审查发生较晚，最终推荐仍需要后续决策轮次。"
+  ],
+  "claim_boundary": "这只是同案例、单次、受限预算的失败诊断证据，不是正式基线/候选对照结论。"
+}
