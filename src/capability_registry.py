@@ -11,6 +11,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field
 import hashlib
 import json
+import re
 from typing import Callable, Mapping
 
 from src import tools
@@ -109,6 +110,7 @@ class CapabilitySpec:
     required_parameters: tuple[str, ...] = ()
     parameter_schema: Mapping[str, str] = field(default_factory=dict)
     normalizer_version: str | None = None
+    ungrounded_optional_defaults: Mapping[str, object] = field(default_factory=dict)
     alternative_evidence_requirements: tuple[str, ...] = ()
     supports_under_specified_goal: bool = False
     side_effect: str = "READ_ONLY"
@@ -128,6 +130,7 @@ class CapabilitySpec:
             "required_parameters": list(self.required_parameters),
             "parameter_schema": dict(self.parameter_schema),
             "normalizer_version": self.normalizer_version,
+            "ungrounded_optional_defaults": dict(self.ungrounded_optional_defaults),
             "evidence_requirements": [self.evidence_requirement, *self.alternative_evidence_requirements],
             "supports_under_specified_goal": self.supports_under_specified_goal,
             "side_effect": self.side_effect,
@@ -157,6 +160,13 @@ class CapabilityRegistry:
         kind = registration.spec.objective_kind
         if not kind or kind in self._registrations:
             raise ValueError(f"Capability objective kind is missing or duplicated: {kind}")
+        droppable = set(registration.spec.ungrounded_optional_defaults)
+        undeclared = droppable - set(registration.spec.accepted_fields)
+        if undeclared:
+            raise ValueError(f"Ungrounded optional fields must be accepted by {kind}: {sorted(undeclared)}")
+        required_droppable = droppable & set(registration.spec.required_fields)
+        if required_droppable:
+            raise ValueError(f"Required fields cannot be dropped by {kind}: {sorted(required_droppable)}")
         for name, handler in registration.tools.items():
             existing = self._tools.get(name)
             if existing is not None and existing is not handler:
@@ -204,6 +214,42 @@ class CapabilityRegistry:
         provenance: dict[str, dict] = {}
         if registration.normalizer is not None:
             normalized, provenance = registration.normalizer(normalized, sources)
+        folded_sources = [source.casefold() for source in sources]
+
+        def grounded(value: object) -> bool:
+            if isinstance(value, str):
+                return bool(value) and any(value.casefold() in source for source in folded_sources)
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                variants = {str(value), f"{value:g}"}
+                return any(
+                    re.search(r"(?<![\d.])" + re.escape(candidate) + r"(?![\d.])", source)
+                    for source in folded_sources
+                    for candidate in variants
+                )
+            return False
+
+        for field_name, safe_default in registration.spec.ungrounded_optional_defaults.items():
+            value = normalized.get(field_name)
+            if value in (None, "", [], {}):
+                continue
+            if isinstance(value, list):
+                kept = [item for item in value if grounded(item)]
+                if kept == value:
+                    continue
+                normalized[field_name] = kept if kept else safe_default
+            elif grounded(value):
+                continue
+            else:
+                normalized[field_name] = safe_default
+            provenance[field_name] = {
+                "name": field_name,
+                "raw_text": str(value),
+                "normalized_value": normalized[field_name],
+                "resolver": "ungrounded_optional_filter",
+                "resolver_version": "1",
+                "source_quote": str(objective.get("source_quote") or ""),
+                "confidence": 1.0,
+            }
         self.validate_arguments(normalized)
         return normalized, provenance
 
@@ -393,6 +439,7 @@ def _spec(kind: str, capability_id: str, description: str, target: str, evidence
           min_items: Mapping[str, int] | None = None, max_items: Mapping[str, int] | None = None,
           required_parameters: tuple[str, ...] = (), parameter_schema: Mapping[str, str] | None = None,
           normalizer_version: str | None = None,
+          ungrounded_optional_defaults: Mapping[str, object] | None = None,
           alternative_evidence: tuple[str, ...] = (),
           under_specified: bool = False, side_effect: str = "READ_ONLY",
           missing_question: str = "请补充完成这个请求所需的关键信息。",
@@ -412,6 +459,7 @@ def _spec(kind: str, capability_id: str, description: str, target: str, evidence
             required_parameters=required_parameters,
             parameter_schema=parameter_schema or {},
             normalizer_version=normalizer_version,
+            ungrounded_optional_defaults=ungrounded_optional_defaults or {},
             alternative_evidence_requirements=alternative_evidence,
             supports_under_specified_goal=under_specified,
             side_effect=side_effect,
@@ -478,6 +526,10 @@ def _builtin_registrations() -> tuple[CapabilityRegistration, ...]:
         _spec(PRODUCT_DISCOVERY, "catalog.discover", "在偏好不完整时生成真实、差异化的探索候选并继续偏好获取",
               "product", "CATALOG", _discover,
               accepted=("query", "category", "max_price", "soft_preferences", "excluded_terms"),
+              ungrounded_optional_defaults={
+                  "query": "", "category": None, "max_price": None,
+                  "soft_preferences": [], "excluded_terms": [],
+              },
               under_specified=True, handlers={"discover_products": tools.discover_products}),
         _spec(PRODUCT_COMPARE, "catalog.compare", "比较用户明确指定的两到三款真实商品", "product",
               "CATALOG", _compare, required=("product_ids",), accepted=("product_ids",),

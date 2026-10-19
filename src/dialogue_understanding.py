@@ -236,6 +236,14 @@ def _validate_grounding(understanding: TurnUnderstanding, user_message: str, his
         if objective.category is not None and not any(objective.category.casefold() in source.casefold()
                                                       for source in sources):
             raise AgentError("UNGROUNDED_PLAN_ENTITY", "商品品类必须来自用户或对话历史", retryable=False)
+        if objective.max_price is not None:
+            price_forms = {str(objective.max_price), f"{objective.max_price:g}"}
+            if not any(
+                re.search(r"(?<![\d.])" + re.escape(form) + r"(?![\d.])", source)
+                for source in sources
+                for form in price_forms
+            ):
+                raise AgentError("UNGROUNDED_PLAN_ENTITY", "商品预算必须来自用户或对话历史", retryable=False)
         query_terms = objective.query.casefold().split()
         if any(not any(term in source.casefold() for source in sources) for term in query_terms):
             raise AgentError("UNGROUNDED_PLAN_ENTITY", "商品查询条件必须来自用户或对话历史", retryable=False)

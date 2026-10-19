@@ -92,6 +92,30 @@ def test_registry_can_describe_a_new_capability_without_parser_changes():
     assert parsed.objectives[0].kind == "DEMO_ECHO"
 
 
+def test_registry_rejects_unsafe_ungrounded_field_policy():
+    common = dict(
+        capability_id="demo.echo",
+        objective_kind="DEMO_ECHO",
+        description="回显一段已验证文本",
+        target_type="text",
+        evidence_requirement="MODEL_KNOWLEDGE",
+        accepted_fields=("question",),
+    )
+
+    with pytest.raises(ValueError, match="must be accepted"):
+        CapabilityRegistry((CapabilityRegistration(
+            CapabilitySpec(**common, ungrounded_optional_defaults={"query": ""}),
+            lambda _objective, _request: (),
+        ),))
+
+    with pytest.raises(ValueError, match="Required fields cannot be dropped"):
+        CapabilityRegistry((CapabilityRegistration(
+            CapabilitySpec(**common, required_fields=("question",),
+                           ungrounded_optional_defaults={"question": ""}),
+            lambda _objective, _request: (),
+        ),))
+
+
 def test_registered_capability_executes_validates_renders_and_reports_outcome_without_task_plan_changes(monkeypatch):
     message = "回显 hello"
 
@@ -171,6 +195,40 @@ def test_open_ended_recommendation_returns_verified_diverse_candidates(monkeypat
     assert payload["candidate_set"]["selected_ids"] == [p["product_id"] for p in payload["products"]]
     assert "探索推荐" in result["reply"]
     assert payload["follow_up_question"] in result["reply"]
+
+
+def test_discovery_drops_model_invented_optional_filters_instead_of_rejecting_or_narrowing(monkeypatch):
+    message = "给我推荐买些什么"
+    model = ScriptedModel(understanding(message, objectives=[{
+        "id": "discover", "kind": PRODUCT_DISCOVERY, "source_quote": message,
+        "query": "热门商品", "category": "数码", "max_price": 999,
+        "soft_preferences": ["高性价比"], "excluded_terms": ["低质量"],
+    }]))
+    monkeypatch.setattr(orchestrator, "get_llm", lambda **_kwargs: model)
+
+    result = orchestrator.run_orchestrator(message)
+
+    assert result["status"] == "SUCCEEDED"
+    assert result["trace"][0]["tool"] == "discover_products"
+    assert set(result["trace"][0]["args"]) == {"context_seed"}
+    provenance = result["plan"]["steps"][0]["argument_provenance"]
+    assert set(provenance) == {"query", "category", "max_price", "soft_preferences", "excluded_terms"}
+    assert all(item["resolver"] == "ungrounded_optional_filter" for item in provenance.values())
+
+
+def test_discovery_does_not_ground_invented_budget_inside_an_order_number(monkeypatch):
+    message = "给我推荐点东西，我的会员号是 1999"
+    model = ScriptedModel(understanding(message, objectives=[{
+        "id": "discover", "kind": PRODUCT_DISCOVERY, "source_quote": "给我推荐点东西",
+        "max_price": 999,
+    }]))
+    monkeypatch.setattr(orchestrator, "get_llm", lambda **_kwargs: model)
+
+    result = orchestrator.run_orchestrator(message)
+
+    assert result["status"] == "SUCCEEDED"
+    assert "max_price" not in result["trace"][0]["args"]
+    assert result["plan"]["steps"][0]["argument_provenance"]["max_price"]["normalized_value"] is None
 
 
 def test_explicit_generic_recommendation_fast_path_uses_discovery(monkeypatch):
