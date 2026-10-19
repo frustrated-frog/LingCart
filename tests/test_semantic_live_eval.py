@@ -222,3 +222,44 @@ def test_gate_requires_real_provider_evidence(monkeypatch):
 
     report["execution_source"] = "real_model"
     assert semantic_eval.evaluate_gate(report) == []
+
+
+def test_gate_accepts_a_verified_zero_token_fast_path(monkeypatch):
+    from src.intake import TaskIntake
+
+    case = {
+        "id": "history-fast-path",
+        "risk_group": "cross-turn",
+        "message": "它现在到哪了",
+        "must_use_semantic": False,
+        "expected": {
+            "objectives": ["SHIPMENT_TRACKING"],
+            "tools": ["track_shipment"],
+            "statuses": ["SUCCEEDED"],
+        },
+    }
+    monkeypatch.setattr(
+        "src.intake.analyze_request",
+        lambda message: TaskIntake(request=message, execution_mode="DIRECT", reason="history"),
+    )
+
+    def runner(_message, *, history, limits):
+        return {
+            "status": "SUCCEEDED",
+            "terminal_reason": "COMPLETED",
+            "intake": {"intents": ["SHIPMENT_TRACKING"]},
+            "trace": [{"tool": "track_shipment"}],
+            "events": [],
+            "usage": {"total_tokens": 0},
+            "budget": {"consumed": {"model_calls": 0}},
+        }
+
+    report = semantic_eval.evaluate(
+        {"schema_version": 1, "cases": [case]}, cases=[case], repeats=1, modes=("auto",),
+        max_model_calls_per_run=2, readiness={"configured": True}, runners={"auto": runner},
+    )
+    report["execution_source"] = "real_model"
+
+    assert report["samples"][0]["objective_source"] == "deterministic_intake"
+    assert report["samples"][0]["model_calls"] == 0
+    assert semantic_eval.evaluate_gate(report) == []

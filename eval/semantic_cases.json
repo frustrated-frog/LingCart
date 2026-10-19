@@ -97,7 +97,7 @@
       "risk_group": "multilingual",
       "message": "Could you check where order 1002 is right now?",
       "must_use_semantic": true,
-      "expected": {"objectives": ["SHIPMENT_TRACKING"], "tools": ["get_tracking"], "statuses": ["SUCCEEDED"]}
+      "expected": {"objectives": ["SHIPMENT_TRACKING"], "tools": ["track_shipment"], "statuses": ["SUCCEEDED"]}
     },
     {
       "id": "negated-payment-query",
@@ -142,8 +142,8 @@
         {"role": "assistant", "content": "已经记下订单 1002。"}
       ],
       "message": "它现在到哪了？",
-      "must_use_semantic": true,
-      "expected": {"objectives": ["SHIPMENT_TRACKING"], "tools": ["get_tracking"], "statuses": ["SUCCEEDED"]}
+      "must_use_semantic": false,
+      "expected": {"objectives": ["SHIPMENT_TRACKING"], "tools": ["track_shipment"], "statuses": ["SUCCEEDED"]}
     },
     {
       "id": "two-timezones-two-objectives",

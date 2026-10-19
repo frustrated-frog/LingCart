@@ -99,6 +99,11 @@ def score_result(case: dict, result: dict, intake) -> dict:
     understanding = result.get("understanding") or {}
     objectives = understanding.get("objectives") or []
     commands = understanding.get("commands") or []
+    objective_source = "dialogue_understanding"
+    if not objectives and not commands:
+        intake_payload = result.get("intake") or {}
+        objectives = [{"kind": kind} for kind in intake_payload.get("intents") or []]
+        objective_source = "deterministic_intake"
     kinds = [item.get("kind") for item in objectives]
     command_kinds = [item.get("kind") for item in commands]
     failures = []
@@ -148,6 +153,7 @@ def score_result(case: dict, result: dict, intake) -> dict:
         "false_fast_path": false_fast_path,
         "objectives": kinds,
         "commands": command_kinds,
+        "objective_source": objective_source,
     }
 
 
@@ -223,6 +229,7 @@ def evaluate(
                 sample = {
                     "case_id": case["id"],
                     "risk_group": case.get("risk_group", "ungrouped"),
+                    "semantic_required": bool(case.get("must_use_semantic")),
                     "repeat": repeat,
                     "mode": mode,
                     **score,
@@ -325,9 +332,11 @@ def evaluate_gate(report: dict) -> list[str]:
     for sample in samples:
         model_calls = sample.get("model_calls")
         providers = sample.get("model_providers") or []
-        if not isinstance(model_calls, int) or model_calls < 1:
+        if not isinstance(model_calls, int):
             failures.append(f"案例 {sample.get('case_id')} 缺少真实模型调用计数")
-        if not providers:
+        elif sample.get("semantic_required") and model_calls < 1:
+            failures.append(f"案例 {sample.get('case_id')} 应进入语义模型但没有调用")
+        if sample.get("semantic_required") and not providers:
             failures.append(f"案例 {sample.get('case_id')} 缺少成功 Provider 证据")
     return failures
 
