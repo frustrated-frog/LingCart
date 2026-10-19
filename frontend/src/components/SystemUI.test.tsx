@@ -1,7 +1,7 @@
 import { fireEvent, render, screen } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import type { HarnessProfile } from '../types'
-import { ExecutionSpine, MechanismRail, StatusBadge } from './SystemUI'
+import { ExecutionSpine, localizeEngineeringText, MechanismRail, StatusBadge } from './SystemUI'
 
 function profile(id: string, planning: string): HarnessProfile {
   return {
@@ -34,6 +34,12 @@ describe('MechanismRail', () => {
     expect(container.querySelectorAll('.mechanism-cell')).toHaveLength(5)
     expect(container.querySelectorAll('.mechanism-cell.changed')).toHaveLength(1)
   })
+
+  it('shows a Chinese mechanism name while retaining its reproducible identifier', () => {
+    render(<MechanismRail profile={profile('baseline', 'bounded-model-loop')} />)
+    expect(screen.getByText('有界模型循环')).toBeInTheDocument()
+    expect(screen.getByText(/bounded-model-loop/)).toBeInTheDocument()
+  })
 })
 
 describe('ExecutionSpine', () => {
@@ -51,7 +57,14 @@ describe('ExecutionSpine', () => {
 
   it('keeps an explicit empty evidence state', () => {
     render(<ExecutionSpine events={[]} />)
-    expect(screen.getByText(/暂无事件/)).toBeInTheDocument()
+    expect(screen.getByText('暂未记录执行事件')).toBeInTheDocument()
+  })
+})
+
+describe('engineering copy localization', () => {
+  it('translates descriptive engineering terms without changing protocol identifiers', () => {
+    expect(localizeEngineeringText('Agent 通过 Harness Profile 加载 Playbook'))
+      .toBe('智能体通过运行配置档案加载策略手册')
   })
 })
 

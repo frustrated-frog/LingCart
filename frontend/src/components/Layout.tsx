@@ -14,7 +14,7 @@ import {
 import { NavLink, Outlet } from 'react-router-dom'
 
 const engineering = [
-  { to: '/', label: 'Agent 控制台', icon: LayoutDashboard, end: true },
+  { to: '/', label: '智能体控制台', icon: LayoutDashboard, end: true },
   { to: '/runs', label: '运行检查', icon: Route },
   { to: '/experiments', label: '实验契约', icon: FlaskConical },
   { to: '/mechanisms', label: '机制注册表', icon: Boxes },
@@ -51,16 +51,16 @@ export function Layout() {
       <aside className="sidebar">
         <NavLink to="/" className="brand" aria-label="LingCart 首页">
           <span className="brand-mark">序</span>
-          <span><b>LingCart</b><small>Agent Engineering</small></span>
+          <span><b>LingCart</b><small>智能体工程</small></span>
         </NavLink>
         <div className="nav-scroll">
-          <NavSection title="Agent Engineering" items={engineering} />
+          <NavSection title="智能体工程" items={engineering} />
           <NavSection title="业务沙盒" items={sandbox} />
         </div>
         <div className="sidebar-runtime">
-          <div className="runtime-line"><i /><span>LOCAL RUNTIME</span><b>CONNECTED</b></div>
+          <div className="runtime-line"><i /><span>本地运行时</span><b>已连接</b></div>
           <NavLink className="new-session" to="/sandbox?new=1"><CircleUserRound size={15} />新建业务对话</NavLink>
-          <div className="build-note"><span>LINGCART / REACT BUILD</span><p>本地数据 · 可追溯执行 · 桌面工程界面</p></div>
+          <div className="build-note"><span>LINGCART / 网页界面</span><p>本地数据 · 可追溯执行 · 桌面工程界面</p></div>
         </div>
       </aside>
       <main className="main-canvas">

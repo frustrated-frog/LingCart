@@ -22,10 +22,10 @@ export function EngineeringGate() {
     }
     return <section className="engineering-access">
       <div className="access-mark"><KeyRound size={22} /></div>
-      <span>TRUSTED RESEARCH ENVIRONMENT</span>
+      <span>可信研究环境</span>
       <h1>工程控制台需要访问凭据</h1>
-      <p>运行轨迹包含用户请求、上下文、工具参数和检查点。远程访问时必须提供服务端配置的 Engineering Key；本机直连无需凭据。</p>
-      <form onSubmit={submit}><label>ENGINEERING KEY<input type="password" autoComplete="off" value={key} onChange={(event) => setKey(event.target.value)} /></label><button className="primary" disabled={!key.trim()}><ShieldCheck size={14} />验证并进入</button></form>
+      <p>运行轨迹包含用户请求、上下文、工具参数和检查点。远程访问时必须提供服务端配置的工程访问密钥；本机直连无需凭据。</p>
+      <form onSubmit={submit}><label>工程访问密钥<input type="password" autoComplete="off" value={key} onChange={(event) => setKey(event.target.value)} /></label><button className="primary" disabled={!key.trim()}><ShieldCheck size={14} />验证并进入</button></form>
     </section>
   }
   return <Outlet />
