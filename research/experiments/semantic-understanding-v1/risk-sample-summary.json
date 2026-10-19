@@ -1,0 +1,58 @@
+{
+  "schema_version": 1,
+  "experiment_id": "semantic-understanding-v1",
+  "run_kind": "staged-risk-sample-diagnostic",
+  "source_commits": [
+    "613c976",
+    "bfaadee"
+  ],
+  "cases": [
+    {
+      "case_id": "negated-handoff-order-shipment",
+      "result": "PASSED",
+      "model_calls": 1
+    },
+    {
+      "case_id": "multi-goal-time-and-order",
+      "result": "PASSED",
+      "model_calls": 1
+    },
+    {
+      "case_id": "history-order-pronoun",
+      "result": "PASSED_AFTER_EVALUATOR_CONTRACT_FIX",
+      "model_calls": 0
+    },
+    {
+      "case_id": "weather-evidence-boundary",
+      "result": "PASSED",
+      "model_calls": 1
+    },
+    {
+      "case_id": "unsupported-booking-action",
+      "result": "PASSED",
+      "model_calls": 1
+    }
+  ],
+  "cost": {
+    "model_calls": 4,
+    "total_tokens": 7135
+  },
+  "reports": [
+    {
+      "path": "output/semantic-risk-sample-613c976.json",
+      "sha256": "b14bac7cb9d56253e4840e4d91c0b894d2b21caa40150c7b197efe983d2893e9",
+      "note": "前两个模型案例通过；跨轮案例因评测契约错误被误判，运行时本身成功且未调用模型。"
+    },
+    {
+      "path": "output/semantic-cross-turn-bfaadee.json",
+      "sha256": "dd5499579683739bac6dd481ea19b6f724b0902205700171b70311069485201e",
+      "note": "修复契约后跨轮案例通过，使用确定性 Intake 与 track_shipment，模型调用为零。"
+    },
+    {
+      "path": "output/semantic-boundaries-bfaadee.json",
+      "sha256": "2b1de84806753a9dd6e8701918a612781ba2d441784f622d5cba0691982fa481",
+      "note": "实时证据缺失和未注册外部动作边界均通过。"
+    }
+  ],
+  "claim_boundary": "这是跨两个评测器提交的分阶段诊断证据，用于决定是否继续扩大测试；不是同一冻结提交上的正式完整验收报告，不能据此宣称 22 案例基线已经通过。"
+}
