@@ -63,8 +63,8 @@ class ExperimentSpec(BaseModel):
     def contract_is_complete(self):
         if self.baseline_profile == self.candidate_profile:
             raise ValueError("候选 Profile 必须不同于基线")
-        if self.suite == "adaptive" and not self.dataset.endswith("adaptive_tasks.json"):
-            raise ValueError("自主实验必须使用独立 adaptive_tasks 任务集")
+        if self.suite == "adaptive" and not self.dataset.endswith("_tasks.json"):
+            raise ValueError("自主实验必须使用独立的 *_tasks.json 任务集")
         names = [rule.name for rule in (*self.primary_metrics, *self.guard_metrics)]
         if len(names) != len(set(names)):
             raise ValueError("同一指标不能重复声明")

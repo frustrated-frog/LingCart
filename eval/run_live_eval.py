@@ -39,12 +39,79 @@ KERNEL_BOUNDARIES = {
     },
 }
 KERNEL_FILES = frozenset().union(*KERNEL_BOUNDARIES.values())
+ADAPTIVE_EXPECT_KEYS = frozenset({
+    'objectives', 'product_constraints', 'minimum_recommendations',
+    'recommendation_targets', 'require_goal_coverage',
+})
+CONSTRAINT_KEYS = frozenset({'description', 'source_quote', 'field', 'op', 'value'})
+CONSTRAINT_OPERATORS = frozenset({'eq', 'ne', 'contains', 'not_contains', 'lte', 'gte', 'in', 'not_in'})
+
+
+def _validate_constraint(value, label):
+    if not isinstance(value, dict) or set(value) != CONSTRAINT_KEYS:
+        raise ValueError(f'{label} 必须完整声明 description/source_quote/field/op/value')
+    if any(not isinstance(value[key], str) or not value[key].strip()
+           for key in ('description', 'source_quote', 'field')):
+        raise ValueError(f'{label} 的文字字段不能为空')
+    if value['op'] not in CONSTRAINT_OPERATORS:
+        raise ValueError(f'{label} 使用了未知约束操作符 {value["op"]!r}')
+
+
+def _validate_adaptive_cases(dataset):
+    if dataset.get('suite') != 'adaptive':
+        return
+    for case in dataset['cases']:
+        label = case['id']
+        expected = case.get('adaptive_expect')
+        if not isinstance(expected, dict) or set(expected) - ADAPTIVE_EXPECT_KEYS:
+            raise ValueError(f'{label}: adaptive_expect 缺失或包含未知字段')
+        objectives = expected.get('objectives')
+        if not isinstance(objectives, list) or not objectives or any(
+                not isinstance(item, dict) or not isinstance(item.get('kind'), str) or not item['kind']
+                for item in objectives):
+            raise ValueError(f'{label}: objectives 必须声明至少一个带 kind 的目标')
+        constraints = expected.get('product_constraints', [])
+        targets = expected.get('recommendation_targets', [])
+        if not isinstance(constraints, list) or not isinstance(targets, list) or any(
+                not isinstance(target, list) or not target for target in targets):
+            raise ValueError(f'{label}: 商品约束与独立推荐目标必须使用列表')
+        for index, constraint in enumerate(constraints):
+            _validate_constraint(constraint, f'{label}: product_constraints[{index}]')
+        for target_index, target in enumerate(targets):
+            for constraint_index, constraint in enumerate(target):
+                _validate_constraint(constraint, f'{label}: recommendation_targets[{target_index}][{constraint_index}]')
+        minimum = expected.get('minimum_recommendations', 1)
+        if not isinstance(minimum, int) or isinstance(minimum, bool) or minimum < 1:
+            raise ValueError(f'{label}: minimum_recommendations 必须是正整数')
+        scenario = case.get('scenario')
+        if scenario is None:
+            continue
+        if not isinstance(scenario, dict) or scenario.get('kind') not in {'steer', 'price_change', 'stock_change'}:
+            raise ValueError(f'{label}: scenario.kind 无效')
+        if scenario['kind'] == 'steer':
+            if set(scenario) != {'kind', 'message'} or not isinstance(scenario['message'], str) or not scenario['message'].strip():
+                raise ValueError(f'{label}: steer 场景必须且只能声明非空 message')
+        elif (set(scenario) != {'kind', 'updates'} or not isinstance(scenario['updates'], dict)
+              or not scenario['updates'] or set(scenario['updates']) - {'price', 'stock'}):
+            raise ValueError(f'{label}: 环境变化必须且只能更新 price/stock')
 
 
 def load_dataset(path=DATASET):
     dataset = offline.load_dataset(path)
-    if len(dataset['cases']) != 20 or any(sum(c.get('split') == split for c in dataset['cases']) != 10 for split in ('dev', 'test')):
-        raise ValueError('实时评测必须包含固定的 20 项开发集与测试集任务')
+    _validate_adaptive_cases(dataset)
+    expected = dataset.get('split_counts')
+    if expected is None:
+        expected = {'dev': 10, 'test': 10}
+    if (not isinstance(expected, dict) or not expected
+            or any(split not in {'dev', 'test'} or not isinstance(count, int) or isinstance(count, bool) or count < 1
+                   for split, count in expected.items())):
+        raise ValueError('实时评测 split_counts 必须声明正整数 dev/test 数量')
+    actual = {split: sum(case.get('split') == split for case in dataset['cases'])
+              for split in ('dev', 'test')}
+    undeclared = [case['id'] for case in dataset['cases'] if case.get('split') not in expected]
+    if undeclared or sum(expected.values()) != len(dataset['cases']) or any(
+            actual.get(split, 0) != count for split, count in expected.items()):
+        raise ValueError('实时评测任务数量必须与数据集冻结的 split_counts 一致')
     return dataset
 
 
@@ -134,7 +201,7 @@ def summarize(samples, repeats):
             'tokens': tokens, 'monetary_cost': None}
 
 
-def evaluate(dataset, *, repeats=3, split='all', execution_mode='auto', harness_profile=None,
+def evaluate(dataset, *, repeats=3, split='all', case_ids=(), execution_mode='auto', harness_profile=None,
              experiment_spec=None, dataset_path=DATASET, runner=None, readiness=None):
     """runner 注入只用于基础设施测试，报告会明确标识为 test_harness。"""
     injected_runner = runner is not None
@@ -143,6 +210,12 @@ def evaluate(dataset, *, repeats=3, split='all', execution_mode='auto', harness_
     suite = dataset.get('suite', 'support')
     if suite == 'adaptive' and execution_mode != 'adaptive':
         raise ValueError('自主专项任务必须使用 adaptive 入口')
+    available_ids = {case['id'] for case in dataset['cases']}
+    unknown_ids = set(case_ids) - available_ids
+    if unknown_ids:
+        raise ValueError('不存在的评测案例：' + '、'.join(sorted(unknown_ids)))
+    if experiment_spec is not None and case_ids:
+        raise ValueError('正式实验契约必须运行完整 evaluation split，不能只运行案例子集')
     # 在隔离数据库的临时环境之外加载配置，避免 patch.dict 恢复时丢弃密钥。
     from dotenv import load_dotenv
     load_dotenv(ROOT / '.env')
@@ -197,7 +270,10 @@ def evaluate(dataset, *, repeats=3, split='all', execution_mode='auto', harness_
         return report
     limits = BudgetLimits.adaptive() if suite == 'adaptive' else BudgetLimits(max_seconds=45)
     report['manifest']['limits'] = limits.__dict__
-    selected = [case for case in dataset['cases'] if split == 'all' or case['split'] == split]
+    selected = [case for case in dataset['cases']
+                if (split == 'all' or case['split'] == split) and (not case_ids or case['id'] in case_ids)]
+    if not selected:
+        raise ValueError('所选 split 与案例过滤条件没有可执行样本')
     report['manifest']['selected_cases'] = [dict(id=c['id'], split=c['split'], turns=len(c['turns'])) for c in selected]
     for case in selected:
         for repetition in range(repeats):
@@ -480,6 +556,8 @@ def main(argv=None):
     parser.add_argument('--dry-run', action='store_true', help='仅校验任务集，不导入应用')
     parser.add_argument('--repeats', type=int, default=3)
     parser.add_argument('--split', choices=['all', 'dev', 'test'], default='all')
+    parser.add_argument('--case', action='append', default=[], help='仅执行指定案例；可重复传入，仅用于 Smoke')
+    parser.add_argument('--max-samples', type=int, default=2, help='实时执行允许的最大样本数，默认 2')
     parser.add_argument('--execution-mode', choices=['auto', 'adaptive'], default='auto')
     parser.add_argument('--harness-profile', help='使用已注册的 Harness Profile，例如 baseline-v1')
     parser.add_argument('--experiment-spec', type=Path, help='机器可校验的 JSON 实验契约')
@@ -489,8 +567,24 @@ def main(argv=None):
     args = parser.parse_args(argv)
     dataset = load_dataset(args.dataset)
     experiment_spec = ExperimentSpec.from_path(args.experiment_spec) if args.experiment_spec else None
+    available_ids = {case['id'] for case in dataset['cases']}
+    unknown_ids = set(args.case) - available_ids
+    if unknown_ids:
+        parser.error('不存在的评测案例：' + '、'.join(sorted(unknown_ids)))
+    selected = [case for case in dataset['cases']
+                if (args.split == 'all' or case['split'] == args.split)
+                and (not args.case or case['id'] in args.case)]
+    planned_samples = len(selected) * args.repeats
+    if not selected:
+        parser.error('所选 split 与案例过滤条件没有可执行样本')
+    if args.max_samples < 1:
+        parser.error('--max-samples 必须大于 0')
     if args.gate and experiment_spec and args.baseline is None:
         parser.error('论文对照 Gate 必须通过 --baseline 提供冻结基线报告')
+    if experiment_spec and args.case:
+        parser.error('正式实验契约必须运行完整 evaluation split，不能使用 --case')
+    if not args.dry_run and planned_samples > args.max_samples:
+        parser.error(f'计划执行 {planned_samples} 个实时样本，超过 --max-samples={args.max_samples}；请显式提高预算')
     if args.dry_run:
         if dataset.get('suite') == 'adaptive' and args.execution_mode != 'adaptive':
             parser.error('自主专项任务必须使用 adaptive')
@@ -502,10 +596,12 @@ def main(argv=None):
             parser.error('实验 dry-run 的候选 Profile、任务集、suite、重复次数和评测分组必须与契约一致')
         report = {'status': 'VALIDATED', 'suite': dataset.get('suite', 'support'), 'execution_mode': args.execution_mode,
                   'experiment_id': experiment_spec.experiment_id if experiment_spec else None,
-                  'cases': 20, 'repeats': args.repeats, 'planned_samples': len([c for c in dataset['cases'] if args.split == 'all' or c['split'] == args.split]) * args.repeats,
+                  'cases': len(selected), 'dataset_cases': len(dataset['cases']),
+                  'repeats': args.repeats, 'planned_samples': planned_samples,
                   'message': '任务集校验通过，未导入应用、未调用模型'}
     else:
-        report = evaluate(dataset, repeats=args.repeats, split=args.split, execution_mode=args.execution_mode,
+        report = evaluate(dataset, repeats=args.repeats, split=args.split, case_ids=tuple(args.case),
+                          execution_mode=args.execution_mode,
                           harness_profile=args.harness_profile, experiment_spec=experiment_spec,
                           dataset_path=args.dataset)
     failures = evaluate_gate(report, json.loads(args.baseline.read_text()) if args.baseline else None) if args.gate else []

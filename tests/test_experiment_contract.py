@@ -46,3 +46,17 @@ def test_contract_rejects_reversed_guards_and_requires_a_cost_metric():
                                 if rule['name'] != 'latency_ms.p95']
     with pytest.raises(ValidationError, match='成本或延迟'):
         ExperimentSpec.model_validate_json(json.dumps(payload))
+
+
+def test_adaptive_contract_accepts_a_versioned_challenge_task_set():
+    payload = json.loads((ROOT / 'research/experiments/ace-context-v1/experiment-spec.json').read_text())
+    payload['dataset'] = 'eval/ace_challenge_tasks.json'
+
+    spec = ExperimentSpec.model_validate_json(json.dumps(payload))
+
+    assert spec.dataset == 'eval/ace_challenge_tasks.json'
+
+    frozen = ExperimentSpec.from_path(
+        ROOT / 'research/experiments/ace-context-v1/challenge-experiment-spec.json')
+    assert frozen.dataset == 'eval/ace_challenge_tasks.json'
+    assert frozen.repeats == 2

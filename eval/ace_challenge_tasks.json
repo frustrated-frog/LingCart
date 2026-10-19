@@ -1,0 +1,202 @@
+{
+  "schema_version": 1,
+  "suite": "adaptive",
+  "description": "ACE V1 独立留出挑战集：组合约束、目标覆盖、环境变化、跨轮修订与负迁移；不参与 Playbook 学习。",
+  "split_counts": {
+    "test": 8
+  },
+  "cases": [
+    {
+      "id": "ACE-C01",
+      "category": "unseen_keyboard_constraints",
+      "language": "zh",
+      "description": "推荐350元以内、三模连接且使用静音轴的键盘",
+      "split": "test",
+      "turns": [
+        {
+          "message": "推荐一款350元以内的键盘，要三模连接，而且必须是静音轴",
+          "expect": {"statuses": ["SUCCEEDED"]}
+        }
+      ],
+      "adaptive_expect": {
+        "objectives": [{"kind": "recommend"}],
+        "product_constraints": [
+          {"description": "价格至多350", "source_quote": "价格至多350", "field": "price", "op": "lte", "value": 350},
+          {"description": "三模连接", "source_quote": "三模连接", "field": "specs.连接方式", "op": "contains", "value": "三模"},
+          {"description": "静音轴", "source_quote": "静音轴", "field": "specs.轴体", "op": "contains", "value": "静音轴"}
+        ]
+      }
+    },
+    {
+      "id": "ACE-C02",
+      "category": "cross_category_composition",
+      "language": "zh",
+      "description": "分别推荐满足不同复杂约束的开放式耳机和4K扩展坞",
+      "split": "test",
+      "turns": [
+        {
+          "message": "分别推荐两样：一款400元以内、开放式且续航至少30小时的耳机；一个250元以内、支持4K 60Hz的扩展坞",
+          "expect": {"statuses": ["SUCCEEDED"]}
+        }
+      ],
+      "adaptive_expect": {
+        "objectives": [{"kind": "recommend"}],
+        "product_constraints": [],
+        "minimum_recommendations": 2,
+        "recommendation_targets": [
+          [
+            {"description": "耳机", "source_quote": "耳机", "field": "category", "op": "eq", "value": "耳机"},
+            {"description": "400元以内", "source_quote": "400元以内", "field": "price", "op": "lte", "value": 400},
+            {"description": "开放式", "source_quote": "开放式", "field": "specs.佩戴方式", "op": "contains", "value": "开放式"},
+            {"description": "续航至少30小时", "source_quote": "续航至少30小时", "field": "specs.综合续航", "op": "gte", "value": 30}
+          ],
+          [
+            {"description": "扩展坞", "source_quote": "扩展坞", "field": "category", "op": "eq", "value": "扩展坞"},
+            {"description": "250元以内", "source_quote": "250元以内", "field": "price", "op": "lte", "value": 250},
+            {"description": "4K 60Hz", "source_quote": "4K 60Hz", "field": "specs.视频输出", "op": "contains", "value": "4K 60Hz"}
+          ]
+        ]
+      }
+    },
+    {
+      "id": "ACE-C03",
+      "category": "three_goal_coverage",
+      "language": "zh",
+      "description": "同时完成物流、退货政策和扩展坞推荐三个独立目标",
+      "split": "test",
+      "turns": [
+        {
+          "message": "先查订单1002的物流，再说明退货政策，最后推荐一个200元以内且支持4K的扩展坞",
+          "expect": {"statuses": ["SUCCEEDED"]}
+        }
+      ],
+      "adaptive_expect": {
+        "objectives": [
+          {"kind": "track_shipment", "order_id": 1002},
+          {"kind": "answer_faq"},
+          {"kind": "recommend"}
+        ],
+        "require_goal_coverage": true,
+        "product_constraints": [
+          {"description": "价格至多200", "source_quote": "价格至多200", "field": "price", "op": "lte", "value": 200},
+          {"description": "支持4K", "source_quote": "支持4K", "field": "specs.视频输出", "op": "contains", "value": "4K"}
+        ]
+      }
+    },
+    {
+      "id": "ACE-C04",
+      "category": "constraint_conflict",
+      "language": "zh",
+      "description": "相互冲突的键盘连接约束必须先澄清",
+      "split": "test",
+      "turns": [
+        {
+          "message": "推荐一款键盘，必须只能有线连接，同时又必须完全无线使用；先别猜，冲突就问我",
+          "expect": {"statuses": ["WAITING_CLARIFICATION"]}
+        }
+      ],
+      "adaptive_expect": {
+        "objectives": [{"kind": "recommend"}],
+        "product_constraints": []
+      }
+    },
+    {
+      "id": "ACE-C05",
+      "category": "multi_turn_revision",
+      "language": "zh",
+      "description": "第二轮撤销主动降噪并改为开放式，不得沿用旧约束",
+      "split": "test",
+      "turns": [
+        {
+          "message": "推荐一款600元以内、带主动降噪的耳机",
+          "expect": {"statuses": ["SUCCEEDED"]}
+        },
+        {
+          "message": "换个方向：不要主动降噪了，改成400元以内的开放式，续航至少30小时",
+          "expect": {"statuses": ["SUCCEEDED"]}
+        }
+      ],
+      "adaptive_expect": {
+        "objectives": [{"kind": "recommend"}],
+        "product_constraints": [
+          {"description": "价格至多400", "source_quote": "价格至多400", "field": "price", "op": "lte", "value": 400},
+          {"description": "开放式", "source_quote": "开放式", "field": "specs.佩戴方式", "op": "contains", "value": "开放式"},
+          {"description": "续航至少30小时", "source_quote": "续航至少30小时", "field": "specs.综合续航", "op": "gte", "value": 30}
+        ]
+      }
+    },
+    {
+      "id": "ACE-C06",
+      "category": "price_change_with_constraints",
+      "language": "zh",
+      "description": "候选价格变化后仍需满足键盘预算与静音约束",
+      "split": "test",
+      "turns": [
+        {
+          "message": "推荐一款400元以内、适合低噪办公的静音轴键盘",
+          "expect": {"statuses": ["SUCCEEDED"]}
+        }
+      ],
+      "adaptive_expect": {
+        "objectives": [{"kind": "recommend"}],
+        "product_constraints": [
+          {"description": "价格至多400", "source_quote": "价格至多400", "field": "price", "op": "lte", "value": 400},
+          {"description": "静音轴", "source_quote": "静音轴", "field": "specs.轴体", "op": "contains", "value": "静音轴"}
+        ]
+      },
+      "scenario": {"kind": "price_change", "updates": {"price": 9999}}
+    },
+    {
+      "id": "ACE-C07",
+      "category": "stock_change_cross_category",
+      "language": "zh",
+      "description": "库存变化后仍完成耳机与键盘两个独立推荐",
+      "split": "test",
+      "turns": [
+        {
+          "message": "推荐一款500元以内的头戴式耳机，再推荐一款350元以内的三模键盘",
+          "expect": {"statuses": ["SUCCEEDED"]}
+        }
+      ],
+      "adaptive_expect": {
+        "objectives": [{"kind": "recommend"}],
+        "product_constraints": [],
+        "minimum_recommendations": 2,
+        "recommendation_targets": [
+          [
+            {"description": "耳机", "source_quote": "耳机", "field": "category", "op": "eq", "value": "耳机"},
+            {"description": "500元以内", "source_quote": "500元以内", "field": "price", "op": "lte", "value": 500},
+            {"description": "头戴式", "source_quote": "头戴式", "field": "specs.佩戴方式", "op": "contains", "value": "头戴式"}
+          ],
+          [
+            {"description": "键盘", "source_quote": "键盘", "field": "category", "op": "eq", "value": "键盘"},
+            {"description": "350元以内", "source_quote": "350元以内", "field": "price", "op": "lte", "value": 350},
+            {"description": "三模", "source_quote": "三模", "field": "specs.连接方式", "op": "contains", "value": "三模"}
+          ]
+        ]
+      },
+      "scenario": {"kind": "stock_change", "updates": {"stock": 0}}
+    },
+    {
+      "id": "ACE-C08",
+      "category": "negative_transfer",
+      "language": "zh",
+      "description": "明确要求按键盘事实决策，防止耳机经验造成负迁移",
+      "split": "test",
+      "turns": [
+        {
+          "message": "这次只看键盘，不要套用耳机的降噪或续航经验；推荐300元以内、适合便携办公的键盘",
+          "expect": {"statuses": ["SUCCEEDED"]}
+        }
+      ],
+      "adaptive_expect": {
+        "objectives": [{"kind": "recommend"}],
+        "product_constraints": [
+          {"description": "键盘", "source_quote": "键盘", "field": "category", "op": "eq", "value": "键盘"},
+          {"description": "价格至多300", "source_quote": "价格至多300", "field": "price", "op": "lte", "value": 300},
+          {"description": "便携办公", "source_quote": "便携办公", "field": "specs.适用场景", "op": "contains", "value": "便携"}
+        ]
+      }
+    }
+  ]
+}

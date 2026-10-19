@@ -1,4 +1,7 @@
 import copy
+import json
+
+import pytest
 
 from eval import run_live_eval as live
 
@@ -14,6 +17,17 @@ def test_live_dry_run_does_not_import_application(monkeypatch, capsys):
     monkeypatch.setattr(live.offline, '_runtime', lambda: (_ for _ in ()).throw(AssertionError('不能导入应用')))
     assert live.main(['--dry-run']) == 0
     assert '未调用模型' in capsys.readouterr().out
+
+
+def test_live_case_filter_and_sample_budget_prevent_accidental_batch_calls(monkeypatch, capsys):
+    first = live.load_dataset()['cases'][0]['id']
+    assert live.main(['--dry-run', '--case', first, '--repeats', '2']) == 0
+    assert json.loads(capsys.readouterr().out)['planned_samples'] == 2
+
+    monkeypatch.setattr(live, 'evaluate', lambda *_a, **_k: (_ for _ in ()).throw(
+        AssertionError('超过样本预算时不应启动实时评测')))
+    with pytest.raises(SystemExit):
+        live.main(['--repeats', '1'])
 
 
 def test_unconfigured_provider_is_not_a_successful_live_baseline():
@@ -236,6 +250,32 @@ def test_kernel_boundaries_cover_recovery_model_gateway_and_harness_assembly():
     assert 'src/harness/registry.py' in live.KERNEL_BOUNDARIES['harness_assembly']
 
 
+def test_live_dataset_uses_frozen_declared_split_counts(tmp_path):
+    dataset = live.load_dataset()
+    dataset['cases'] = [dict(dataset['cases'][0], split='test')]
+    dataset['split_counts'] = {'test': 1}
+    path = tmp_path / 'challenge_tasks.json'
+    path.write_text(json.dumps(dataset, ensure_ascii=False), encoding='utf-8')
+
+    loaded = live.load_dataset(path)
+
+    assert loaded['split_counts'] == {'test': 1}
+    dataset['split_counts'] = {'test': 2}
+    path.write_text(json.dumps(dataset, ensure_ascii=False), encoding='utf-8')
+    with pytest.raises(ValueError, match='split_counts'):
+        live.load_dataset(path)
+
+
+def test_adaptive_dataset_rejects_unknown_expectations_before_live_execution(tmp_path):
+    dataset = json.loads((live.ROOT / 'eval/ace_challenge_tasks.json').read_text(encoding='utf-8'))
+    dataset['cases'][0]['adaptive_expect']['product_constraints'][0]['operator'] = 'lte'
+    path = tmp_path / 'invalid_adaptive_tasks.json'
+    path.write_text(json.dumps(dataset, ensure_ascii=False), encoding='utf-8')
+
+    with pytest.raises(ValueError, match='product_constraints'):
+        live.load_dataset(path)
+
+
 def test_injected_runner_uses_real_business_evidence_and_is_never_labeled_live():
     run_orchestrator = live.offline._runtime()["orchestrator"].run_orchestrator
     dataset = live.load_dataset()
@@ -261,7 +301,8 @@ def test_gate_rejects_missing_samples_and_nonlive_source():
 
 def test_gate_without_baseline_reports_not_run(monkeypatch, capsys):
     monkeypatch.setattr(live, 'evaluate', lambda *_a, **_k: {'status': 'NOT_RUN', 'metrics': {}, 'samples': []})
-    assert live.main(['--gate']) == 2
+    first = live.load_dataset()['cases'][0]['id']
+    assert live.main(['--gate', '--case', first, '--repeats', '1', '--max-samples', '1']) == 2
     assert 'NOT_RUN' in capsys.readouterr().out
 
 

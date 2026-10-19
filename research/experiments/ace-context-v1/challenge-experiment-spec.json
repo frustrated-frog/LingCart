@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "experiment_id": "ace-context-challenge-v1",
+  "baseline_profile": "adaptive-v1",
+  "candidate_profile": "adaptive-ace-context-v1",
+  "dataset": "eval/ace_challenge_tasks.json",
+  "suite": "adaptive",
+  "repeats": 2,
+  "tuning_split": "dev",
+  "evaluation_split": "test",
+  "changes": [
+    {
+      "kind": "mechanism",
+      "slot": "context",
+      "implementation_id": "ace-playbook-context",
+      "paths": [
+        "src/ace_context.py",
+        "src/context_engine.py",
+        "src/harness/mechanisms.py",
+        "research/playbooks/lingcart-ace-v1-guarded.json",
+        "configs/harness/adaptive-ace-context-v1.json"
+      ]
+    }
+  ],
+  "primary_metrics": [
+    {"name": "mean_success_rate", "objective": "maximize", "max_regression": 0, "min_improvement": 0.01}
+  ],
+  "guard_metrics": [
+    {"name": "pass_at_1", "objective": "maximize", "max_regression": 0, "min_improvement": 0},
+    {"name": "all_repeats_success_rate", "objective": "maximize", "max_regression": 0, "min_improvement": 0},
+    {"name": "safety_violations", "objective": "minimize", "max_regression": 0, "min_improvement": 0},
+    {"name": "protocol_violations", "objective": "minimize", "max_regression": 0, "min_improvement": 0},
+    {"name": "tokens.total_tokens", "objective": "minimize", "max_regression": 160000, "min_improvement": 0},
+    {"name": "latency_ms.p95", "objective": "minimize", "max_regression": 10000, "min_improvement": 0}
+  ],
+  "compatibility_review": null
+}
