@@ -47,7 +47,7 @@ def test_production_build_and_client_routes_are_served_when_available():
     deep_link = client.get('/mechanisms')
     assert home.status_code == 200
     assert deep_link.status_code == 200
-    assert 'LingCart · Agent Engineering' in home.text
+    assert 'LingCart · 智能体工程' in home.text
     assert '<div id="root"></div>' in deep_link.text
 
 

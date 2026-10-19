@@ -67,6 +67,20 @@ class Script:
                          usage_metadata={'input_tokens': 100, 'output_tokens': 80, 'total_tokens': 180})
 
 
+class DialogueScript:
+    """Structured dialogue model used before the adaptive shopping loop."""
+
+    def __init__(self, payload):
+        self.payload = payload
+
+    def json_mode(self):
+        return self
+
+    def invoke(self, _prompt):
+        return AIMessage(content=json.dumps(self.payload, ensure_ascii=False),
+                         usage_metadata={'input_tokens': 100, 'output_tokens': 80, 'total_tokens': 180})
+
+
 def model(monkeypatch, *decisions):
     script = Script(decisions)
     monkeypatch.setattr('src.adaptive_decision.get_llm', lambda **kwargs: script)
@@ -118,7 +132,12 @@ def test_no_model_does_not_run_an_autonomous_workflow():
 
 
 def test_uncertain_initial_intent_can_be_clarified_without_fabricating_a_goal(monkeypatch):
-    model(monkeypatch, dict(action='clarify', reason='用户未说明要处理的消费事项', message='你希望处理哪件消费事项？'))
+    dialogue = DialogueScript(dict(
+        reason='用户未说明要处理的消费事项',
+        commands=[dict(kind='CLARIFY', source_quote='帮我处理一下', message='你希望处理哪件消费事项？')],
+        objectives=[],
+    ))
+    monkeypatch.setattr('src.llm.get_llm', lambda **kwargs: dialogue)
     result = run_adaptive('帮我处理一下')
     assert result['status'] == 'WAITING_CLARIFICATION'
     assert result['plan']['goal'] is None
