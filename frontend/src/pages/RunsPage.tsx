@@ -121,14 +121,17 @@ function ResultTab({ detail }: { detail: RunDetail }) {
 function EvidenceTab({ detail }: { detail: RunDetail }) {
   const checkpoint = detail.checkpoint
   const adaptive = (checkpoint.adaptive ?? {}) as Record<string, unknown>
+  const bindingTransaction = (adaptive.binding_tx ?? {}) as Record<string, unknown>
   return <>
     <DefinitionGrid items={[
-      ['目标修订版本', String(adaptive.binding_revision ?? 0)],
-      ['已读证据', Array.isArray(adaptive.read_evidence_refs) ? adaptive.read_evidence_refs.length : 0],
+      ['目标修订版本', String(adaptive.goal_revision ?? 0)],
+      ['约束映射版本', String(adaptive.binding_revision ?? 0)],
+      ['映射事务', bindingTransaction.status ? `${String(bindingTransaction.status)} / ${String(bindingTransaction.source ?? '—')}` : '尚无事务'],
+      ['模型已读证据', Array.isArray(adaptive.read_evidence_refs) ? adaptive.read_evidence_refs.length : 0],
       ['目标数量', Array.isArray(adaptive.objective_ledger) ? adaptive.objective_ledger.length : 0],
       ['上下文', checkpoint.context ? '已记录' : '未记录'],
     ]} />
-    <div className="split-json"><div><h3>结构化上下文</h3><JsonBlock value={checkpoint.context ?? {}} /></div><div><h3>目标、约束与证据</h3><JsonBlock value={{ goal: adaptive.goal, objective_ledger: adaptive.objective_ledger ?? [], constraint_bindings: adaptive.constraint_bindings ?? {}, working_memory: adaptive.working_memory, read_evidence_refs: adaptive.read_evidence_refs ?? [] }} /></div></div>
+    <div className="split-json"><div><h3>结构化上下文</h3><JsonBlock value={checkpoint.context ?? {}} /></div><div><h3>目标、映射事务与证据</h3><JsonBlock value={{ goal: adaptive.goal, objective_ledger: adaptive.objective_ledger ?? [], constraint_bindings: adaptive.constraint_bindings ?? {}, binding_transaction: adaptive.binding_tx ?? null, binding_resolution: adaptive.binding_resolution ?? null, binding_evidence_access: adaptive.binding_evidence_access ?? {}, working_memory: adaptive.working_memory, read_evidence_refs: adaptive.read_evidence_refs ?? [] }} /></div></div>
   </>
 }
 

@@ -225,7 +225,7 @@ export function SandboxPage() {
       <section className="conversation-panel">
         <div className="conversation-toolbar">
           <div><span>CONVERSATION</span><code>{sessionId.slice(0, 12)}</code></div>
-          <label className="mode-switch"><input type="checkbox" checked={adaptive} disabled={busy} onChange={(event) => setAdaptive(event.target.checked)} /><span>Adaptive planning</span></label>
+          <label className="mode-switch"><input type="checkbox" checked={adaptive} disabled={busy} onChange={(event) => setAdaptive(event.target.checked)} /><span>自适应规划</span></label>
         </div>
         <div className="message-list">
           {messages.length === 0 && <div className="conversation-empty"><Sparkles size={24} /><h2>告诉 Agent 你的目标</h2><p>从明确的业务请求开始，或启用 Adaptive planning 观察自主规划链路。</p></div>}

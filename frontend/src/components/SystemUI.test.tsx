@@ -59,6 +59,15 @@ describe('ExecutionSpine', () => {
     render(<ExecutionSpine events={[]} />)
     expect(screen.getByText('暂未记录执行事件')).toBeInTheDocument()
   })
+
+  it('renders catalog binding and budget-surface evidence in Chinese', () => {
+    render(<ExecutionSpine events={[
+      { type: 'constraint_binding_proposed', sequence: 1 },
+      { type: 'decision_action_surface', sequence: 2 },
+    ]} />)
+    expect(screen.getByText('生成映射提案')).toBeInTheDocument()
+    expect(screen.getByText('收敛决策动作面')).toBeInTheDocument()
+  })
 })
 
 describe('engineering copy localization', () => {
