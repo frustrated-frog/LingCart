@@ -60,3 +60,16 @@ def test_adaptive_contract_accepts_a_versioned_challenge_task_set():
         ROOT / 'research/experiments/ace-context-v1/challenge-experiment-spec.json')
     assert frozen.dataset == 'eval/ace_challenge_tasks.json'
     assert frozen.repeats == 2
+
+
+def test_ace_efficiency_contract_uses_fresh_dev_and_test_boundaries():
+    frozen = ExperimentSpec.from_path(
+        ROOT / 'research/experiments/ace-context-v1/efficiency-experiment-spec.json')
+    dataset = json.loads((ROOT / frozen.dataset).read_text())
+
+    assert frozen.dataset == 'eval/ace_efficiency_tasks.json'
+    assert dataset['split_counts'] == {'dev': 3, 'test': 4}
+    assert {case['split'] for case in dataset['cases']} == {'dev', 'test'}
+    assert 'ACE-C01' not in {case['id'] for case in dataset['cases']}
+    assert all(case['id'].startswith('ACE-E-D') for case in dataset['cases'] if case['split'] == 'dev')
+    assert all(case['id'].startswith('ACE-E-H') for case in dataset['cases'] if case['split'] == 'test')

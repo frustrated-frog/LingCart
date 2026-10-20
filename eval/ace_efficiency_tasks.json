@@ -1,0 +1,143 @@
+{
+  "schema_version": 1,
+  "suite": "adaptive",
+  "description": "ACE 决策效率 V1：开发集验证概念 codec 与安全回退，测试集冻结未运行组合；不使用旧 ACE-C01 作为盲测证据。",
+  "split_counts": {
+    "dev": 3,
+    "test": 4
+  },
+  "cases": [
+    {
+      "id": "ACE-E-D01",
+      "category": "registry_keyboard_development",
+      "language": "zh",
+      "description": "开发样本：预算、三模与静音轴的已知诊断组合",
+      "split": "dev",
+      "turns": [{
+        "message": "推荐一款350元以内的键盘，要三模连接，而且必须是静音轴",
+        "expect": {"statuses": ["SUCCEEDED"]}
+      }],
+      "adaptive_expect": {
+        "objectives": [{"kind": "recommend"}],
+        "product_constraints": [
+          {"description": "价格至多350", "source_quote": "350元以内", "field": "price", "op": "lte", "value": 350},
+          {"description": "三模连接", "source_quote": "三模连接", "field": "specs.连接方式", "op": "eq", "value": "三模"},
+          {"description": "静音轴", "source_quote": "静音轴", "field": "specs.轴体", "op": "eq", "value": "静音轴"}
+        ]
+      }
+    },
+    {
+      "id": "ACE-E-D02",
+      "category": "registry_quantity_and_negation_development",
+      "language": "zh",
+      "description": "开发样本：数值单位 codec 与否定极性同时出现",
+      "split": "dev",
+      "turns": [{
+        "message": "推荐400元以内、不要主动降噪、综合续航至少30小时的耳机",
+        "expect": {"statuses": ["SUCCEEDED"]}
+      }],
+      "adaptive_expect": {
+        "objectives": [{"kind": "recommend"}],
+        "product_constraints": [
+          {"description": "价格至多400", "source_quote": "400元以内", "field": "price", "op": "lte", "value": 400},
+          {"description": "排除主动降噪", "source_quote": "不要主动降噪", "field": "specs.降噪", "op": "not_contains", "value": "主动降噪"},
+          {"description": "续航至少30小时", "source_quote": "至少30小时", "field": "specs.综合续航", "op": "gte", "value": 30}
+        ]
+      }
+    },
+    {
+      "id": "ACE-E-D03",
+      "category": "unregistered_semantics_fallback_development",
+      "language": "zh",
+      "description": "开发样本：未注册的便携办公语义必须走证据驱动回退，不能猜 codec",
+      "split": "dev",
+      "turns": [{
+        "message": "推荐300元以内、适合便携办公的键盘",
+        "expect": {"statuses": ["SUCCEEDED"]}
+      }],
+      "adaptive_expect": {
+        "objectives": [{"kind": "recommend"}],
+        "product_constraints": [
+          {"description": "价格至多300", "source_quote": "300元以内", "field": "price", "op": "lte", "value": 300},
+          {"description": "便携办公", "source_quote": "便携办公", "field": "specs.适用场景", "op": "contains", "value": "便携"}
+        ]
+      }
+    },
+    {
+      "id": "ACE-E-H01",
+      "category": "keyboard_unseen_codec_combination",
+      "language": "zh",
+      "description": "留出样本：双模茶轴组合",
+      "split": "test",
+      "turns": [{
+        "message": "找一款300元以内、双模连接并且使用茶轴的键盘",
+        "expect": {"statuses": ["SUCCEEDED"]}
+      }],
+      "adaptive_expect": {
+        "objectives": [{"kind": "recommend"}],
+        "product_constraints": [
+          {"description": "价格至多300", "source_quote": "300元以内", "field": "price", "op": "lte", "value": 300},
+          {"description": "双模连接", "source_quote": "双模连接", "field": "specs.连接方式", "op": "eq", "value": "双模"},
+          {"description": "茶轴", "source_quote": "茶轴", "field": "specs.轴体", "op": "eq", "value": "茶轴"}
+        ]
+      }
+    },
+    {
+      "id": "ACE-E-H02",
+      "category": "audio_unseen_style_quantity_combination",
+      "language": "zh",
+      "description": "留出样本：开放式与续航下界组合",
+      "split": "test",
+      "turns": [{
+        "message": "推荐350元以内、开放式佩戴且续航不少于30小时的耳机",
+        "expect": {"statuses": ["SUCCEEDED"]}
+      }],
+      "adaptive_expect": {
+        "objectives": [{"kind": "recommend"}],
+        "product_constraints": [
+          {"description": "价格至多350", "source_quote": "350元以内", "field": "price", "op": "lte", "value": 350},
+          {"description": "开放式佩戴", "source_quote": "开放式佩戴", "field": "specs.佩戴方式", "op": "eq", "value": "开放式"},
+          {"description": "续航不少于30小时", "source_quote": "不少于30小时", "field": "specs.综合续航", "op": "gte", "value": 30}
+        ]
+      }
+    },
+    {
+      "id": "ACE-E-H03",
+      "category": "hub_unseen_video_port_combination",
+      "language": "zh",
+      "description": "留出样本：视频输出枚举与接口数值组合",
+      "split": "test",
+      "turns": [{
+        "message": "推荐250元以内、支持4K 60Hz且至少有8个接口的扩展坞",
+        "expect": {"statuses": ["SUCCEEDED"]}
+      }],
+      "adaptive_expect": {
+        "objectives": [{"kind": "recommend"}],
+        "product_constraints": [
+          {"description": "价格至多250", "source_quote": "250元以内", "field": "price", "op": "lte", "value": 250},
+          {"description": "支持4K 60Hz", "source_quote": "4K 60Hz", "field": "specs.视频输出", "op": "contains", "value": "4K 60Hz"},
+          {"description": "至少8个接口", "source_quote": "至少有8个接口", "field": "specs.接口数量", "op": "gte", "value": 8}
+        ]
+      }
+    },
+    {
+      "id": "ACE-E-H04",
+      "category": "keyboard_unseen_size_connection_combination",
+      "language": "zh",
+      "description": "留出样本：按键数量上界与连接方式组合",
+      "split": "test",
+      "turns": [{
+        "message": "推荐250元以内、三模连接且不超过68键的键盘",
+        "expect": {"statuses": ["SUCCEEDED"]}
+      }],
+      "adaptive_expect": {
+        "objectives": [{"kind": "recommend"}],
+        "product_constraints": [
+          {"description": "价格至多250", "source_quote": "250元以内", "field": "price", "op": "lte", "value": 250},
+          {"description": "三模连接", "source_quote": "三模连接", "field": "specs.连接方式", "op": "eq", "value": "三模"},
+          {"description": "按键不超过68", "source_quote": "不超过68键", "field": "specs.键数", "op": "lte", "value": 68}
+        ]
+      }
+    }
+  ]
+}

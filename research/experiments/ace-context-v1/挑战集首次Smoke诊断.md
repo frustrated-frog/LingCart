@@ -1,5 +1,8 @@
 # ACE 挑战集首次 Smoke 诊断
 
+> 样本身份：这次执行已经暴露 `ACE-C01` 的模型轨迹并直接影响后续机制设计。因此
+> `ACE-C01` 自此属于诊断样本，不得再次作为 blind holdout 或 promotion 证据。
+
 ## 结论
 
 在提交 `720bc1c` 上，`ACE-C01` 分别用 `adaptive-v1` 与 `adaptive-ace-context-v1` 执行一次。每个 Run 最多允许 6 次模型调用。两个样本都以 `MODEL_ROUND_BUDGET_EXHAUSTED` 结束，成功率均为 0；没有安全或协议违规。
