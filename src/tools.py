@@ -19,6 +19,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from src.backend.db import Order, Payment, Product, Refund, ShipmentEvent, get_engine, get_session_factory, init_db
 from src.backend.seed import seed as _seed_data
+from src.catalog_metadata import CatalogMetadataProvider
 
 logger = logging.getLogger("support_agent.tools")
 
@@ -44,6 +45,11 @@ def configure_db(engine) -> None:
     _engine = engine
     init_db(_engine)
     _SessionLocal = get_session_factory(_engine)
+    # Catalog metadata is tied to the configured business-data source.  A DB
+    # switch must never reuse a snapshot produced by the previous engine.
+    provider = globals().get("_catalog_metadata_provider")
+    if provider is not None:
+        provider.invalidate()
 
 
 def get_database_status() -> dict:
@@ -275,6 +281,22 @@ def get_catalog_facets(available_only: bool = True) -> dict:
             "available_products": len(products),
             "data_source": "DEMO_CATALOG",
         }
+
+
+_catalog_metadata_provider = CatalogMetadataProvider(
+    lambda: get_catalog_facets(),
+    source="DEMO_CATALOG",
+)
+
+
+def get_catalog_metadata_provider():
+    """Return the process-local catalog metadata boundary.
+
+    The loader resolves ``get_catalog_facets`` at call time so diagnostics and
+    the offline evaluator can still observe the physical metadata read.
+    """
+
+    return _catalog_metadata_provider
 
 
 def discover_products(query: str = "", category: str | None = None, max_price: float | None = None,

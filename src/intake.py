@@ -96,13 +96,9 @@ def handoff_is_negated(text: str) -> bool:
     ))
 
 
-def _catalog_terms(text: str) -> tuple[str | None, list[str]]:
-    """Resolve live catalog language without embedding product taxonomy in intake."""
-    try:
-        from src.tools import get_catalog_facets
-        facets = get_catalog_facets()
-    except Exception:  # pragma: no cover - semantic fallback remains available
-        return None, []
+def _catalog_terms(text: str, facets: dict) -> tuple[str | None, list[str]]:
+    """Resolve terms from an explicit metadata snapshot supplied by a capability."""
+
     folded = text.casefold()
     categories = [str(value) for value in facets.get("categories", []) if str(value).casefold() in folded]
     category = max(categories, key=len) if categories else None
@@ -197,12 +193,29 @@ def analyze_request(user_message: str, *, _check_clause_coverage: bool = True) -
     # an unrelated shopping request into an order task.
     shopping_text = re.sub(r"^\(context:.*?\)\s*", "", normalized)
     product_ids = re.findall(r"(?<![a-z0-9])p\d{4}s?(?![a-z0-9])", shopping_text, re.IGNORECASE)
-    category, catalog_terms = _catalog_terms(shopping_text)
     recommendation_action = _has_any(shopping_text, ("推荐", "选", "recommend"))
     listing_action = _has_any(shopping_text, ("搜索", "推荐", "search", "find", "recommend"))
     shopping_action = recommendation_action or _has_any(
         shopping_text, ("找", "对比", "比较", "搜索", "预算", "search", "compare", "find")
     )
+    category, catalog_terms = None, []
+    metadata_lookup_required = bool(
+        product_ids
+        or recommendation_action
+        or _has_any(shopping_text, ("商品", "产品", "对比", "比较", "搜索", "找", "product", "catalog", "search", "compare", "find"))
+    )
+    if shopping_action and metadata_lookup_required:
+        try:
+            from src.capability_registry import get_capability_registry
+            from src.catalog_metadata import CATALOG_FACETS_DEPENDENCY
+
+            snapshot = get_capability_registry().metadata_snapshot(
+                PRODUCT_SEARCH,
+                CATALOG_FACETS_DEPENDENCY,
+            )
+            category, catalog_terms = _catalog_terms(shopping_text, snapshot.facets)
+        except Exception:  # pragma: no cover - semantic fallback remains available
+            category, catalog_terms = None, []
     if shopping_action and (category or product_ids or "商品" in shopping_text):
         budget_match = re.search(r"(?:预算\s*(?:为|是|不超过)?\s*[¥￥]?\s*)(-?\d+(?:\.\d+)?)", shopping_text)
         if not budget_match:

@@ -15,6 +15,7 @@ import re
 from typing import Callable, Mapping
 
 from src import tools
+from src.catalog_metadata import CATALOG_FACETS_DEPENDENCY, CatalogMetadataProvider, CatalogMetadataSnapshot
 from src.errors import AgentError
 from src.intake import (
     FAQ,
@@ -115,6 +116,7 @@ class CapabilitySpec:
     supports_under_specified_goal: bool = False
     side_effect: str = "READ_ONLY"
     missing_question: str = "请补充完成这个请求所需的关键信息。"
+    metadata_dependencies: tuple[str, ...] = ()
 
     def public_payload(self) -> dict:
         return {
@@ -134,6 +136,7 @@ class CapabilitySpec:
             "evidence_requirements": [self.evidence_requirement, *self.alternative_evidence_requirements],
             "supports_under_specified_goal": self.supports_under_specified_goal,
             "side_effect": self.side_effect,
+            "metadata_dependencies": list(self.metadata_dependencies),
         }
 
 
@@ -149,10 +152,16 @@ class CapabilityRegistration:
 class CapabilityRegistry:
     """Explicit, inspectable registry used by understanding and execution."""
 
-    def __init__(self, registrations: tuple[CapabilityRegistration, ...] = ()):
+    def __init__(
+        self,
+        registrations: tuple[CapabilityRegistration, ...] = (),
+        *,
+        metadata_providers: Mapping[str, CatalogMetadataProvider] | None = None,
+    ):
         self._registrations: dict[str, CapabilityRegistration] = {}
         self._tools: dict[str, object] = {}
         self._operations: dict[str, OperationContract] = {}
+        self._metadata_providers = dict(metadata_providers or {})
         for registration in registrations:
             self.register(registration)
 
@@ -325,6 +334,25 @@ class CapabilityRegistry:
     def execution_tools(self) -> dict[str, object]:
         return dict(self._tools)
 
+    def metadata_snapshot(self, objective_kind: str, dependency: str) -> CatalogMetadataSnapshot:
+        """Resolve metadata only when the requesting capability declares it."""
+
+        spec = self.registration(objective_kind).spec
+        if dependency not in spec.metadata_dependencies:
+            raise AgentError(
+                "UNDECLARED_METADATA_DEPENDENCY",
+                f"能力 {objective_kind} 未声明元数据依赖：{dependency}",
+                retryable=False,
+            )
+        provider = self._metadata_providers.get(dependency)
+        if provider is None:
+            raise AgentError(
+                "METADATA_PROVIDER_UNAVAILABLE",
+                f"元数据依赖没有可用 Provider：{dependency}",
+                retryable=False,
+            )
+        return provider.get_snapshot()
+
     def operation_contract(self, operation: str) -> OperationContract | None:
         return self._operations.get(operation)
 
@@ -442,6 +470,7 @@ def _spec(kind: str, capability_id: str, description: str, target: str, evidence
           ungrounded_optional_defaults: Mapping[str, object] | None = None,
           alternative_evidence: tuple[str, ...] = (),
           under_specified: bool = False, side_effect: str = "READ_ONLY",
+          metadata_dependencies: tuple[str, ...] = (),
           missing_question: str = "请补充完成这个请求所需的关键信息。",
           handlers: Mapping[str, object] | None = None, normalizer: Normalizer | None = None,
           operations: Mapping[str, OperationContract] | None = None) -> CapabilityRegistration:
@@ -463,6 +492,7 @@ def _spec(kind: str, capability_id: str, description: str, target: str, evidence
             alternative_evidence_requirements=alternative_evidence,
             supports_under_specified_goal=under_specified,
             side_effect=side_effect,
+            metadata_dependencies=metadata_dependencies,
             missing_question=missing_question,
         ),
         compiler,
@@ -522,7 +552,8 @@ def _builtin_registrations() -> tuple[CapabilityRegistration, ...]:
               handlers={"answer_faq": tools.answer_faq}),
         _spec(PRODUCT_SEARCH, "catalog.search", "按用户明确条件搜索真实商品目录", "product",
               "CATALOG", _search, accepted=("query", "category", "max_price", "excluded_terms"),
-              under_specified=True, handlers={"search_products": tools.search_products}),
+              under_specified=True, metadata_dependencies=(CATALOG_FACETS_DEPENDENCY,),
+              handlers={"search_products": tools.search_products}),
         _spec(PRODUCT_DISCOVERY, "catalog.discover", "在偏好不完整时生成真实、差异化的探索候选并继续偏好获取",
               "product", "CATALOG", _discover,
               accepted=("query", "category", "max_price", "soft_preferences", "excluded_terms"),
@@ -530,10 +561,12 @@ def _builtin_registrations() -> tuple[CapabilityRegistration, ...]:
                   "query": "", "category": None, "max_price": None,
                   "soft_preferences": [], "excluded_terms": [],
               },
-              under_specified=True, handlers={"discover_products": tools.discover_products}),
+              under_specified=True, metadata_dependencies=(CATALOG_FACETS_DEPENDENCY,),
+              handlers={"discover_products": tools.discover_products}),
         _spec(PRODUCT_COMPARE, "catalog.compare", "比较用户明确指定的两到三款真实商品", "product",
               "CATALOG", _compare, required=("product_ids",), accepted=("product_ids",),
               min_items={"product_ids": 2}, max_items={"product_ids": 3},
+              metadata_dependencies=(CATALOG_FACETS_DEPENDENCY,),
               missing_question="请提供要比较的两到三个商品编号。",
               handlers={"compare_products": tools.compare_products}),
         _spec(GENERAL_ANSWER, "knowledge.answer", "回答无需业务工具的稳定知识、解释、写作和一般咨询；需要实时外部证据时明确能力边界",
@@ -544,7 +577,10 @@ def _builtin_registrations() -> tuple[CapabilityRegistration, ...]:
     )
 
 
-_DEFAULT_REGISTRY = CapabilityRegistry(_builtin_registrations())
+_DEFAULT_REGISTRY = CapabilityRegistry(
+    _builtin_registrations(),
+    metadata_providers={CATALOG_FACETS_DEPENDENCY: tools.get_catalog_metadata_provider()},
+)
 _ACTIVE_REGISTRY: ContextVar[CapabilityRegistry | None] = ContextVar("capability_registry", default=None)
 
 

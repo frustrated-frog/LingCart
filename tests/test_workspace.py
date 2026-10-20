@@ -38,6 +38,31 @@ def test_catalog_seed_is_additive_and_keeps_edited_stock(seeded_workspace):
         assert product.price == 88
 
 
+def test_catalog_metadata_observes_database_change_after_explicit_invalidation(seeded_workspace):
+    provider = tools.get_catalog_metadata_provider()
+    first = provider.get_snapshot()
+    with get_session_factory(seeded_workspace)() as session:
+        session.add(Product(
+            product_id="PX001",
+            name="澄光显示器",
+            category="显示器",
+            price=1299,
+            summary="27 英寸 · 4K",
+            specs={"分辨率": "4K"},
+            stock=3,
+        ))
+        session.commit()
+
+    assert provider.get_snapshot() is first
+    assert "显示器" not in first.facets["categories"]
+
+    provider.invalidate()
+    changed = provider.get_snapshot()
+
+    assert "显示器" in changed.facets["categories"]
+    assert changed.fingerprint != first.fingerprint
+
+
 def test_business_seed_is_additive_and_preserves_changed_state(seeded_workspace):
     with get_session_factory(seeded_workspace)() as session:
         order = session.get(Order, 1003)
