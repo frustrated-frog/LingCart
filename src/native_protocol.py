@@ -54,13 +54,67 @@ def size(declarations):
     return len(json.dumps(declarations, ensure_ascii=False, separators=(',', ':')))
 
 
-def decision_functions(state, plan, history=None):
+def decision_action_surface(state, plan, *, remaining_model_calls):
+    """Reserve the terminal audit when a single recommendation can now commit.
+
+    This is a mechanical eligibility test, not a ranking policy.  It only
+    narrows actions after registry bindings passed their independent audit and
+    the planner will receive complete records for at least one valid candidate.
+    """
+    full = {'mode': 'full', 'allowed_actions': None, 'remaining_model_calls': remaining_model_calls,
+            'reserved_model_calls': 0, 'reason': 'GENERAL_DECISION'}
+    transaction = state.get('binding_tx') or {}
+    objectives = (state.get('goal') or {}).get('objectives', [])
+    if (remaining_model_calls != 2 or transaction.get('source') != 'catalog_registry'
+            or transaction.get('status') != 'APPLIED' or len(objectives) != 1
+            or objectives[0].get('kind') != 'recommend'):
+        return full
+    try:
+        from src.constraint_bindings import constraint_refs, effective_goal, require_bindings_approved
+        from src.adaptive_decision import Constraint, predicate_holds
+        from src.errors import AgentError
+        require_bindings_approved(state)
+        goal = effective_goal(state)
+        objective = goal['objectives'][0]
+        applicable = [Constraint.model_validate(raw) for ref, raw in constraint_refs(goal).items()
+                      if ref.startswith('global:') or ref.startswith(f"objective:{objective['id']}:")]
+        if any(constraint.field is None for constraint in applicable):
+            return full
+    except (AgentError, ValueError, KeyError, TypeError):
+        return full
+
+    access = state.get('evidence_access', {})
+    candidates = {}
+    for step in plan.steps:
+        if (step.tool not in {'search_products', 'discover_products', 'compare_products'}
+                or step.status not in {'SUCCEEDED', 'REUSED'} or not isinstance(step.result, dict)):
+            continue
+        readable = set(access.get(step.step_id, []))
+        for product in step.result.get('products', []):
+            if (product.get('product_id') not in readable or type(product.get('stock')) is not int
+                    or product['stock'] <= 0 or not all(predicate_holds(product, item) for item in applicable)):
+                continue
+            candidates.setdefault(product['product_id'], []).append(step.step_id)
+    if not candidates:
+        return full
+    return {'mode': 'recommendation_commit',
+            'allowed_actions': ['recommend', 'clarify', 'finish'],
+            'remaining_model_calls': remaining_model_calls, 'reserved_model_calls': 1,
+            'reason': 'VALID_CANDIDATE_AND_TERMINAL_AUDIT_RESERVATION',
+            'objective_id': objectives[0]['id'],
+            'candidates': [{'product_id': identity, 'evidence_refs': list(dict.fromkeys(refs))}
+                           for identity, refs in sorted(candidates.items())]}
+
+
+def decision_functions(state, plan, history=None, *, surface=None):
     from src.adaptive_decision import Decision, IntentDeclaration, ConstraintBinding
     from src.direct_executor import _READ_ONLY_TOOLS
     from src.runtime import tool_spec
     from src.constraint_bindings import constraint_refs
     if state['goal'] is None:
         schema = strict_schema(IntentDeclaration.model_json_schema())
+        from src.catalog_concepts import get_catalog_concept_registry
+        get_catalog_concept_registry().constrain_schema(schema)
         quotes = human_quotes(state['request'], history, 300)
         def ground(value):
             if isinstance(value, dict):
@@ -74,9 +128,15 @@ def decision_functions(state, plan, history=None):
         ground(schema)
         return [function('declare_intent', '完整声明用户目标或提出必要澄清；此函数不执行业务动作。', schema)]
     declarations = []
+    allowed_actions = None if not surface else surface.get('allowed_actions')
+    allowed_actions = None if allowed_actions is None else set(allowed_actions)
     products = [p for s in plan.steps if isinstance(s.result, dict) for p in s.result.get('products', [])]
     product_ids = sorted({p['product_id'] for p in products})
+    if surface and surface.get('mode') == 'recommendation_commit':
+        product_ids = [row['product_id'] for row in surface['candidates']]
     for name, item in _READ_ONLY_TOOLS.items():
+        if allowed_actions is not None and name not in allowed_actions:
+            continue
         if name == 'compare_products' and len(product_ids) < 2:
             continue
         schema = deepcopy(tool_spec(name, item).schema.model_json_schema())
@@ -107,32 +167,40 @@ def decision_functions(state, plan, history=None):
         return value
     def control(name, description, fields):
         declarations.append(function(name, description, {'type': 'object', 'properties': fields}))
-    control('clarify', '仅当用户意图有实质歧义时提问；沿用未被修改的上下文条件。', {'message': prop('message', True)})
-    control('finish', '如实说明无法完成；不会将任务标为成功。', {'message': prop('message', True)})
-    control('revise_plan', '更新建议计划或工作笔记；不生成或执行业务步骤。',
-            {'next_steps': prop('next_steps', True), 'working_memory': prop('working_memory')})
+    if allowed_actions is None or 'clarify' in allowed_actions:
+        control('clarify', '仅当用户意图有实质歧义时提问；沿用未被修改的上下文条件。', {'message': prop('message', True)})
+    if allowed_actions is None or 'finish' in allowed_actions:
+        control('finish', '如实说明无法完成；不会将任务标为成功。', {'message': prop('message', True)})
+    if allowed_actions is None or 'revise_plan' in allowed_actions:
+        control('revise_plan', '更新建议计划或工作笔记；不生成或执行业务步骤。',
+                {'next_steps': prop('next_steps', True), 'working_memory': prop('working_memory')})
     ids = [s.step_id for s in plan.steps]
-    if ids:
+    if ids and (allowed_actions is None or {'inspect', 'complete'} & allowed_actions):
         reference = prop('evidence_ref', True)
         reference['enum'] = ids
-        control('inspect', '读取归档的完整原始记录；历史读取不刷新价格库存。',
-                {'evidence_ref': reference, 'offset': prop('offset'), 'limit': prop('limit')})
+        if allowed_actions is None or 'inspect' in allowed_actions:
+            control('inspect', '读取归档的完整原始记录；历史读取不刷新价格库存。',
+                    {'evidence_ref': reference, 'offset': prop('offset'), 'limit': prop('limit')})
         evidence = {o['id']: {'type': 'array', 'items': {'type': 'string', 'enum': ids}}
                     for o in state['goal']['objectives']}
-        control('complete', '提交所有目标的完成证据。推荐需引用对应select_product；可附同商品的已读支持证据。',
-                {'evidence': {'type': 'object', 'properties': evidence}})
-    if product_ids:
+        if allowed_actions is None or 'complete' in allowed_actions:
+            control('complete', '提交所有目标的完成证据。推荐需引用对应select_product；可附同商品的已读支持证据。',
+                    {'evidence': {'type': 'object', 'properties': evidence}})
+    if product_ids and (allowed_actions is None or {'recommend', 'refine_constraints'} & allowed_actions):
         product = prop('product_id', True)
         product['enum'] = product_ids
         objective = prop('objective_id', True)
         objective['enum'] = [o['id'] for o in state['goal']['objectives'] if o['kind'] == 'recommend']
         refs = prop('evidence_refs')
-        refs['items']['enum'] = ids
-        if objective['enum']:
+        permitted_refs = ids
+        if surface and surface.get('mode') == 'recommendation_commit':
+            permitted_refs = sorted({ref for row in surface['candidates'] for ref in row['evidence_refs']})
+        refs['items']['enum'] = permitted_refs
+        if objective['enum'] and (allowed_actions is None or 'recommend' in allowed_actions):
             control('recommend', '选择一个已读商品并解释适合用户的依据；运行时重新核验。多个目标继续决策。',
                     {'product_id': product, 'objective_id': objective, 'evidence_refs': refs, 'reason': prop('reason')})
         conditions = constraint_refs(state['goal'])
-        if conditions:
+        if conditions and (allowed_actions is None or 'refine_constraints' in allowed_actions):
             schema = strict_schema(ConstraintBinding.model_json_schema())
             schema['properties']['constraint_ref']['enum'] = list(conditions)
             fields = {key for p in products for key in p if key != 'specs'}

@@ -252,6 +252,102 @@ def test_agent_refines_observed_catalog_mapping_without_mutating_user_goal(monke
     assert script.inputs[-1]['feedback']['code'] == 'BINDINGS_REFINED'
 
 
+def test_registry_binding_reserves_terminal_audit_and_completes_with_six_model_calls(monkeypatch):
+    from dataclasses import replace
+    from src.catalog_concepts import CATALOG_CONCEPT_SCHEMA_REVISION
+
+    request = '推荐一款350元以内的键盘，要三模连接，而且必须是静音轴'
+    semantic_goal = dict(summary='选购三模静音键盘', objectives=[dict(id='shopping',
+        description='推荐键盘', source_quote='键盘', kind='recommend')], hard_constraints=[
+            dict(description='预算不超过350元', source_quote='350元以内', field='price', op='lte', value=350),
+            dict(description='使用三模连接', source_quote='三模连接', field=None, op='eq', value=None,
+                 catalog_concept=dict(schema_revision=CATALOG_CONCEPT_SCHEMA_REVISION,
+                    concept_id='keyboard.connection_mode', operator='eq', canonical_value='tri_mode')),
+            dict(description='使用静音轴', source_quote='静音轴', field=None, op='eq', value=None,
+                 catalog_concept=dict(schema_revision=CATALOG_CONCEPT_SCHEMA_REVISION,
+                    concept_id='keyboard.switch_type', operator='eq', canonical_value='silent')),
+        ], soft_preferences=[], uncertainties=[])
+
+    def choose(payload):
+        assert payload['feedback']['code'] == 'BINDINGS_REFINED'
+        assert payload['goal']['hard_constraints'][1]['field'] == 'specs.连接方式'
+        product = next(product for product in payload['observations'][-1]['result']['products']
+                       if product['specs']['连接方式'] == '三模'
+                       and product['specs']['轴体'] == '静音轴')
+        return dict(action='recommend', reason='候选同时满足预算、三模连接和静音轴',
+                    product_id=product['product_id'], objective_id='shopping', evidence_refs=['step-1'])
+
+    script = model(monkeypatch,
+        dict(reason='冻结用户语义后再读取目录', goal=semantic_goal),
+        dict(action='tool', reason='读取键盘目录', tool='search_products',
+             args=dict(query='', category='键盘', max_price=350, available_only=True, limit=12)),
+        choose)
+    limits = replace(BudgetLimits.adaptive(), max_model_calls=6)
+    result = run_adaptive(request, limits=limits)
+
+    assert result['status'] == 'SUCCEEDED', result
+    assert result['budget']['consumed']['model_calls'] == 6
+    assert len(script.inputs) == 3
+    assert result['plan']['binding_revision'] == 1
+    assert result['plan']['binding_transaction']['source'] == 'catalog_registry'
+    assert result['plan']['binding_transaction']['status'] == 'APPLIED'
+    assert not any(event['type'] == 'adaptive_decision'
+                   and event['decision']['action'] == 'refine_constraints' for event in result['events'])
+    surfaces = [event for event in result['events'] if event['type'] == 'decision_action_surface']
+    assert surfaces[-1]['mode'] == 'recommendation_commit'
+    assert surfaces[-1]['allowed_actions'] == ['recommend', 'clarify', 'finish']
+    assert [event['phase'] for event in result['events']
+            if event['type'] == 'request_audited'] == ['goal', 'bindings', 'completion']
+    assert selected(result)['specs']['连接方式'] == '三模'
+    assert selected(result)['specs']['轴体'] == '静音轴'
+
+
+def test_registry_binding_transaction_resumes_without_repeating_planner_or_revision(monkeypatch):
+    from dataclasses import replace
+    from src.catalog_concepts import CATALOG_CONCEPT_SCHEMA_REVISION
+
+    class CrashAfterProposal(RunStore):
+        def save_checkpoint(self, run_id, token, snapshot, event=None):
+            super().save_checkpoint(run_id, token, snapshot, event)
+            if event and event.get('type') == 'constraint_binding_proposed':
+                raise Crash()
+
+    request = '推荐一款350元以内的三模键盘'
+    semantic_goal = dict(summary='选购三模键盘', objectives=[dict(id='shopping',
+        description='推荐键盘', source_quote='键盘', kind='recommend')], hard_constraints=[
+            dict(description='预算不超过350元', source_quote='350元以内', field='price', op='lte', value=350),
+            dict(description='使用三模连接', source_quote='三模', field=None, op='eq', value=None,
+                 catalog_concept=dict(schema_revision=CATALOG_CONCEPT_SCHEMA_REVISION,
+                    concept_id='keyboard.connection_mode', operator='eq', canonical_value='tri_mode')),
+        ], soft_preferences=[], uncertainties=[])
+
+    def choose(payload):
+        product = next(product for product in payload['observations'][-1]['result']['products']
+                       if product['specs']['连接方式'] == '三模')
+        return dict(action='recommend', reason='满足预算与三模连接', product_id=product['product_id'],
+                    objective_id='shopping', evidence_refs=['step-1'])
+
+    script = model(monkeypatch, dict(reason='冻结语义', goal=semantic_goal),
+        dict(action='tool', tool='search_products', reason='读取目录',
+             args=dict(query='', category='键盘', max_price=350, available_only=True, limit=12)), choose)
+    limits = replace(BudgetLimits.adaptive(), max_model_calls=6)
+    with pytest.raises(Crash):
+        run_conversation(request, 'registry-binding-resume', runner=run_adaptive,
+                         limits=limits, store=CrashAfterProposal())
+
+    store = RunStore()
+    active = store.conversation('registry-binding-resume')['active_run_id']
+    saved = store.run(active)['checkpoint']['adaptive']
+    assert saved['binding_tx']['status'] == 'PROPOSED'
+    result = resume_run('registry-binding-resume', active, runner=run_adaptive)
+
+    assert result['status'] == 'SUCCEEDED', result
+    assert len(script.inputs) == 3
+    assert result['plan']['binding_revision'] == 1
+    assert sum(event['type'] == 'constraint_binding_proposed' for event in result['events']) == 1
+    assert sum(event['type'] == 'constraint_bindings_refined' for event in result['events']) == 1
+
+
 def test_verification_feedback_distinguishes_duplicate_constraint_scopes(monkeypatch):
     first = negated_search(unknown=True)
     first['goal']['objectives'][0]['hard_constraints'] = [deepcopy(first['goal']['hard_constraints'][1])]
@@ -573,7 +669,7 @@ def test_version_four_resume_preserves_goal_and_initializes_empty_bindings(monke
     assert result['status'] == 'SUCCEEDED', result
     assert result['plan']['goal'] == original_goal
     assert result['plan']['constraint_bindings'] == {} and result['plan']['binding_revision'] == 0
-    assert store.run(active)['checkpoint']['adaptive']['schema_version'] == 5
+    assert store.run(active)['checkpoint']['adaptive']['schema_version'] == 6
     assert len(script.inputs) == 2
 
 

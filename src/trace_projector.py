@@ -4,7 +4,11 @@ from __future__ import annotations
 
 _PHASES = {
     "harness_profile_selected": "HARNESS",
+    "constraint_binding_proposed": "PLAN",
+    "constraint_binding_unresolved": "PLAN",
+    "constraint_binding_rejected": "VERIFY",
     "constraint_bindings_refined": "PLAN",
+    "decision_action_surface": "GUARD",
     "request_audited": "VERIFY",
     "context_compacted": "CONTEXT",
     "model_started": "MODEL",
@@ -25,7 +29,11 @@ _PHASES = {
 
 _LABELS = {
     "harness_profile_selected": "已选择 Harness Profile",
+    "constraint_binding_proposed": "已生成目录语义映射提案",
+    "constraint_binding_unresolved": "目录语义映射等待兼容证据",
+    "constraint_binding_rejected": "目录语义映射未通过独立审查",
     "constraint_bindings_refined": "已依据证据修订执行映射",
+    "decision_action_surface": "已按剩余预算收敛决策动作面",
     "request_audited": "原始需求与证据审查完成",
     "context_compacted": "上下文已压缩",
     "model_started": "模型调用开始",
@@ -172,7 +180,8 @@ def project_trace(events: list[dict]) -> dict:
             "sequence": event.get("sequence"), "timestamp": event.get("timestamp"), "type": event_type,
             "phase": _PHASES.get(event_type, "RUNTIME"), "label": _LABELS.get(event_type, "运行事件"),
             **{key: event.get(key) for key in ("status", "agent", "tool", "purpose", "code", "action_fingerprint",
-                                              "tool_call_id", "protocol_id", "execution_id", "duration_ms", "policy")},
+                                              "tool_call_id", "protocol_id", "execution_id", "duration_ms", "policy",
+                                              "transaction_id", "resolution_id", "mode", "reason")},
         })
     terminals = [event for event in ordered if event.get("type") == "terminal"]
     terminal = terminals[-1] if terminals else None

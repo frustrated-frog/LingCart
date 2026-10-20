@@ -11,7 +11,7 @@ import uuid
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from src.adaptive_decision import Decision, ShoppingGoal, decide, predicate_holds, validate_goal
+from src.adaptive_decision import Decision, ShoppingGoal, decide, goal_payload, predicate_holds, validate_goal
 from src.adaptive_goals import check_claims, new_ledger, outcome_report, record_outcome, recommendation_text, verification
 from src.direct_executor import _READ_ONLY_TOOLS, _finish
 from src.errors import AgentError, classify_exception
@@ -19,7 +19,9 @@ from src.intake import (DIRECT, LLM_REQUIRED, PAYMENT_PROCESS, PRODUCT_COMPARE, 
                         PRODUCT_SEARCH, REFUND_REQUEST, TaskIntake, analyze_request)
 from src.runtime import BudgetLimits, RunRuntime, ToolEffect, ToolExecutor, TraceRecorder, current_runtime, runtime_scope, tool_spec
 from src.task_plan import TaskPlan, TaskStep, verify_observation
-from src.constraint_bindings import effective_goal, propose_bindings, fingerprint, require_bindings_approved, constraint_refs
+from src.constraint_bindings import (build_binding_transaction, constraint_refs, effective_goal,
+    fingerprint, propose_bindings, record_binding_evidence, require_bindings_approved,
+    resolve_catalog_concepts)
 
 MAX_REPLANS = 2
 MAX_DECISION_REPAIRS = 2
@@ -109,6 +111,101 @@ def _save(context, state, plan):
     context.checkpoint(adaptive=deepcopy(state), plan=plan.payload())
 
 
+def _apply_binding_transaction(context, recorder, state, plan, history, transaction, *, reject_as_error):
+    """Independently audit and atomically apply one content-addressed proposal."""
+    from src.request_audit import review_request
+    from src.session_control import apply_controls
+
+    transaction = deepcopy(transaction)
+    current = state.get('binding_tx') or {}
+    if (current.get('transaction_id') == transaction['transaction_id']
+            and current.get('status') == 'APPLIED'
+            and fingerprint(state.get('constraint_bindings', {})) == transaction['after_bindings_sha256']):
+        return True
+    if current.get('transaction_id') != transaction['transaction_id'] or current.get('status') != 'PROPOSED':
+        state['binding_tx'] = transaction
+        state['binding_resolution'] = None
+        _save(context, state, plan)
+        recorder.record('constraint_binding_proposed', source=transaction['source'],
+            transaction_id=transaction['transaction_id'], changed_refs=transaction['changed_refs'],
+            registry=(transaction.get('registry') or {}).get('fingerprint'),
+            evidence_sha256=transaction['evidence_sha256'])
+
+    proposed_revision = state.get('binding_revision', 0) + 1
+    proposed = {**state, 'constraint_bindings': deepcopy(transaction['proposed_bindings']),
+                'binding_revision': proposed_revision, 'binding_tx': transaction}
+    audit = review_request(context, proposed, plan, history, phase='bindings')
+    # A user change invalidates the proposal before it can cross the commit boundary.
+    apply_controls(context)
+    state['model_cursor'] = context.model_cursor
+    if (transaction['goal_revision'] != state['goal_revision']
+            or transaction['before_bindings_sha256'] != fingerprint(state.get('constraint_bindings', {}))):
+        raise AgentError('BINDING_TRANSACTION_CONFLICT', '映射审查期间目标或现有映射已变化，旧提案不能提交', retryable=False)
+    if audit['verdict'] != 'APPROVED':
+        transaction.update(status='REJECTED', audit_reference=audit['reference'],
+                           audit_sha256=fingerprint(audit))
+        state['binding_tx'] = transaction
+        state['feedback'] = dict(code='BINDING_AUDIT_REJECTED', audit=audit,
+            transaction_id=transaction['transaction_id'],
+            message='执行映射未通过原意核对；保留原约束，请补充证据、修正映射或澄清。')
+        _save(context, state, plan)
+        recorder.record('constraint_binding_rejected', source=transaction['source'],
+            transaction_id=transaction['transaction_id'], audit_reference=audit['reference'])
+        if reject_as_error:
+            raise AgentError('BINDING_AUDIT_REJECTED', '字段映射没有忠实保留用户条件', retryable=False)
+        return False
+
+    before = deepcopy(state.get('constraint_bindings', {}))
+    transaction.update(status='APPLIED', audit_reference=audit['reference'],
+                       audit_sha256=fingerprint(audit), applied_binding_revision=proposed_revision)
+    state.update(constraint_bindings=deepcopy(transaction['proposed_bindings']),
+                 binding_revision=proposed_revision, binding_audit=audit,
+                 binding_tx=transaction, binding_resolution=None, completion_audit=None)
+    state.setdefault('binding_sources', {}).update(
+        {ref: transaction['source'] for ref in transaction['changed_refs']})
+    state.pop('audit_format_feedback', None)
+    # 已验证推荐只证明旧执行映射；服务查询证据不受字段映射修订影响。
+    recommendation_ids = {o['id'] for o in state['goal']['objectives'] if o['kind'] == 'recommend'}
+    for row in state['objective_ledger']:
+        if row['objective_id'] in recommendation_ids:
+            row.update(status='PENDING', evidence_refs=[], failures=['CONSTRAINT_BINDING_CHANGED'])
+    state['journal'].append(dict(reason='CONSTRAINT_BINDING_REFINED', source=transaction['source'],
+        transaction_id=transaction['transaction_id'], binding_revision=proposed_revision,
+        before=before, after=deepcopy(state['constraint_bindings'])))
+    state['feedback'] = dict(code='BINDINGS_REFINED', binding_revision=proposed_revision,
+        transaction_id=transaction['transaction_id'],
+        message='版本化映射已通过独立审查并生效；以前的核验不能替代按新映射重新核验。')
+    _save(context, state, plan)
+    recorder.record('constraint_bindings_refined', source=transaction['source'],
+        transaction_id=transaction['transaction_id'], binding_revision=proposed_revision,
+        before=before, after=state['constraint_bindings'], audit_reference=audit['reference'])
+    return True
+
+
+def _maybe_resolve_catalog_bindings(context, recorder, state, plan, history):
+    """Resume or create a registry transaction before spending another planner call."""
+    current = state.get('binding_tx') or {}
+    if current.get('status') == 'PROPOSED':
+        return _apply_binding_transaction(context, recorder, state, plan, history, current,
+                                          reject_as_error=False)
+    resolution = resolve_catalog_concepts(state, plan)
+    if resolution is None:
+        return None
+    if resolution['status'] == 'UNRESOLVED':
+        if (state.get('binding_resolution') or {}).get('resolution_id') == resolution['resolution_id']:
+            return None
+        state['binding_resolution'] = deepcopy(resolution)
+        state['feedback'] = dict(code='CATALOG_CONCEPT_UNRESOLVED',
+            message='版本化概念尚未获得兼容的真实字段观察；继续读取正确品类，或在已读证据上提交人工映射。',
+            unresolved=deepcopy(resolution['unresolved']))
+        _save(context, state, plan)
+        recorder.record('constraint_binding_unresolved', resolution_id=resolution['resolution_id'],
+                        unresolved=resolution['unresolved'])
+        return False
+    return _apply_binding_transaction(context, recorder, state, plan, history,
+                                      resolution['transaction'], reject_as_error=False)
+
+
 def _products(step):
     return (step.result or {}).get('products', []) if isinstance(step.result, dict) else []
 
@@ -162,7 +259,8 @@ def _present(context, recorder, intake, state, plan, *, reason, message, error=N
         journal=deepcopy(state['journal']), goal=deepcopy(state['goal']), next_steps=state['next_steps'],
         working_memory=deepcopy(state.get('working_memory')), objective_ledger=deepcopy(state.get('objective_ledger', []))))
     result['plan'].update(constraint_bindings=deepcopy(state.get('constraint_bindings', {})),
-                          binding_revision=state.get('binding_revision', 0))
+                          binding_revision=state.get('binding_revision', 0),
+                          binding_transaction=deepcopy(state.get('binding_tx')))
     result['request_audit'] = deepcopy(state.get('request_audit'))
     result['binding_audit'] = deepcopy(state.get('binding_audit'))
     result['completion_audit'] = deepcopy(state.get('completion_audit'))
@@ -234,7 +332,7 @@ def _accept(context, recorder, state, plan, decision, history):
         validate_goal(decision.goal, state['request'], history)
         if decision.action != 'clarify':
             from src.request_audit import review_request
-            proposed = {**state, 'goal': decision.goal.model_dump()}
+            proposed = {**state, 'goal': goal_payload(decision.goal)}
             audit = review_request(context, proposed, plan, history, phase='goal')
             state['audit_attempts'] = [*state.get('audit_attempts', []), audit]
             if audit['verdict'] != 'APPROVED':
@@ -243,35 +341,25 @@ def _accept(context, recorder, state, plan, decision, history):
                 raise AgentError('REQUEST_AUDIT_REJECTED', '独立审查未确认需求覆盖与语义，不能执行当前目标', retryable=False)
             state['request_audit'] = audit
             state.pop('audit_format_feedback', None)
-        state['goal'] = decision.goal.model_dump()
+        state['goal'] = goal_payload(decision.goal)
         state['objective_ledger'] = new_ledger(state['goal'])
         plan.goals = [o['id'] for o in state['goal']['objectives']]
-    elif decision.goal is not None and decision.goal.model_dump() != state['goal']:
+    elif decision.goal is not None and goal_payload(decision.goal) != state['goal']:
         raise AgentError('GOAL_CHANGE_REQUIRES_USER', '没有新用户指令时不能修改目标或硬约束', retryable=False)
+    surface = state.get('decision_surface') or {}
+    if surface.get('mode') != 'full' and surface.get('allowed_actions'):
+        if decision.action not in set(surface['allowed_actions']):
+            raise AgentError('ACTION_SURFACE_VIOLATION', '当前预算已为最终独立审查预留，只能推荐、澄清或如实结束', retryable=False)
+        if decision.action == 'recommend':
+            candidates = {row['product_id']: set(row['evidence_refs']) for row in surface.get('candidates', [])}
+            if (decision.product_id not in candidates or decision.objective_id != surface.get('objective_id')
+                    or not set(decision.evidence_refs) <= candidates[decision.product_id]):
+                raise AgentError('ACTION_SURFACE_VIOLATION', '推荐必须来自当前已读、满足硬约束的候选及其证据', retryable=False)
     if decision.action == 'refine_constraints':
-        from src.request_audit import review_request
-        proposed = {**state, 'constraint_bindings': propose_bindings(state, plan, decision.bindings),
-                    'binding_revision': state.get('binding_revision', 0) + 1}
-        audit = review_request(context, proposed, plan, history, phase='bindings')
-        from src.session_control import apply_controls
-        apply_controls(context)
-        if audit['verdict'] != 'APPROVED':
-            state['feedback'] = dict(code='BINDING_AUDIT_REJECTED', audit=audit,
-                message='执行映射未通过原意核对；保留原约束，请修正映射或澄清。')
-            raise AgentError('BINDING_AUDIT_REJECTED', '字段映射没有忠实保留用户条件', retryable=False)
-        before = deepcopy(state.get('constraint_bindings', {}))
-        state.update(constraint_bindings=proposed['constraint_bindings'], binding_revision=proposed['binding_revision'],
-                     binding_audit=audit, completion_audit=None)
-        state.pop('audit_format_feedback', None)
-        # 已验证推荐只证明旧执行映射；服务查询证据不受字段映射修订影响。
-        recommendation_ids = {o['id'] for o in state['goal']['objectives'] if o['kind'] == 'recommend'}
-        for row in state['objective_ledger']:
-            if row['objective_id'] in recommendation_ids:
-                row.update(status='PENDING', evidence_refs=[], failures=['CONSTRAINT_BINDING_CHANGED'])
-        state['journal'].append(dict(reason='CONSTRAINT_BINDING_REFINED', binding_revision=state['binding_revision'],
-                                     before=before, after=deepcopy(state['constraint_bindings'])))
-        recorder.record('constraint_bindings_refined', binding_revision=state['binding_revision'],
-            before=before, after=state['constraint_bindings'], audit_reference=audit['reference'])
+        bindings = propose_bindings(state, plan, decision.bindings)
+        transaction = build_binding_transaction(state, bindings, decision.bindings, source='model')
+        _apply_binding_transaction(context, recorder, state, plan, history, transaction,
+                                   reject_as_error=True)
     if decision.working_memory is not None:
         completed = {s.step_id for s in plan.steps if s.status in _DONE and s.result is not None}
         if not set(decision.working_memory.evidence_refs) <= completed:
@@ -513,13 +601,18 @@ def _run(context, user_message, history, pending_action):
     recorder = TraceRecorder(context.run_id)
     revision = context.snapshot.get('goal_revision', 0)
     if saved:
-        if saved.get('schema_version') not in {4, 5}:
+        if saved.get('schema_version') not in {4, 5, 6}:
             raise AgentError('ADAPTIVE_CHECKPOINT_INCOMPATIBLE', '旧检查点缺少独立需求审查记录，不能安全恢复，请新建任务；已完成操作记录保留', retryable=False)
         state = deepcopy(saved)
-        state.update(schema_version=5)
+        state.update(schema_version=6)
         state.setdefault('constraint_bindings', {})
         state.setdefault('binding_revision', 0)
         state.setdefault('binding_audit', None)
+        state.setdefault('binding_evidence_access', {})
+        state.setdefault('binding_sources', {})
+        state.setdefault('binding_tx', None)
+        state.setdefault('binding_resolution', None)
+        state.setdefault('decision_surface', None)
         state.setdefault('native_queue', [])
         state.setdefault('dialogue_commands', [])
         plan = _restore_plan(state['plan'])
@@ -536,6 +629,8 @@ def _run(context, user_message, history, pending_action):
                          model_cursor=0, feedback=None, working_memory=None, objective_ledger=[],
                          next_steps=None, request_audit=None, completion_audit=None,
                          constraint_bindings={}, binding_revision=0, binding_audit=None,
+                         binding_evidence_access={}, binding_sources={}, binding_tx=None,
+                         binding_resolution=None, decision_surface=None,
                          audit_format_feedback=None,
                          dialogue_commands=[],
                          native_queue=[], active_native_submission=None,
@@ -546,10 +641,12 @@ def _run(context, user_message, history, pending_action):
         context.model_cursor = state['model_cursor']
     else:
         plan = TaskPlan([], [])
-        state = dict(schema_version=5, version=1, replans=0, goal_revision=revision, request=user_message,
+        state = dict(schema_version=6, version=1, replans=0, goal_revision=revision, request=user_message,
                      goal=None, next_steps=None, working_memory=None, journal=[], pending=None,
                      objective_ledger=[], feedback=None, repair_count=0, request_audit=None,
                      completion_audit=None, constraint_bindings={}, binding_revision=0, binding_audit=None,
+                     binding_evidence_access={}, binding_sources={}, binding_tx=None,
+                     binding_resolution=None, decision_surface=None,
                      dialogue_commands=[],
                      native_queue=[], active_native_submission=None,
                      model_cursor=context.model_cursor)
@@ -568,6 +665,7 @@ def _run(context, user_message, history, pending_action):
                         decision = Decision.model_validate(queued['decision'])
                         state['active_native_submission'] = queued['submission']
                     else:
+                        _maybe_resolve_catalog_bindings(context, recorder, state, plan, history)
                         decision = decide(context, state, plan, history)
                     # 插话也使审查中的旧目标失效，执行任何动作前再次检查。
                     apply_controls(context)
@@ -676,6 +774,7 @@ def _run(context, user_message, history, pending_action):
                         step.status = event['status']
                     if isinstance(result, dict):
                         step.result = _observation(result, event)
+                    record_binding_evidence(state, step)
                 except AgentError as error:
                     # Recoverable tool observations go back to the model. Safety
                     # and budget failures remain hard runtime boundaries.

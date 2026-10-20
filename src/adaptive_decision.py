@@ -1,6 +1,7 @@
 """Model decision protocol and mechanical checks, without natural-language rules."""
 from __future__ import annotations
 
+from copy import deepcopy
 import json
 import math
 import re
@@ -12,6 +13,7 @@ from src.agents.base import as_text
 from src.errors import AgentError
 from src.llm import get_llm
 from src.dialogue_understanding import DialogueCommand, render_direct_commands, validate_command_grounding
+from src.catalog_concepts import CatalogConceptRef, get_catalog_concept_registry
 
 
 class StrictModel(BaseModel):
@@ -25,9 +27,23 @@ class Constraint(StrictModel):
     field: str | None = Field(None, pattern=r'^(product_id|name|category|price|stock|summary|specs\.[^.]+)$')
     op: Literal['eq', 'ne', 'contains', 'not_contains', 'lte', 'gte', 'in', 'not_in'] = 'eq'
     value: str | float | int | list[str] | None = None
+    # A concept is semantic intent, not an executable catalog field.  The
+    # trusted registry may later overlay field/op/value after real observations.
+    catalog_concept: CatalogConceptRef | None = None
 
     @model_validator(mode='after')
     def valid_predicate(self):
+        if self.catalog_concept is not None:
+            if self.op != self.catalog_concept.operator:
+                raise ValueError('Constraint operator must equal catalog_concept.operator')
+            if (self.field is None) != (self.value is None):
+                raise ValueError('A catalog concept is either unbound or fully encoded')
+            if self.field is None:
+                return self
+            expected = get_catalog_concept_registry().encode(self.catalog_concept)
+            if (self.field, self.op, self.value) != (expected.field, expected.op, expected.value):
+                raise ValueError('Executable catalog predicate does not match the trusted concept codec')
+            return self
         if self.field is None:
             return self
         if self.op in {'lte', 'gte'} and type(self.value) not in {int, float}:
@@ -83,6 +99,18 @@ class ShoppingGoal(StrictModel):
         if len({o.id for o in self.objectives}) != len(self.objectives):
             raise ValueError('Objective IDs must be unique')
         return self
+
+
+def goal_payload(goal: ShoppingGoal) -> dict:
+    """Serialize without adding a new null field to legacy frozen goals."""
+    payload = goal.model_dump()
+    constraints = [*payload.get('hard_constraints', []),
+                   *(item for objective in payload.get('objectives', [])
+                     for item in objective.get('hard_constraints', []))]
+    for constraint in constraints:
+        if constraint.get('catalog_concept') is None:
+            constraint.pop('catalog_concept', None)
+    return payload
 
 
 class CompletionClaim(StrictModel):
@@ -285,9 +313,12 @@ Comparison product_ids optional, 2..3 distinct user-named targets. A clearly out
 UNSUPPORTED command; when the same turn also has supported outcomes, keep those in goal and include the command
 so the result can be reported as partial. Use unresolved only for a supported-domain outcome that cannot yet be typed.
 Global hard constraints apply to every recommendation; objective hard_constraints apply only to that one.
-Constraint: {description,source_quote,field,op,value}. field: price|stock|category|product_id|name|summary|
+Constraint: {description,source_quote,field,op,value,catalog_concept?}. field: price|stock|category|product_id|name|summary|
 specs.<exact key>, or null. op: eq|ne|contains|not_contains|lte|gte|in|not_in.
 value: scalar string/number, string[] for in/not_in, or null when unbound.
+For a catalog-local meaning listed in CATALOG_CONCEPTS, set field=null and value=null and provide
+catalog_concept={schema_revision,concept_id,operator,canonical_value}; its operator MUST equal op.
+This freezes meaning without guessing a physical field. Do not create unlisted concepts or codecs.
 hard_constraints is a list of JSON OBJECTS, never a list of strings. soft_preferences and uncertainties
 are lists of STRINGS. An empty list is []. Omit unavailable optional fields rather than inventing them.
 uncertainties are notes, not an automatic stop. For MATERIAL intent contradictions return clarification with one focused question. Unknown catalog encoding
@@ -311,7 +342,8 @@ quantities, bounds and exclusions. Do not turn preferences into hard conditions 
 source_quote must be an exact HUMAN substring. Relevant human history remains effective until revised.
 Applicable conditions carry across related recommendations; omission is not permission to relax them.
 Distinct explicitly scoped budgets stay with their own target. For reversible follow-ups keep established context.
-Unknown catalog encoding is not unknown human intent: leave field/value null, discover representations later.
+Unknown catalog encoding is not unknown human intent. For a listed CATALOG_CONCEPT use its exact semantic reference
+with field/value null; for unlisted catalog language leave field null and discover representations later.
 Use clarification only for MATERIAL intent ambiguity or contradiction, not unspecified optional preferences.
 Do not manufacture ambiguity by listing remote possible readings when an ordinary reading fits the WHOLE request.
 An instruction correcting an inverted interpretation preserves the user's expressed polarity; do not erase it.
@@ -360,12 +392,17 @@ def decide(context, state, plan, history):
     initial = state['goal'] is None
     model = get_llm(purpose='goal' if initial else 'planner')
     native = getattr(model, 'native_protocol', False)
-    prompt = _GOAL_PROMPT if initial else _PROMPT + '\nGoal already accepted: OMIT goal; use current effective predicates.'
+    registry = get_catalog_concept_registry()
+    concept_catalog = json.dumps(registry.prompt_catalog(), ensure_ascii=False, separators=(',', ':'))
+    prompt = (_GOAL_PROMPT + '\nCATALOG_CONCEPTS=' + concept_catalog if initial else
+              _PROMPT + '\nGoal already accepted: OMIT goal; use current effective predicates.')
     def compact(value):
         if isinstance(value, dict):
             return {k: compact(v) for k, v in value.items() if k not in {'title', 'description', 'default', 'maxLength', 'minLength', 'maxItems', 'minItems'}}
         return [compact(v) for v in value] if isinstance(value, list) else value
     schema = compact(IntentDeclaration.model_json_schema()) if initial else None
+    if schema is not None:
+        registry.constrain_schema(schema)
     if not initial and (state.get('feedback') or {}).get('code') in {'MODEL_FORMAT_ERROR', 'INVALID_TOOL_ARGUMENTS', 'INVALID_CONSTRAINT_BINDING', 'UNKNOWN_TOOL'}:
         schema = compact(Decision.model_json_schema())
         from src.direct_executor import _READ_ONLY_TOOLS
@@ -373,15 +410,37 @@ def decide(context, state, plan, history):
     if schema:
         prompt += '\nUse this exact JSON schema:\n' + json.dumps(schema, ensure_ascii=False, separators=(',', ':'))
     max_chars = context.limits.max_context_chars
+    reserved_schema_size = 0
     if native:
         from src.native_protocol import decision_functions, size
-        schema = decision_functions(state, plan, history)
-        prompt = _NATIVE_INTENT_PROMPT if initial else _NATIVE_DECISION_PROMPT
-        max_chars -= size(schema)
+        # Reserve against the full declaration set.  The second pass may only
+        # remove actions, so a narrowed schema cannot steal context capacity.
+        schema = decision_functions(state, plan, history,
+                                    surface={'mode': 'full', 'allowed_actions': None})
+        reserved_schema_size = size(schema)
+        prompt = (_NATIVE_INTENT_PROMPT + '\nCATALOG_CONCEPTS=' + concept_catalog
+                  if initial else _NATIVE_DECISION_PROMPT)
+        max_chars -= reserved_schema_size
         if max_chars < 1:
             from src.context_budget import ContextBudgetError
             raise ContextBudgetError()
     messages, manifest = engine.decision_messages(prompt, state, plan, history, max_chars=max_chars)
+    surface = None
+    if not initial:
+        from src.native_protocol import decision_action_surface
+        remaining = context.limits.max_model_calls - context.counters['model_calls']
+        surface = decision_action_surface(state, plan, remaining_model_calls=remaining)
+        state['decision_surface'] = deepcopy(surface)
+        context.record('decision_action_surface', **surface)
+        if surface['mode'] != 'full':
+            prompt += ('\nRUNTIME_ACTION_SURFACE=' + json.dumps(surface, ensure_ascii=False, separators=(',', ':'))
+                       + '\nOnly choose an allowed action. One model call is reserved for the independent terminal audit; '
+                         'do not compare, replan or issue another catalog read when a listed candidate can satisfy the frozen goal.')
+            messages, manifest = engine.decision_messages(prompt, state, plan, history, max_chars=max_chars)
+        if native:
+            schema = decision_functions(state, plan, history, surface=surface)
+            if size(schema) > reserved_schema_size:
+                raise AgentError('CONTEXT_BUDGET_EXHAUSTED', '收窄后的函数协议意外扩大，拒绝调用模型', retryable=False)
     if native:
         manifest.update(wire_schema_chars=size(schema), wire_source_quote_catalog=initial,
                         history_omission_scope='HISTORY_ROWS_ONLY')

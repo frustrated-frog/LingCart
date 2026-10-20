@@ -34,6 +34,9 @@ KERNEL_BOUNDARIES = {
     'model_call_protocol': {
         'src/model_gateway.py', 'src/llm.py', 'src/native_protocol.py', 'src/context_budget.py',
     },
+    'catalog_semantic_binding': {
+        'src/catalog_concepts.py', 'src/constraint_bindings.py',
+    },
     'harness_assembly': {
         'src/harness/contracts.py', 'src/harness/profile.py', 'src/harness/registry.py',
     },
@@ -149,7 +152,9 @@ def environment_manifest(dataset, execution_mode, dataset_path=DATASET):
         revision = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip()
     except (OSError, subprocess.CalledProcessError):
         revision = None
-    prompt_files = sorted(set(['src/orchestrator.py', 'src/dialogue_understanding.py', 'src/adaptive.py', 'src/adaptive_decision.py', 'src/adaptive_goals.py', 'src/request_audit.py'] +
+    prompt_files = sorted(set(['src/orchestrator.py', 'src/dialogue_understanding.py', 'src/adaptive.py',
+                               'src/adaptive_decision.py', 'src/adaptive_goals.py', 'src/request_audit.py',
+                               'src/catalog_concepts.py', 'src/constraint_bindings.py', 'src/native_protocol.py'] +
                              [str(p.relative_to(ROOT)) for p in (ROOT / 'src/agents').glob('*.py')]))
     evaluator_files = [ROOT / name for name in ('eval/run_live_eval.py', 'eval/run_task_eval.py',
                                                 'eval/adaptive_checks.py', 'eval/experiment_contract.py')]

@@ -51,6 +51,9 @@ Check omissions, added demands, negation scope/polarity, bounds, quantities, exc
 A quote's presence alone does not prove correct interpretation. COVERED means the requirement is faithfully modeled.
 Unspecified optional preferences do not require clarification. Unknown catalog encodings/field=null are discoverable
 through tools, not missing human intent. Do not require search results, selections, completion or final delivery here.
+When catalog_concept is present, use feedback.catalog_concept_registry to check that concept_id,
+canonical_value and operator faithfully represent the quoted HUMAN meaning. A trusted codec does not prove
+that the planning model chose the right concept or polarity.
 Equivalent descriptions/redundant faithful conditions alone do not justify rejection.
 Relevant prior HUMAN conditions remain in effect until revised; source quotes may come from human history.
 Do not demand that a follow-up repeat its established category or prior applicable conditions verbatim.
@@ -72,6 +75,8 @@ COVERED means faithful mapping of accepted intent, NOT that an outcome is comple
 remain covered by their accepted description. Do not reopen accepted intent based on speculative reinterpretations.
 This phase MUST NOT demand completed recommendations, a VERIFIED ledger, exhaustive comparison or final delivery.
 The proposed mapping is not yet applied: an earlier failed selection says NOTHING about whether this NEW mapping works.
+A catalog_registry proposal is NOT pre-approved. Independently verify its frozen concept, operator,
+canonical value, codec identity and observed field facts; reject every semantic mismatch.
 A faithful predicate may match ZERO currently sampled products. That is NOT a mapping failure: later searches
 establish availability. Do not require the desired value to occur in a truncated sample. Assess conditions JOINTLY;
 a negative condition need not by itself imply a separate positive condition. Faithful redundancy is not a rejection.
@@ -95,11 +100,60 @@ def binding(request, goal, revision):
     return hashlib.sha256(json.dumps([request, goal, revision], sort_keys=True, ensure_ascii=False).encode()).hexdigest()
 
 
+def evidence_closure(state, plan):
+    """Return only the transitive evidence that supports the delivery ledger."""
+    indexed = {step.step_id: step for step in plan.steps}
+    pending = [ref for row in state.get('objective_ledger', []) for ref in row.get('evidence_refs', [])]
+    included = set()
+    while pending:
+        identity = pending.pop()
+        if identity in included:
+            continue
+        step = indexed.get(identity)
+        if step is None:
+            continue
+        included.add(identity)
+        pending.extend(step.depends_on)
+        if step.tool == 'read_evidence' and step.args.get('reference'):
+            pending.append(step.args['reference'])
+    return {
+        'objective_ledger': deepcopy(state.get('objective_ledger', [])),
+        'steps': [step.__dict__ for step in plan.steps if step.step_id in included],
+    }
+
+
+def audit_basis_fingerprint(state, plan, phase):
+    from src.catalog_concepts import get_catalog_concept_registry
+    transaction = state.get('binding_tx') or {}
+    basis = {
+        'phase': phase,
+        'request_binding': binding(state['request'], state['goal'], state['goal_revision']),
+        'catalog_concept_registry_sha256': get_catalog_concept_registry().fingerprint,
+    }
+    if phase in {'bindings', 'completion'}:
+        basis.update(binding_revision=state.get('binding_revision', 0),
+                     bindings_sha256=fingerprint(state.get('constraint_bindings', {})),
+                     binding_transaction_id=transaction.get('transaction_id'))
+    if phase == 'bindings':
+        from src.constraint_bindings import catalog_evidence
+        basis['catalog_evidence_sha256'] = hashlib.sha256(json.dumps(
+            catalog_evidence(state, plan), sort_keys=True, ensure_ascii=False,
+            separators=(',', ':'), allow_nan=False).encode()).hexdigest()
+    if phase == 'completion':
+        basis['evidence_sha256'] = evidence_fingerprint(plan, state)
+    return hashlib.sha256(json.dumps(basis, sort_keys=True, ensure_ascii=False,
+                                    separators=(',', ':'), allow_nan=False).encode()).hexdigest()
+
+
 def review_request(context, state, plan, history, *, phase, _protocol_retry=0):
     """独立调用无规划对话历史，所有调用计入同一预算，异常不降级为通过。"""
     goal = ShoppingGoal.model_validate(effective_goal(state)).model_dump()
+    from src.catalog_concepts import get_catalog_concept_registry
+    registry = get_catalog_concept_registry()
     review_state = {**state, 'goal': goal, 'next_steps': None, 'working_memory': None,
-                    'feedback': {'audit_phase': phase, 'constraint_refs': constraint_refs(goal)}}
+                    'feedback': {'audit_phase': phase, 'constraint_refs': constraint_refs(goal),
+                                 'catalog_concept_registry': registry.prompt_catalog(),
+                                 'catalog_concept_registry_sha256': registry.fingerprint}}
     if state.get('constraint_bindings'):
         review_state['feedback'].update(intent_constraints=constraint_refs(state['goal']),
             proposed_bindings=state['constraint_bindings'])
@@ -110,6 +164,7 @@ def review_request(context, state, plan, history, *, phase, _protocol_retry=0):
         review_state['goal'] = {**goal, 'uncertainties': []}
         review_state['objective_ledger'] = []
         review_state['feedback']['catalog_evidence'] = catalog_evidence(state, plan)
+        review_state['feedback']['binding_transaction'] = deepcopy(state.get('binding_tx'))
     if phase == 'completion':
         from src.adaptive_goals import outcome_report
         review_state['feedback']['delivery_draft'] = outcome_report(state, plan, complete=True)
@@ -188,16 +243,21 @@ def review_request(context, state, plan, history, *, phase, _protocol_retry=0):
                   goal_revision=state['goal_revision'], **audit.model_dump(), history_manifest=manifest)
     record.update(binding_revision=state.get('binding_revision', 0),
                   bindings_sha256=fingerprint(state.get('constraint_bindings', {})))
+    transaction = state.get('binding_tx') or {}
+    record.update(binding_transaction_id=transaction.get('transaction_id'),
+                  catalog_concept_registry_sha256=registry.fingerprint)
     if phase == 'completion':
-        record['evidence_sha256'] = evidence_fingerprint(plan)
+        record['evidence_sha256'] = evidence_fingerprint(plan, state)
+    record['basis_sha256'] = audit_basis_fingerprint(state, plan, phase)
     event = context.record('request_audited', **record)
     record['reference'] = f"{context.run_id}:{event['sequence']}"
     return record
 
 
-def evidence_fingerprint(plan):
-    return hashlib.sha256(json.dumps([s.__dict__ for s in plan.steps], sort_keys=True,
-                                     ensure_ascii=False).encode()).hexdigest()
+def evidence_fingerprint(plan, state=None):
+    payload = evidence_closure(state, plan) if state is not None else [s.__dict__ for s in plan.steps]
+    return hashlib.sha256(json.dumps(payload, sort_keys=True, ensure_ascii=False,
+                                     separators=(',', ':'), allow_nan=False).encode()).hexdigest()
 
 
 def require_approved(state, plan=None):
@@ -205,10 +265,13 @@ def require_approved(state, plan=None):
     audit = state.get('request_audit') or {}
     if audit.get('verdict') != 'APPROVED' or audit.get('binding') != binding(state['request'], state['goal'], state['goal_revision']):
         raise AgentError('REQUEST_NOT_AUDITED', '原始需求覆盖与语义尚未通过独立审查，不能声称任务已完成', retryable=False)
+    if audit.get('basis_sha256') and audit.get('basis_sha256') != audit_basis_fingerprint(state, plan or TaskPlan([], []), 'goal'):
+        raise AgentError('REQUEST_AUDIT_BASIS_MISMATCH', '需求审查绑定的目标或概念注册表已变化', retryable=False)
     if plan is not None:
         final = state.get('completion_audit') or {}
         if (final.get('verdict') != 'APPROVED' or final.get('binding') != audit['binding']
-                or final.get('evidence_sha256') != evidence_fingerprint(plan)
+                or final.get('evidence_sha256') != evidence_fingerprint(plan, state)
+                or final.get('basis_sha256') != audit_basis_fingerprint(state, plan, 'completion')
                 or final.get('binding_revision') != state.get('binding_revision', 0)
                 or final.get('bindings_sha256') != fingerprint(state.get('constraint_bindings', {}))):
             raise AgentError('COMPLETION_NOT_AUDITED', '最终证据尚未通过独立需求审查，不能声称全部完成', retryable=False)

@@ -335,11 +335,14 @@ def _compact_event(event: dict) -> dict | None:
     event_type = event.get("type")
     if event_type not in {
         "adaptive_decision", "decision_rejected", "tool_result", "verification",
-        "request_audit", "completion_audit", "mechanism_applied", "evidence_context",
+        "request_audited", "mechanism_applied", "evidence_context",
+        "constraint_binding_proposed", "constraint_binding_unresolved",
+        "constraint_binding_rejected", "constraint_bindings_refined", "decision_action_surface",
     }:
         return None
     compact = {"type": event_type}
-    for key in ("code", "status", "tool", "mechanism_id", "reason", "verdict", "goal_revision"):
+    for key in ("code", "status", "tool", "mechanism_id", "reason", "verdict", "goal_revision",
+                "phase", "source", "mode", "transaction_id", "resolution_id", "binding_revision"):
         if key in event:
             compact[key] = event[key]
     decision = event.get("decision")
