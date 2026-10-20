@@ -15,7 +15,8 @@ def recover_evidence(context):
         saved = next((r for r in outcomes if r['tool'] == call['tool'] and
                       (not call.get('ledger_key') or r['call_key'] == call['ledger_key']) and
                       ToolExecutor.fingerprint(r['tool'], r['args']) == fingerprint and r['status'] == 'SUCCEEDED'), None)
-        common = dict(tool=call['tool'], args=call.get('args', {}), action_fingerprint=fingerprint, execution_id=identity)
+        common = dict(tool=call['tool'], args=call.get('args', {}), action_fingerprint=fingerprint,
+                      execution_id=identity, observation_scope_sha256=call.get('observation_scope_sha256'))
         if saved:
             context.record('tool_result', **common, status='REUSED', result=saved['result'], reused=True,
                            duration_ms=0, source_ledger=saved['call_key'], recovered=True)

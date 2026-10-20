@@ -520,6 +520,8 @@ class ToolExecutor:
             raise ApprovalRequired(pending)
         fingerprint = self.fingerprint(name, args)
         scope = self.observation_scope if spec.effect == ToolEffect.READ and spec.replay_policy == ReplayPolicy.REPLAY_SAFE else None
+        scope_sha256 = self.fingerprint("observation_scope", {"value": scope}) if scope is not None else None
+        scope_evidence = {"observation_scope_sha256": scope_sha256} if scope_sha256 else {}
         observation_key = fingerprint if scope is None else self.fingerprint(name, {'args': args, 'observation_scope': scope})
         key = context.store.ledger_key(context.run_id, name, args, approval if spec.effect == ToolEffect.WRITE else None) if context and context.store else None
         if key and scope is not None:
@@ -546,10 +548,22 @@ class ToolExecutor:
                         if e['type'] == 'tool_call' and e.get('action_fingerprint') == fingerprint
                         and e.get('ledger_key', key) == key
                         and e.get('execution_id') not in finished_ids), None)
+                evidence_events = context.events if context else self.recorder.events
+                source_result = next((e for e in reversed(evidence_events)
+                    if e.get('type') == 'tool_result' and not e.get('reused')
+                    and e.get('tool') == name and e.get('args') == args
+                    and e.get('action_fingerprint') == fingerprint
+                    and e.get('observation_scope_sha256') == scope_sha256
+                    and e.get('result') == cached and e.get('execution_id')), None)
+                reuse_source = ({
+                    'source_execution_id': source_result['execution_id'],
+                    'source_sequence': source_result.get('sequence'),
+                } if source_result else {})
                 event = self.recorder.record("tool_result", tool=name, args=args, result=cached,
                     status="BUSINESS_ERROR" if isinstance(cached, dict) and cached.get("error") else "REUSED",
                     reused=True, duration_ms=0.0, policy=policy, action_fingerprint=fingerprint,
-                    execution_id=unfinished, source_ledger=key if saved else None)
+                    execution_id=unfinished, source_ledger=key if saved else None,
+                    **scope_evidence, **reuse_source)
                 if context:
                     if context.context_engine:
                         context.context_engine.observe(name, args, cached, reference=f'{context.run_id}:{event["sequence"]}')
@@ -575,7 +589,8 @@ class ToolExecutor:
                 self._fail(error, name, args)
             execution_id = uuid.uuid4().hex
             self.recorder.record("tool_call", tool=name, args=args, call_index=self.call_count, attempt=attempt + 1,
-                                 policy=policy, action_fingerprint=fingerprint, execution_id=execution_id, ledger_key=key)
+                                 policy=policy, action_fingerprint=fingerprint, execution_id=execution_id,
+                                 ledger_key=key, **scope_evidence)
             started = time.monotonic()
             deadline = started + min(context.limits.call_timeout, context.remaining_seconds) if context else None
 
@@ -611,7 +626,7 @@ class ToolExecutor:
                                               {"error": str(error), "code": error.code})
                 self.recorder.record("error", tool=name, args=args, code=error.code, message=str(error), retryable=error.retryable,
                                      duration_ms=round((time.monotonic() - started) * 1000, 2), policy=policy,
-                                     action_fingerprint=fingerprint, execution_id=execution_id)
+                                     action_fingerprint=fingerprint, execution_id=execution_id, **scope_evidence)
                 if spec.replay_policy == ReplayPolicy.REPLAY_SAFE and error.retryable and attempt + 1 < attempts and self.call_count < self.max_calls:
                     self.recorder.record("tool_retry", tool=name, attempt=attempt + 2)
                     continue
@@ -622,7 +637,7 @@ class ToolExecutor:
                 "BUSINESS_REJECTED" if isinstance(result, dict) and result.get("success") is False else "SUCCEEDED")
             event = self.recorder.record("tool_result", tool=name, args=args, result=result, status=status,
                                          duration_ms=round((time.monotonic() - started) * 1000, 2), policy=policy,
-                                         action_fingerprint=fingerprint, execution_id=execution_id)
+                                         action_fingerprint=fingerprint, execution_id=execution_id, **scope_evidence)
             if context:
                 if context.context_engine:
                     context.context_engine.observe(name, args, result, reference=f'{context.run_id}:{event["sequence"]}')

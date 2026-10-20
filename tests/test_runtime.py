@@ -46,6 +46,9 @@ def test_exact_duplicate_reuses_result_without_second_execution():
 
     assert result == {"value": "same"}
     assert event["status"] == "REUSED"
+    assert event["source_execution_id"] == recorder.events[0]["execution_id"]
+    assert event["source_sequence"] == recorder.events[1]["sequence"]
+    assert event["execution_id"] is None
     assert calls["count"] == 1
 
 

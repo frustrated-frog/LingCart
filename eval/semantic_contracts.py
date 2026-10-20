@@ -237,15 +237,52 @@ class AcceptanceSpec(StrictFrozenModel):
         raise ValueError(f"未知语义验收阶段：{stage_id}")
 
 
+class ExperimentMetricRule(StrictFrozenModel):
+    name: str = Field(pattern=r"^[a-z][a-z0-9_.]*$", min_length=1, max_length=100)
+    objective: Literal["maximize", "minimize"]
+    max_regression: float = Field(default=0, ge=0)
+    min_improvement: float = Field(default=0, ge=0)
+
+
+class SemanticExperimentSpec(StrictFrozenModel):
+    """Frozen admission policy for a cross-Profile semantic experiment."""
+
+    schema_version: Literal[1]
+    experiment_id: str = Field(pattern=r"^[a-z][a-z0-9-]{0,99}$")
+    baseline_profiles: tuple[str, ...] = Field(min_length=1)
+    candidate_profiles: tuple[str, ...] = Field(min_length=1)
+    primary_metrics: tuple[ExperimentMetricRule, ...] = Field(min_length=1)
+    guard_metrics: tuple[ExperimentMetricRule, ...] = ()
+
+    @model_validator(mode="after")
+    def valid_comparison(self):
+        if set(self.baseline_profiles) == set(self.candidate_profiles):
+            raise ValueError("候选实验必须改变至少一个 Profile")
+        if len(self.baseline_profiles) != len(set(self.baseline_profiles)):
+            raise ValueError("baseline_profiles 不能重复")
+        if len(self.candidate_profiles) != len(set(self.candidate_profiles)):
+            raise ValueError("candidate_profiles 不能重复")
+        rules = (*self.primary_metrics, *self.guard_metrics)
+        names = [rule.name for rule in rules]
+        if len(names) != len(set(names)):
+            raise ValueError("实验指标名称不能重复")
+        if not any(rule.min_improvement > 0 for rule in self.primary_metrics):
+            raise ValueError("至少一个主指标必须声明正向最小改善，才能形成收益结论")
+        return self
+
+
 class GateReceipt(StrictFrozenModel):
     schema_version: Literal[1] = 1
-    gate_type: Literal["SMOKE", "ACCEPTANCE", "EXPERIMENT"]
+    gate_type: Literal[
+        "SMOKE", "ACCEPTANCE", "EXPERIMENT_COMPATIBILITY", "EXPERIMENT_EFFECT", "EXPERIMENT",
+    ]
     stage_id: str
     claim_scope: Literal["selected_cases_only", "frozen_stage", "paired_experiment"]
     checked_report_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     passed: bool
     failure_codes: tuple[str, ...] = ()
     failures: tuple[dict, ...] = ()
+    evidence: dict = Field(default_factory=dict)
 
 
 def load_dataset_payload(payload: dict) -> SemanticDataset:

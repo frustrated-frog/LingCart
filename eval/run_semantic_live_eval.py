@@ -33,13 +33,14 @@ MODES = ("auto", "adaptive")
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from eval.eval_journal import EvaluationJournal, JournalError, write_exclusive_json
+from eval.eval_journal import EvaluationJournal, JournalError
 from eval.semantic_contracts import (
     AcceptanceSpec,
     AcceptanceStage,
     GateReceipt,
     SemanticCase,
     SemanticDataset,
+    SemanticExperimentSpec,
     StageBudget,
     StageExecution,
     StageSelection,
@@ -152,7 +153,21 @@ def _tracked_worktree_clean() -> bool:
         ["git", "diff", "--quiet", "HEAD", "--"], cwd=ROOT, check=False,
         capture_output=True,
     )
-    return completed.returncode == 0
+    if completed.returncode != 0:
+        return False
+    untracked = subprocess.run(
+        [
+            "git", "ls-files", "--others", "--exclude-standard", "--",
+            "src", "configs/harness",
+            "eval/run_semantic_live_eval.py", "eval/semantic_contracts.py",
+            "eval/semantic_oracle.py", "eval/eval_journal.py",
+        ],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    return untracked.returncode == 0 and not untracked.stdout.strip()
 
 
 def _file_manifest(paths: list[Path]) -> dict[str, str]:
@@ -163,22 +178,24 @@ def _file_manifest(paths: list[Path]) -> dict[str, str]:
 
 
 def _source_manifest() -> dict:
-    declared = [
+    evaluator_sources = [
         ROOT / "eval/run_semantic_live_eval.py",
         ROOT / "eval/semantic_contracts.py",
         ROOT / "eval/semantic_oracle.py",
         ROOT / "eval/eval_journal.py",
-        ROOT / "src/dialogue_understanding.py",
-        ROOT / "src/capability_registry.py",
-        ROOT / "src/orchestrator.py",
-        ROOT / "src/adaptive.py",
-        ROOT / "src/runtime.py",
-        ROOT / "src/trace_projector.py",
-        *list((ROOT / "configs/harness").glob("*.json")),
     ]
+    # Strict live evaluation prefers a conservative, complete backend closure
+    # over a hand-maintained import list.  Dynamic imports, registered tools and
+    # Harness mechanisms can all affect execution while evading static import
+    # discovery, so every tracked Python module under src/ is identity-bound.
+    runtime_sources = list((ROOT / "src").rglob("*.py"))
+    harness_configs = list((ROOT / "configs/harness").glob("*.json"))
+    declared = [*evaluator_sources, *runtime_sources, *harness_configs]
     files = _file_manifest(declared)
     dependency_lock = ROOT / "requirements.lock"
     return {
+        "source_manifest_version": 2,
+        "source_scope": "semantic_evaluator_and_backend_runtime",
         "source_revision": _git_commit(),
         "source_files_sha256": files,
         "source_tree_sha256": fingerprint(files),
@@ -208,6 +225,29 @@ def _safe_model_configuration(readiness: dict) -> dict:
     ]
     payload = {"providers": providers}
     return {**payload, "model_config_sha256": fingerprint(payload)}
+
+
+def _experiment_compatibility_payload(manifest: dict) -> dict:
+    """Return immutable controls that must match across experimental Profiles."""
+
+    case_hashes = manifest.get("case_sha256") or {}
+    selected_ids = manifest.get("selected_case_ids") or []
+    return {
+        "dataset_sha256": manifest.get("dataset_sha256"),
+        "acceptance_spec_sha256": manifest.get("acceptance_spec_sha256"),
+        "selected_cases": [(case_id, case_hashes.get(case_id)) for case_id in selected_ids],
+        "repeats": manifest.get("repeats"),
+        "execution_modes": sorted(
+            item.get("mode") for item in manifest.get("executions") or [] if isinstance(item, dict)
+        ),
+        "model_call_budgets": manifest.get("model_call_budgets"),
+        "model_configuration": manifest.get("model_configuration"),
+        "oracle_protocol": manifest.get("oracle_protocol"),
+        "evaluator_protocol_sha256": manifest.get("evaluator_protocol_sha256"),
+        "dependency_lock_sha256": manifest.get("dependency_lock_sha256"),
+        "python_runtime": manifest.get("python_runtime"),
+        "business_environment": manifest.get("business_environment"),
+    }
 
 
 def _runtime_default(mode: str):
@@ -430,6 +470,9 @@ def _prepare_execution(
         ),
         **source,
     }
+    manifest["experiment_compatibility_sha256"] = fingerprint(
+        _experiment_compatibility_payload(manifest)
+    )
     identity_fields = {
         key: manifest[key] for key in (
             "dataset_sha256", "acceptance_spec_sha256", "stage_contract_sha256", "profiles",
@@ -580,7 +623,7 @@ def evaluate(
     consistency = apply_mode_consistency(samples) if complete else []
     report = {
         "schema_version": 2,
-        "created_at": datetime.now(UTC).isoformat(),
+        "created_at": journal.started_at if journal is not None else datetime.now(UTC).isoformat(),
         "status": "COMPLETED" if complete else "INTERRUPTED",
         "execution_source": execution_source,
         "manifest": manifest,
@@ -626,7 +669,21 @@ def _gate_report(report: dict, dataset: SemanticDataset, stage: AcceptanceStage,
         failures.append(_gate_failure("DATASET_IDENTITY_MISMATCH", "报告数据集指纹无法重算"))
     if manifest.get("stage_contract_sha256") != fingerprint(stage.model_dump(mode="json")):
         failures.append(_gate_failure("STAGE_IDENTITY_MISMATCH", "报告阶段契约指纹不一致"))
-    if not manifest.get("source_tree_sha256") or not manifest.get("evaluator_protocol_sha256"):
+    source_files = manifest.get("source_files_sha256")
+    if (
+        manifest.get("source_manifest_version") != 2
+        or not isinstance(source_files, dict)
+        or not source_files
+        or manifest.get("source_tree_sha256") != fingerprint(source_files)
+    ):
+        failures.append(_gate_failure("SOURCE_IDENTITY_INVALID", "执行源码闭包缺失或无法从逐文件指纹重算"))
+    evaluator_files = {
+        name: digest for name, digest in (source_files or {}).items() if name.startswith("eval/")
+    }
+    if (
+        not evaluator_files
+        or manifest.get("evaluator_protocol_sha256") != fingerprint(evaluator_files)
+    ):
         failures.append(_gate_failure("SOURCE_IDENTITY_MISSING", "报告缺少执行源码或 Oracle 指纹"))
     profiles = manifest.get("profiles") or {}
     if not profiles or any(
@@ -738,37 +795,184 @@ class AcceptanceGate:
         return _gate_report(report, dataset, stage, "ACCEPTANCE", "frozen_stage")
 
 
-class ExperimentGate:
+def _experiment_grid(report: dict) -> set[tuple]:
+    return {
+        (sample.get("case_sha256"), sample.get("repeat"), sample.get("mode"))
+        for sample in report.get("samples") or []
+    }
+
+
+def _experiment_profiles(report: dict) -> set[str]:
+    return {
+        item.get("profile_id")
+        for item in ((report.get("manifest") or {}).get("executions") or [])
+        if isinstance(item, dict) and item.get("profile_id")
+    }
+
+
+def _metric_value(report: dict, path: str) -> float | None:
+    value: object = report.get("metrics") or {}
+    for part in path.split("."):
+        if not isinstance(value, dict) or part not in value:
+            return None
+        value = value[part]
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+        return None
+    return float(value)
+
+
+class ExperimentCompatibilityGate:
+    """Check shared controls while deliberately allowing Profile differences."""
+
     @staticmethod
-    def evaluate(baseline: dict, candidate: dict, *, stage_id: str = "paired-experiment") -> GateReceipt:
-        failures = []
+    def evaluate(baseline: dict, candidate: dict, *, stage_id: str) -> GateReceipt:
+        failures: list[dict] = []
         for label, report in (("baseline", baseline), ("candidate", candidate)):
             gate = report.get("gate") or {}
-            if gate.get("gate_type") != "ACCEPTANCE" or gate.get("passed") is not True:
+            checked_payload = {key: value for key, value in report.items() if key != "gate"}
+            if (
+                gate.get("gate_type") != "ACCEPTANCE"
+                or gate.get("passed") is not True
+                or gate.get("checked_report_sha256") != fingerprint(checked_payload)
+            ):
                 failures.append(_gate_failure("INPUT_NOT_ACCEPTANCE", f"{label} 不是通过的 Acceptance 报告"))
+            manifest = report.get("manifest") or {}
+            compatibility = _experiment_compatibility_payload(manifest)
+            if manifest.get("experiment_compatibility_sha256") != fingerprint(compatibility):
+                failures.append(_gate_failure(
+                    "EXPERIMENT_IDENTITY_INVALID",
+                    f"{label} 的可比性身份无法从冻结字段重算",
+                    input=label,
+                ))
+            source_files = manifest.get("source_files_sha256")
+            if not isinstance(source_files, dict) or manifest.get("source_tree_sha256") != fingerprint(source_files):
+                failures.append(_gate_failure(
+                    "EXPERIMENT_SOURCE_IDENTITY_INVALID",
+                    f"{label} 的源码身份无法从逐文件指纹重算",
+                    input=label,
+                ))
         left, right = baseline.get("manifest") or {}, candidate.get("manifest") or {}
-        for key in (
-            "dataset_sha256", "acceptance_spec_sha256", "stage_contract_sha256",
-            "model_configuration", "model_call_budgets", "dependency_lock_sha256",
-            "python_runtime", "business_environment", "evaluator_protocol_sha256",
-        ):
-            if left.get(key) != right.get(key):
-                failures.append(_gate_failure("EXPERIMENT_IDENTITY_MISMATCH",
-                                              f"实验配对字段不一致：{key}", field=key))
-        def grid(report):
-            return {(sample.get("case_sha256"), sample.get("repeat"), sample.get("mode"))
-                    for sample in report.get("samples") or []}
-        if grid(baseline) != grid(candidate):
-            failures.append(_gate_failure("EXPERIMENT_SAMPLE_PAIRING_MISMATCH", "基线与候选样本无法一一配对"))
+        if left.get("experiment_compatibility_sha256") != right.get("experiment_compatibility_sha256"):
+            failures.append(_gate_failure(
+                "EXPERIMENT_IDENTITY_MISMATCH",
+                "数据集、样本网格、模式、预算、模型、Oracle 或运行环境不一致",
+            ))
+        if _experiment_grid(baseline) != _experiment_grid(candidate):
+            failures.append(_gate_failure(
+                "EXPERIMENT_SAMPLE_PAIRING_MISMATCH", "基线与候选样本无法一一配对",
+            ))
         checked = fingerprint({"baseline": baseline, "candidate": candidate})
         return GateReceipt(
-            gate_type="EXPERIMENT",
+            gate_type="EXPERIMENT_COMPATIBILITY",
             stage_id=stage_id,
             claim_scope="paired_experiment",
             checked_report_sha256=checked,
             passed=not failures,
             failure_codes=tuple(dict.fromkeys(item["code"] for item in failures)),
             failures=tuple(failures),
+            evidence={
+                "baseline_profiles": sorted(_experiment_profiles(baseline)),
+                "candidate_profiles": sorted(_experiment_profiles(candidate)),
+                "profile_difference_allowed": True,
+            },
+        )
+
+
+class ExperimentEffectGate:
+    """Apply a frozen metric policy after compatibility has been established."""
+
+    @staticmethod
+    def evaluate(baseline: dict, candidate: dict, *, spec: SemanticExperimentSpec) -> GateReceipt:
+        compatibility = ExperimentCompatibilityGate.evaluate(
+            baseline, candidate, stage_id=spec.experiment_id,
+        )
+        failures = list(compatibility.failures)
+        baseline_profiles = _experiment_profiles(baseline)
+        candidate_profiles = _experiment_profiles(candidate)
+        if baseline_profiles != set(spec.baseline_profiles):
+            failures.append(_gate_failure(
+                "BASELINE_PROFILE_MISMATCH", "基线报告的 Profile 与实验契约不一致",
+                expected=sorted(spec.baseline_profiles), actual=sorted(baseline_profiles),
+            ))
+        if candidate_profiles != set(spec.candidate_profiles):
+            failures.append(_gate_failure(
+                "CANDIDATE_PROFILE_MISMATCH", "候选报告的 Profile 与实验契约不一致",
+                expected=sorted(spec.candidate_profiles), actual=sorted(candidate_profiles),
+            ))
+        comparisons = []
+        primary_names = {rule.name for rule in spec.primary_metrics}
+        for rule in (*spec.primary_metrics, *spec.guard_metrics):
+            previous = _metric_value(baseline, rule.name)
+            current = _metric_value(candidate, rule.name)
+            if previous is None or current is None:
+                failures.append(_gate_failure(
+                    "EXPERIMENT_METRIC_MISSING", f"实验指标 {rule.name} 缺少有限数值", metric=rule.name,
+                ))
+                comparisons.append({"metric": rule.name, "baseline": previous, "candidate": current})
+                continue
+            improvement = current - previous if rule.objective == "maximize" else previous - current
+            comparison = {
+                "metric": rule.name,
+                "role": "primary" if rule.name in primary_names else "guard",
+                "objective": rule.objective,
+                "baseline": previous,
+                "candidate": current,
+                "improvement": improvement,
+                "max_regression": rule.max_regression,
+                "min_improvement": rule.min_improvement,
+            }
+            comparisons.append(comparison)
+            if improvement < -rule.max_regression:
+                failures.append(_gate_failure(
+                    "EXPERIMENT_METRIC_REGRESSION",
+                    f"实验指标 {rule.name} 退化超过允许值",
+                    **comparison,
+                ))
+            if (rule.name in primary_names or rule.min_improvement > 0) and improvement < rule.min_improvement:
+                failures.append(_gate_failure(
+                    "EXPERIMENT_IMPROVEMENT_NOT_MET",
+                    f"实验指标 {rule.name} 未达到最小改善",
+                    **comparison,
+                ))
+        checked = fingerprint({
+            "baseline": baseline,
+            "candidate": candidate,
+            "spec": spec.model_dump(mode="json"),
+        })
+        return GateReceipt(
+            gate_type="EXPERIMENT_EFFECT",
+            stage_id=spec.experiment_id,
+            claim_scope="paired_experiment",
+            checked_report_sha256=checked,
+            passed=not failures,
+            failure_codes=tuple(dict.fromkeys(item["code"] for item in failures)),
+            failures=tuple(failures),
+            evidence={
+                "compatibility": compatibility.model_dump(mode="json"),
+                "metric_comparisons": comparisons,
+            },
+        )
+
+
+class ExperimentGate:
+    """Promotion admission: both compatibility and declared effect must pass."""
+
+    @staticmethod
+    def evaluate(baseline: dict, candidate: dict, *, spec: SemanticExperimentSpec) -> GateReceipt:
+        effect = ExperimentEffectGate.evaluate(baseline, candidate, spec=spec)
+        checked = fingerprint({
+            "effect_receipt": effect.model_dump(mode="json"),
+            "spec": spec.model_dump(mode="json"),
+        })
+        return GateReceipt(
+            gate_type="EXPERIMENT",
+            stage_id=spec.experiment_id,
+            claim_scope="paired_experiment",
+            checked_report_sha256=checked,
+            passed=effect.passed,
+            failure_codes=effect.failure_codes,
+            failures=effect.failures,
+            evidence={"effect": effect.model_dump(mode="json"), "admission": "promotion"},
         )
 
 
@@ -922,52 +1126,59 @@ def main(argv: list[str] | None = None) -> None:
         return
     if args.output is None:
         parser.error("真实评测必须通过 --output 保存不可变报告")
-    if args.output.exists():
+    if args.output.exists() and not args.resume:
         parser.error(f"拒绝覆盖已有报告：{args.output}")
     journal_path = args.output.with_suffix(".journal.jsonl")
     if args.resume and not journal_path.exists():
         parser.error(f"续跑要求已有 Journal：{journal_path}")
     if not args.resume and journal_path.exists():
         parser.error(f"Journal 已存在，拒绝隐式续跑：{journal_path}")
-    if not _tracked_worktree_clean():
-        parser.error("真实评测要求受版本控制的文件保持干净，请先提交实现再运行")
-
-    from src.llm import get_model_status
-
-    readiness = get_model_status()
-    if not readiness.get("configured") or not readiness.get("ready"):
-        parser.error("真实模型尚未就绪：" + readiness.get("message", "未知原因"))
     try:
         with EvaluationJournal(journal_path, resume=args.resume) as journal:
-            report = evaluate(
-                dataset,
-                cases=selected,
-                repeats=stage.repeats,
-                modes=modes,
-                max_model_calls_per_run=(
-                    args.max_model_calls_per_run or stage.budget.max_model_calls_per_run
-                ),
-                readiness=readiness,
-                sleep_seconds=args.sleep,
-                stage=stage,
-                spec=spec,
-                journal=journal,
-            )
-            if report["status"] != "COMPLETED":
-                print(json.dumps({"status": report["status"], "journal": str(journal_path)}, ensure_ascii=False))
-                raise SystemExit(2)
-            gate = (SmokeGate if stage.gate_type == "smoke" else AcceptanceGate).evaluate(report, dataset, stage)
-            report["gate"] = gate.model_dump(mode="json")
-            final_sha = fingerprint(report)
-            journal.append("RUN_FINALIZED", {
-                "report_sha256": final_sha,
-                "gate": gate.model_dump(mode="json"),
-                "sample_terminal_sha256": [
-                    record["record_sha256"] for record in journal.records
-                    if record["record_type"] == "SAMPLE_TERMINAL"
-                ],
-            })
-            write_exclusive_json(args.output, report)
+            if journal.finalized:
+                report = journal.load_published_report(args.output)
+            else:
+                if args.output.exists() and not journal.report_prepared:
+                    raise JournalError("最终报告已存在，但 Journal 没有 REPORT_PREPARED 证据")
+                if not _tracked_worktree_clean():
+                    raise JournalError("真实评测要求受版本控制的文件保持干净，请先提交实现再运行")
+                from src.llm import get_model_status
+
+                readiness = get_model_status()
+                if not readiness.get("configured") or not readiness.get("ready"):
+                    raise JournalError("真实模型尚未就绪：" + readiness.get("message", "未知原因"))
+                report = evaluate(
+                    dataset,
+                    cases=selected,
+                    repeats=stage.repeats,
+                    modes=modes,
+                    max_model_calls_per_run=(
+                        args.max_model_calls_per_run or stage.budget.max_model_calls_per_run
+                    ),
+                    readiness=readiness,
+                    sleep_seconds=args.sleep,
+                    stage=stage,
+                    spec=spec,
+                    journal=journal,
+                )
+                if report["status"] != "COMPLETED":
+                    print(json.dumps({"status": report["status"], "journal": str(journal_path)}, ensure_ascii=False))
+                    raise SystemExit(2)
+                gate = (SmokeGate if stage.gate_type == "smoke" else AcceptanceGate).evaluate(
+                    report, dataset, stage,
+                )
+                report["gate"] = gate.model_dump(mode="json")
+                finalization = {
+                    "report_content_sha256": fingerprint(report),
+                    "gate": gate.model_dump(mode="json"),
+                    "sample_terminal_sha256": [
+                        record["record_sha256"] for record in journal.records
+                        if record["record_type"] == "SAMPLE_TERMINAL"
+                    ],
+                }
+                journal.prepare_report(args.output, report, finalization=finalization)
+                journal.publish_prepared_report(args.output)
+                journal.finalize_report(args.output)
     except (JournalError, ValueError, FileExistsError) as exc:
         parser.error(str(exc))
     print(json.dumps({"metrics": report["metrics"], "gate": report["gate"]}, ensure_ascii=False, indent=2))

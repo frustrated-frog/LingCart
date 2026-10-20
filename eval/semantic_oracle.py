@@ -104,16 +104,60 @@ def _tool_records(events: list[dict]) -> tuple[list[dict], list[str]]:
         for event in events
         if event.get("type") == "tool_call" and event.get("execution_id")
     }
+    original_results = {
+        event.get("execution_id"): event
+        for event in events
+        if event.get("type") == "tool_result"
+        and event.get("execution_id")
+        and not event.get("reused")
+        and event.get("status") != "REUSED"
+    }
+
+    def paired(call: dict | None, result: dict) -> bool:
+        return bool(
+            call
+            and call.get("sequence", 0) < result.get("sequence", 0)
+            and all(call.get(key) == result.get(key) for key in (
+                "run_id", "tool", "args", "action_fingerprint", "observation_scope_sha256",
+            ))
+        )
+
     records, failures = [], []
     for event in events:
         if event.get("type") != "tool_result":
             continue
         execution_id = event.get("execution_id")
+        reused = bool(event.get("reused") or event.get("status") == "REUSED")
+        evidence_id = execution_id
         call = calls.get(execution_id)
-        if call is None:
-            failures.append("AUTHORITATIVE_EVIDENCE_INVALID")
-            continue
-        if any(call.get(key) != event.get(key) for key in ("run_id", "tool", "args", "action_fingerprint")):
+        evidence_call = call
+        if reused:
+            if paired(call, event):
+                # A recovered call can legitimately finish from the durable
+                # ledger, but the ledger reference must be the one frozen on
+                # the original call event.
+                if not event.get("source_ledger") or call.get("ledger_key") != event.get("source_ledger"):
+                    failures.append("AUTHORITATIVE_EVIDENCE_INVALID")
+                    continue
+            else:
+                source_execution_id = event.get("source_execution_id")
+                source = original_results.get(source_execution_id)
+                source_call = calls.get(source_execution_id)
+                if (
+                    not paired(source_call, source or {})
+                    or source.get("sequence", 0) >= event.get("sequence", 0)
+                    or event.get("source_sequence") != source.get("sequence")
+                    or any(source.get(key) != event.get(key) for key in (
+                        "run_id", "tool", "args", "result", "action_fingerprint",
+                        "observation_scope_sha256",
+                    ))
+                    or source_call.get("ledger_key") != event.get("source_ledger")
+                ):
+                    failures.append("AUTHORITATIVE_EVIDENCE_INVALID")
+                    continue
+                evidence_call = source_call
+                evidence_id = f"{source_execution_id}:reuse:{event.get('sequence')}"
+        elif not paired(call, event):
             failures.append("AUTHORITATIVE_EVIDENCE_INVALID")
             continue
         records.append({
@@ -121,9 +165,9 @@ def _tool_records(events: list[dict]) -> tuple[list[dict], list[str]]:
             "args": deepcopy(event.get("args") or {}),
             "result": deepcopy(event.get("result")),
             "status": event.get("status"),
-            "execution_id": execution_id,
+            "execution_id": evidence_id,
             "sequence": event.get("sequence"),
-            "policy": deepcopy(event.get("policy") or call.get("policy") or {}),
+            "policy": deepcopy(event.get("policy") or (evidence_call or {}).get("policy") or {}),
         })
     return records, failures
 

@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 
 import pytest
 
@@ -92,3 +93,77 @@ def test_final_report_uses_exclusive_create(tmp_path):
     assert json.loads(output.read_text())["passed"] is True
     with pytest.raises(FileExistsError):
         write_exclusive_json(output, {"schema_version": 2, "passed": False})
+
+
+def _complete_sample(journal):
+    journal.append("SAMPLE_STARTED", {"case_id": "clock"}, sample_id="sample-1")
+    journal.append("SAMPLE_TERMINAL", {
+        "outcome": "COMPLETED", "sample": {"case_id": "clock", "passed": True},
+    }, sample_id="sample-1")
+
+
+def test_report_prepare_crash_resumes_publish_without_rewriting_samples(tmp_path):
+    journal_path = tmp_path / "semantic.journal.jsonl"
+    output = tmp_path / "report.json"
+    report = {"schema_version": 2, "created_at": "frozen", "passed": True}
+    finalization = {"gate": {"passed": True}, "sample_terminal_sha256": ["sample"]}
+
+    with EvaluationJournal(journal_path, resume=False) as journal:
+        _start(journal)
+        _complete_sample(journal)
+        prepared = journal.prepare_report(output, report, finalization=finalization)
+        assert journal.report_prepared is True
+        assert output.exists() is False
+        assert Path(prepared["prepared_path"]).is_file()
+
+    with EvaluationJournal(journal_path, resume=True) as journal:
+        journal.prepare_report(output, report, finalization=finalization)
+        journal.publish_prepared_report(output)
+        finalized = journal.finalize_report(output)
+        assert finalized["gate"]["passed"] is True
+        assert journal.load_published_report(output) == report
+        assert len([record for record in journal.records
+                    if record["record_type"] == "SAMPLE_TERMINAL"]) == 1
+
+
+def test_published_report_crash_resumes_finalization_idempotently(tmp_path):
+    journal_path = tmp_path / "semantic.journal.jsonl"
+    output = tmp_path / "report.json"
+    report = {"schema_version": 2, "created_at": "frozen", "passed": True}
+
+    with EvaluationJournal(journal_path, resume=False) as journal:
+        _start(journal)
+        _complete_sample(journal)
+        journal.prepare_report(output, report, finalization={"gate": {"passed": True}})
+        journal.publish_prepared_report(output)
+        assert output.is_file()
+        assert journal.finalized is False
+
+    with EvaluationJournal(journal_path, resume=True) as journal:
+        journal.publish_prepared_report(output)
+        journal.finalize_report(output)
+        assert journal.finalized is True
+
+    with EvaluationJournal(journal_path, resume=True) as journal:
+        assert journal.finalize_report(output)["gate"]["passed"] is True
+        assert journal.load_published_report(output) == report
+
+
+def test_finalization_rejects_missing_or_tampered_published_report(tmp_path):
+    journal_path = tmp_path / "semantic.journal.jsonl"
+    output = tmp_path / "report.json"
+    report = {"schema_version": 2, "created_at": "frozen", "passed": True}
+
+    with EvaluationJournal(journal_path, resume=False) as journal:
+        _start(journal)
+        _complete_sample(journal)
+        journal.prepare_report(output, report, finalization={"gate": {"passed": True}})
+        with pytest.raises(JournalError, match="可靠发布"):
+            journal.append("RUN_FINALIZED", {
+                "report_sha256": journal.prepared_report["report_sha256"],
+                "output_path": str(output.resolve()),
+            })
+        journal.publish_prepared_report(output)
+        output.write_text('{"tampered":true}\n', encoding="utf-8")
+        with pytest.raises(JournalError, match="不一致"):
+            journal.finalize_report(output)

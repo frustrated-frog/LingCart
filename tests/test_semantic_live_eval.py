@@ -5,7 +5,14 @@ import pytest
 
 from eval import run_semantic_live_eval as semantic_eval
 from eval.eval_journal import EvaluationJournal
-from eval.semantic_contracts import AcceptanceStage, StageBudget, StageExecution, StageSelection, fingerprint
+from eval.semantic_contracts import (
+    AcceptanceStage,
+    SemanticExperimentSpec,
+    StageBudget,
+    StageExecution,
+    StageSelection,
+    fingerprint,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -238,3 +245,112 @@ def test_dataset_and_stage_hashes_are_stable_but_semantic_change_is_detected():
 
     reordered["cases"][0]["message"] += "。"
     assert fingerprint(first) != fingerprint(reordered)
+
+
+def _accepted_experiment_report(profile_id, *, pass_rate, total_tokens, stage_sha, source_sha):
+    manifest = {
+        "dataset_sha256": "dataset",
+        "acceptance_spec_sha256": "acceptance",
+        "stage_contract_sha256": stage_sha,
+        "case_sha256": {"case": "case-sha"},
+        "selected_case_ids": ["case"],
+        "repeats": 1,
+        "executions": [{"mode": "auto", "profile_id": profile_id}],
+        "profiles": {"auto": {"profile_id": profile_id, "profile_sha256": profile_id,
+                                 "execution_sha256": profile_id}},
+        "model_call_budgets": {"auto": {"effective": 2}},
+        "model_configuration": {"providers": [{"provider": "test", "model": "same"}]},
+        "oracle_protocol": {"id": "semantic-goal-oracle", "version": 1},
+        "evaluator_protocol_sha256": "evaluator",
+        "dependency_lock_sha256": "lock",
+        "python_runtime": {"implementation": "CPython", "version": "3.11"},
+        "business_environment": "local_demo_sqlite",
+        "source_files_sha256": {"src/runtime.py": source_sha},
+    }
+    manifest["source_tree_sha256"] = fingerprint(manifest["source_files_sha256"])
+    manifest["experiment_compatibility_sha256"] = fingerprint(
+        semantic_eval._experiment_compatibility_payload(manifest)
+    )
+    report = {
+        "status": "COMPLETED",
+        "manifest": manifest,
+        "samples": [{"case_sha256": "case-sha", "repeat": 1, "mode": "auto"}],
+        "metrics": {"pass_rate": pass_rate, "total_tokens": total_tokens,
+                    "latency_ms": {"mean": 10}},
+    }
+    report["gate"] = {
+        "gate_type": "ACCEPTANCE",
+        "passed": True,
+        "checked_report_sha256": fingerprint(report),
+    }
+    return report
+
+
+def _experiment_spec():
+    return SemanticExperimentSpec.model_validate_json(json.dumps({
+        "schema_version": 1,
+        "experiment_id": "semantic-profile-v1",
+        "baseline_profiles": ["baseline-v1"],
+        "candidate_profiles": ["candidate-v1"],
+        "primary_metrics": [{
+            "name": "pass_rate", "objective": "maximize",
+            "max_regression": 0, "min_improvement": 0.1,
+        }],
+        "guard_metrics": [{
+            "name": "total_tokens", "objective": "minimize",
+            "max_regression": 20, "min_improvement": 0,
+        }],
+    }))
+
+
+def test_experiment_compatibility_allows_declared_profile_and_stage_difference():
+    baseline = _accepted_experiment_report(
+        "baseline-v1", pass_rate=.5, total_tokens=100, stage_sha="baseline-stage", source_sha="base",
+    )
+    candidate = _accepted_experiment_report(
+        "candidate-v1", pass_rate=.8, total_tokens=110, stage_sha="candidate-stage", source_sha="candidate",
+    )
+
+    compatibility = semantic_eval.ExperimentCompatibilityGate.evaluate(
+        baseline, candidate, stage_id="semantic-profile-v1",
+    )
+    admission = semantic_eval.ExperimentGate.evaluate(baseline, candidate, spec=_experiment_spec())
+
+    assert compatibility.passed, compatibility
+    assert compatibility.evidence["profile_difference_allowed"] is True
+    assert admission.passed, admission
+    comparisons = admission.evidence["effect"]["evidence"]["metric_comparisons"]
+    assert {row["metric"] for row in comparisons} == {"pass_rate", "total_tokens"}
+
+
+def test_experiment_gate_rejects_no_effect_and_forged_compatibility_identity():
+    baseline = _accepted_experiment_report(
+        "baseline-v1", pass_rate=.5, total_tokens=100, stage_sha="baseline-stage", source_sha="base",
+    )
+    candidate = _accepted_experiment_report(
+        "candidate-v1", pass_rate=.5, total_tokens=100, stage_sha="candidate-stage", source_sha="candidate",
+    )
+    no_effect = semantic_eval.ExperimentGate.evaluate(baseline, candidate, spec=_experiment_spec())
+    assert not no_effect.passed
+    assert "EXPERIMENT_IMPROVEMENT_NOT_MET" in no_effect.failure_codes
+
+    candidate["manifest"]["model_call_budgets"]["auto"]["effective"] = 3
+    forged = semantic_eval.ExperimentCompatibilityGate.evaluate(
+        baseline, candidate, stage_id="semantic-profile-v1",
+    )
+    assert not forged.passed
+    assert "EXPERIMENT_IDENTITY_INVALID" in forged.failure_codes
+
+
+def test_source_manifest_covers_runtime_closure_and_is_recomputable():
+    manifest = semantic_eval._source_manifest()
+
+    assert manifest["source_manifest_version"] == 2
+    for path in (
+        "src/catalog_concepts.py",
+        "src/constraint_bindings.py",
+        "src/catalog_metadata.py",
+        "src/tools.py",
+    ):
+        assert path in manifest["source_files_sha256"]
+    assert manifest["source_tree_sha256"] == fingerprint(manifest["source_files_sha256"])

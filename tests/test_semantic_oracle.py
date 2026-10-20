@@ -5,7 +5,7 @@ import pytest
 from pydantic import ValidationError
 
 from eval.semantic_contracts import SemanticCase, load_dataset_payload
-from eval.semantic_oracle import apply_mode_consistency, score_semantic_result
+from eval.semantic_oracle import _tool_records, apply_mode_consistency, score_semantic_result
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -199,3 +199,56 @@ def test_allowed_fast_path_uses_actual_tool_evidence_without_fake_model_call():
 
     assert score["passed"], score
     assert not score["false_fast_path"]
+
+
+def test_recovered_tool_result_requires_matching_ledger_and_scope_evidence():
+    case = _case("trusted-timezone-normalization")
+    result = _result(
+        [{"id": "time", "kind": "SYSTEM_TIME", "timezone": "America/New_York"}],
+        [{"tool": "read_clock", "args": {"timezone": "America/New_York"},
+          "result": {"timezone": "America/New_York", "data_source": "RUNTIME_CLOCK",
+                     "observed_at": "now"},
+          "capability_id": "system.clock.read", "objective_id": "time"}],
+    )
+    call = next(event for event in result["events"] if event["type"] == "tool_call")
+    tool_result = next(event for event in result["events"] if event["type"] == "tool_result")
+    call.update(ledger_key="ledger-proof", observation_scope_sha256="scope-proof")
+    tool_result.update(
+        status="REUSED", reused=True, source_ledger="ledger-proof",
+        observation_scope_sha256="scope-proof",
+    )
+
+    score = score_semantic_result(case, result, mode="auto").payload
+
+    assert score["passed"], score
+    tool_result["source_ledger"] = "forged-ledger"
+    forged = score_semantic_result(case, result, mode="auto").payload
+    assert not forged["passed"]
+    assert "AUTHORITATIVE_EVIDENCE_INVALID" in forged["failure_codes"]
+
+
+def test_same_run_reuse_points_to_an_earlier_complete_execution_and_same_scope():
+    events = [
+        {"run_id": "run", "sequence": 1, "type": "tool_call", "tool": "read_clock",
+         "args": {"timezone": "Asia/Shanghai"}, "execution_id": "original",
+         "action_fingerprint": "fingerprint", "observation_scope_sha256": "scope"},
+        {"run_id": "run", "sequence": 2, "type": "tool_result", "tool": "read_clock",
+         "args": {"timezone": "Asia/Shanghai"}, "result": {"timezone": "Asia/Shanghai"},
+         "status": "SUCCEEDED", "execution_id": "original", "action_fingerprint": "fingerprint",
+         "observation_scope_sha256": "scope"},
+        {"run_id": "run", "sequence": 3, "type": "tool_result", "tool": "read_clock",
+         "args": {"timezone": "Asia/Shanghai"}, "result": {"timezone": "Asia/Shanghai"},
+         "status": "REUSED", "reused": True, "execution_id": None,
+         "source_execution_id": "original", "source_sequence": 2,
+         "source_ledger": None, "action_fingerprint": "fingerprint",
+         "observation_scope_sha256": "scope"},
+    ]
+
+    records, failures = _tool_records(events)
+
+    assert failures == []
+    assert len(records) == 2
+    assert records[1]["execution_id"] == "original:reuse:3"
+    events[-1]["observation_scope_sha256"] = "different-scope"
+    _, failures = _tool_records(events)
+    assert failures == ["AUTHORITATIVE_EVIDENCE_INVALID"]
