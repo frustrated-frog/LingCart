@@ -1,265 +1,240 @@
 import json
+from pathlib import Path
 
 import pytest
 
 from eval import run_semantic_live_eval as semantic_eval
+from eval.eval_journal import EvaluationJournal
+from eval.semantic_contracts import AcceptanceStage, StageBudget, StageExecution, StageSelection, fingerprint
+
+
+ROOT = Path(__file__).resolve().parents[1]
 
 
 def _dataset():
-    return {
-        "schema_version": 1,
-        "cases": [
-            {
-                "id": "time",
-                "message": "纽约现在几点",
-                "risk_group": "trusted-facts",
-                "must_use_semantic": True,
-                "expected": {"objectives": ["SYSTEM_TIME"], "statuses": ["SUCCEEDED"]},
-            },
-            {
-                "id": "identity",
-                "message": "你是谁",
-                "risk_group": "conversation",
-                "must_use_semantic": True,
-                "expected": {"commands_any": ["IDENTITY"], "statuses": ["SUCCEEDED"]},
-            },
-        ],
-    }
+    return semantic_eval.load_dataset(ROOT / "eval/semantic_cases.json")
 
 
-def _result(*, status="SUCCEEDED", reason="COMPLETED"):
+def _case(case_id="trusted-timezone-normalization"):
+    return next(case for case in _dataset().cases if case.id == case_id)
+
+
+def _result(*, timezone="America/New_York", status="SUCCEEDED", reason="COMPLETED",
+            max_model_calls=2):
+    run_id = "semantic-runner-test"
+    events = [
+        {"run_id": run_id, "sequence": 1, "type": "model_started",
+         "purpose": "dialogue_understanding", "agent": "intake"},
+        {"run_id": run_id, "sequence": 2, "type": "model_call", "status": "SUCCEEDED",
+         "purpose": "dialogue_understanding", "provider": "test", "model": "fixture"},
+        {"run_id": run_id, "sequence": 3, "type": "tool_call", "tool": "read_clock",
+         "args": {"timezone": timezone}, "execution_id": "clock-execution",
+         "action_fingerprint": "clock-fingerprint", "policy": {"effect": "READ"}},
+        {"run_id": run_id, "sequence": 4, "type": "tool_result", "tool": "read_clock",
+         "args": {"timezone": timezone},
+         "result": {"timezone": timezone, "data_source": "RUNTIME_CLOCK", "observed_at": "now"},
+         "status": "SUCCEEDED", "execution_id": "clock-execution",
+         "action_fingerprint": "clock-fingerprint", "policy": {"effect": "READ"}},
+        {"run_id": run_id, "sequence": 5, "type": "verification",
+         "goal_outcomes": [{"objective_id": "clock", "outcome": "SATISFIED", "step_ids": ["step-1"]}],
+         "all_goals_satisfied": status == "SUCCEEDED", "side_effects_executed": False},
+        {"run_id": run_id, "sequence": 6, "type": "terminal", "status": status, "reason": reason},
+    ]
+    verification = events[-2] | {"type": None, "run_id": None, "sequence": None}
+    verification = {key: value for key, value in verification.items() if value is not None}
     return {
+        "run_id": run_id,
         "status": status,
         "terminal_reason": reason,
         "understanding": {
-            "objectives": [{"kind": "SYSTEM_TIME", "timezone": "America/New_York"}],
+            "objectives": [{"id": "clock", "kind": "SYSTEM_TIME", "timezone": timezone}],
             "commands": [],
         },
-        "plan": {"steps": [{"tool": "read_clock", "args": {"timezone": "America/New_York"}}]},
-        "trace": [{"tool": "read_clock"}],
-        "events": [{
-            "type": "model_call", "status": "SUCCEEDED", "purpose": "dialogue_understanding",
-            "provider": "test", "model": "fixture", "provider_slot": 1,
-        }],
+        "plan": {
+            "steps": [{"step_id": "step-1", "tool": "read_clock", "args": {"timezone": timezone},
+                       "capability_id": "system.clock.read", "objective_id": "clock",
+                       "objective_ids": ["clock"], "status": "SUCCEEDED"}],
+            "verification": verification,
+        },
+        "events": events,
         "usage": {"total_tokens": 42},
-        "budget": {"consumed": {"model_calls": 1}},
+        "budget": {
+            "limits": {"max_model_calls": max_model_calls},
+            "consumed": {"model_calls": 1},
+        },
     }
 
 
-def test_default_cli_is_a_single_case_dry_run_without_evaluation(monkeypatch, capsys):
-    monkeypatch.setattr(semantic_eval, "load_cases", lambda _path: _dataset())
-    monkeypatch.setattr(
-        semantic_eval,
-        "evaluate",
-        lambda *_args, **_kwargs: pytest.fail("默认预检不能执行评测"),
+def _stage(*, modes=("auto",), cap=2, repeats=1, gate_type="smoke"):
+    return AcceptanceStage(
+        id="fixture-stage",
+        gate_type=gate_type,
+        claim_scope="selected_cases_only" if gate_type == "smoke" else "frozen_stage",
+        selection=StageSelection(case_ids=("trusted-timezone-normalization",), all_cases=False),
+        executions=tuple(StageExecution(
+            mode=mode, profile_id="adaptive-v1" if mode == "adaptive" else "baseline-v1"
+        ) for mode in modes),
+        repeats=repeats,
+        budget=StageBudget(max_executions=len(modes) * repeats, max_model_calls_per_run=cap),
+        requires=(),
     )
+
+
+def test_default_cli_uses_frozen_single_smoke_and_never_evaluates(monkeypatch, capsys):
+    monkeypatch.setattr(semantic_eval, "evaluate", lambda *_args, **_kwargs: pytest.fail("dry run cannot execute"))
 
     semantic_eval.main([])
 
     output = capsys.readouterr().out
     assert '"mode": "dry_run"' in output
-    assert '"selected_case_ids": [' in output
-    assert '"time"' in output
+    assert '"stage_id": "single-smoke"' in output
+    assert '"trusted-timezone-normalization"' in output
     assert "未调用模型" in output
 
 
-def test_live_cli_rejects_a_plan_above_budget_before_model_status(monkeypatch, tmp_path):
-    monkeypatch.setattr(semantic_eval, "load_cases", lambda _path: _dataset())
+def test_case_selection_uses_validated_v2_contract_and_rejects_unknown_ids():
+    selected = semantic_eval.select_cases(
+        _dataset(),
+        case_ids=["identity-command", "trusted-timezone-normalization", "identity-command"],
+    )
 
-    with pytest.raises(SystemExit) as error:
-        semantic_eval.main([
-            "--live", "--all-cases", "--mode", "both",
-            "--output", str(tmp_path / "report.json"),
-        ])
-
-    assert error.value.code == 2
-
-
-def test_live_cli_requires_an_immutable_output_path(monkeypatch):
-    monkeypatch.setattr(semantic_eval, "load_cases", lambda _path: _dataset())
-
-    with pytest.raises(SystemExit) as error:
-        semantic_eval.main(["--live", "--case", "time"])
-
-    assert error.value.code == 2
-
-
-def test_live_cli_rejects_tracked_changes_before_loading_model(monkeypatch, tmp_path):
-    monkeypatch.setattr(semantic_eval, "load_cases", lambda _path: _dataset())
-    monkeypatch.setattr(semantic_eval, "_tracked_worktree_clean", lambda: False)
-
-    with pytest.raises(SystemExit) as error:
-        semantic_eval.main([
-            "--live", "--case", "time", "--max-executions", "1",
-            "--output", str(tmp_path / "report.json"),
-        ])
-
-    assert error.value.code == 2
-
-
-def test_case_selection_is_explicit_and_rejects_unknown_ids():
-    selected = semantic_eval.select_cases(_dataset(), case_ids=["identity", "time", "identity"])
-
-    assert [case["id"] for case in selected] == ["identity", "time"]
+    assert [case["id"] for case in selected] == ["identity-command", "trusted-timezone-normalization"]
     with pytest.raises(ValueError, match="未知语义评测案例"):
         semantic_eval.select_cases(_dataset(), case_ids=["missing"])
-
     grouped = semantic_eval.select_cases(_dataset(), groups=["conversation"])
-    assert [case["id"] for case in grouped] == ["identity"]
-    with pytest.raises(ValueError, match="未知语义风险组"):
-        semantic_eval.select_cases(_dataset(), groups=["missing"])
+    assert {case["id"] for case in grouped} == {"identity-command", "capability-paraphrase"}
 
 
-def test_injected_evaluation_records_raw_protocol_and_cost(monkeypatch):
-    from src.intake import TaskIntake
+def test_effective_model_budget_can_only_tighten_runtime_and_stage_limits():
+    assert semantic_eval.effective_model_call_budget("auto", stage_cap=99, cli_cap=99)["effective"] == 8
+    assert semantic_eval.effective_model_call_budget("adaptive", stage_cap=99, cli_cap=99)["effective"] == 16
+    assert semantic_eval.effective_model_call_budget("adaptive", stage_cap=6, cli_cap=4)["effective"] == 4
+    assert semantic_eval.effective_model_call_budget("adaptive", stage_cap=6, cli_cap=99)["effective"] == 6
+    for value in (True, 0, -1, 1.5):
+        with pytest.raises(ValueError, match="正整数"):
+            semantic_eval.effective_model_call_budget("auto", stage_cap=value)
 
-    monkeypatch.setattr(
-        "src.intake.analyze_request",
-        lambda message: TaskIntake(request=message, execution_mode="LLM_REQUIRED", reason="test"),
-    )
+
+def test_injected_evaluation_records_raw_protocol_profile_and_cost():
     seen_limits = []
 
     def runner(_message, *, history, limits):
         seen_limits.append(limits)
         assert history is None
-        return _result()
+        return _result(max_model_calls=limits.max_model_calls)
 
-    dataset = _dataset()
+    stage = _stage(cap=2)
     report = semantic_eval.evaluate(
-        dataset,
-        cases=dataset["cases"][:1],
-        repeats=1,
-        modes=("auto",),
+        _dataset(), cases=[_case().model_dump(mode="json")], repeats=1, modes=("auto",),
         max_model_calls_per_run=2,
         readiness={"configured": True, "providers": [{"provider": "test", "model": "fixture"}]},
-        runners={"auto": runner},
+        runners={"auto": runner}, stage=stage,
     )
 
     assert report["execution_source"] == "test_harness"
     assert report["metrics"]["pass_rate"] == 1
     assert report["metrics"]["model_calls"] == 1
     assert report["metrics"]["total_tokens"] == 42
-    assert report["samples"][0]["understanding"]["objectives"][0]["kind"] == "SYSTEM_TIME"
-    assert report["samples"][0]["plan"]["steps"][0]["tool"] == "read_clock"
+    assert report["samples"][0]["raw_result"]["events"][3]["type"] == "tool_result"
     assert report["samples"][0]["model_providers"] == [{
-        "purpose": "dialogue_understanding", "provider": "test", "model": "fixture", "provider_slot": 1,
+        "purpose": "dialogue_understanding", "provider": "test", "model": "fixture",
     }]
     assert seen_limits[0].max_model_calls == 2
 
 
-def test_auto_adaptive_terminal_mismatch_fails_both_samples(monkeypatch):
-    from src.intake import TaskIntake
-
-    monkeypatch.setattr(
-        "src.intake.analyze_request",
-        lambda message: TaskIntake(request=message, execution_mode="LLM_REQUIRED", reason="test"),
-    )
-    dataset = _dataset()
+def test_auto_adaptive_semantic_mismatch_fails_both_samples():
+    stage = _stage(modes=("auto", "adaptive"), cap=2)
     report = semantic_eval.evaluate(
-        dataset,
-        cases=dataset["cases"][:1],
-        repeats=1,
-        modes=("auto", "adaptive"),
-        max_model_calls_per_run=2,
-        readiness={"configured": True},
+        _dataset(), cases=[_case().model_dump(mode="json")], repeats=1,
+        modes=("auto", "adaptive"), max_model_calls_per_run=2,
+        readiness={"configured": True}, stage=stage,
         runners={
-            "auto": lambda _message, *, history, limits: _result(),
-            "adaptive": lambda _message, *, history, limits: _result(status="PARTIAL", reason="MODEL_STOPPED"),
+            "auto": lambda _message, *, history, limits: _result(
+                timezone="America/New_York", max_model_calls=limits.max_model_calls),
+            "adaptive": lambda _message, *, history, limits: _result(
+                timezone="Europe/London", max_model_calls=limits.max_model_calls),
         },
     )
 
     assert report["metrics"]["auto_adaptive_consistency"] == 0
     assert not any(sample["passed"] for sample in report["samples"])
-    assert all("Auto/Adaptive semantic mismatch" in sample["failures"] for sample in report["samples"])
+    assert all("AUTO_ADAPTIVE_SEMANTIC_MISMATCH" in sample["failure_codes"]
+               for sample in report["samples"])
 
 
-def test_dataset_digest_is_stable_across_key_order():
-    first = _dataset()
-    second = json.loads(json.dumps(first, ensure_ascii=False))
-
-    assert semantic_eval._dataset_digest(first) == semantic_eval._dataset_digest(second)
-
-
-def test_history_is_passed_as_typed_messages(monkeypatch):
-    from src.intake import TaskIntake
-
-    monkeypatch.setattr(
-        "src.intake.analyze_request",
-        lambda message: TaskIntake(request=message, execution_mode="LLM_REQUIRED", reason="test"),
+def test_history_is_passed_as_typed_messages():
+    case = _case("history-order-pronoun")
+    stage = AcceptanceStage(
+        id="history-smoke", gate_type="smoke", claim_scope="selected_cases_only",
+        selection=StageSelection(case_ids=(case.id,), all_cases=False),
+        executions=(StageExecution(mode="auto", profile_id="baseline-v1"),),
+        repeats=1, budget=StageBudget(max_executions=1, max_model_calls_per_run=2), requires=(),
     )
-    case = {
-        **_dataset()["cases"][0],
-        "history": [
-            {"role": "human", "content": "订单号是 1002"},
-            {"role": "assistant", "content": "已经记下订单号。"},
-        ],
-    }
 
     def runner(_message, *, history, limits):
         assert [item.type for item in history] == ["human", "ai"]
-        assert [item.content for item in history] == ["订单号是 1002", "已经记下订单号。"]
-        return _result()
+        assert [item.content for item in history] == ["我想查订单 1002", "已经记下订单 1002。"]
+        raise RuntimeError("stop after history assertion")
 
-    semantic_eval.evaluate(
-        _dataset(), cases=[case], repeats=1, modes=("auto",), max_model_calls_per_run=2,
-        readiness={"configured": True}, runners={"auto": runner},
-    )
-
-
-def test_gate_requires_real_provider_evidence(monkeypatch):
-    from src.intake import TaskIntake
-
-    monkeypatch.setattr(
-        "src.intake.analyze_request",
-        lambda message: TaskIntake(request=message, execution_mode="LLM_REQUIRED", reason="test"),
-    )
     report = semantic_eval.evaluate(
-        _dataset(), cases=_dataset()["cases"][:1], repeats=1, modes=("auto",),
+        _dataset(), cases=[case.model_dump(mode="json")], repeats=1, modes=("auto",),
         max_model_calls_per_run=2, readiness={"configured": True},
-        runners={"auto": lambda _message, *, history, limits: _result()},
-    )
-    assert any("不是由真实模型" in failure for failure in semantic_eval.evaluate_gate(report))
-
-    report["execution_source"] = "real_model"
-    assert semantic_eval.evaluate_gate(report) == []
-
-
-def test_gate_accepts_a_verified_zero_token_fast_path(monkeypatch):
-    from src.intake import TaskIntake
-
-    case = {
-        "id": "history-fast-path",
-        "risk_group": "cross-turn",
-        "message": "它现在到哪了",
-        "must_use_semantic": False,
-        "expected": {
-            "objectives": ["SHIPMENT_TRACKING"],
-            "tools": ["track_shipment"],
-            "statuses": ["SUCCEEDED"],
-        },
-    }
-    monkeypatch.setattr(
-        "src.intake.analyze_request",
-        lambda message: TaskIntake(request=message, execution_mode="DIRECT", reason="history"),
+        runners={"auto": runner}, stage=stage,
     )
 
-    def runner(_message, *, history, limits):
-        return {
-            "status": "SUCCEEDED",
-            "terminal_reason": "COMPLETED",
-            "intake": {"intents": ["SHIPMENT_TRACKING"]},
-            "trace": [{"tool": "track_shipment"}],
-            "events": [],
-            "usage": {"total_tokens": 0},
-            "budget": {"consumed": {"model_calls": 0}},
-        }
+    assert report["status"] == "COMPLETED"
+    assert report["samples"][0]["outcome"] == "EXCEPTION"
 
+
+def test_gate_recomputes_raw_samples_and_rejects_injected_source_even_if_label_is_forged():
+    stage = _stage(cap=2)
     report = semantic_eval.evaluate(
-        {"schema_version": 1, "cases": [case]}, cases=[case], repeats=1, modes=("auto",),
-        max_model_calls_per_run=2, readiness={"configured": True}, runners={"auto": runner},
+        _dataset(), cases=[_case().model_dump(mode="json")], repeats=1, modes=("auto",),
+        max_model_calls_per_run=2,
+        readiness={"configured": True, "providers": [{"provider": "test", "model": "fixture"}]},
+        runners={"auto": lambda _message, *, history, limits: _result(max_model_calls=limits.max_model_calls)},
+        stage=stage,
     )
     report["execution_source"] = "real_model"
+    report["samples"][0]["passed"] = True
+    report["metrics"]["pass_rate"] = 1
 
-    assert report["samples"][0]["objective_source"] == "deterministic_intake"
-    assert report["samples"][0]["model_calls"] == 0
-    assert semantic_eval.evaluate_gate(report) == []
+    receipt = semantic_eval.SmokeGate.evaluate(report, _dataset(), stage)
+
+    assert not receipt.passed
+    assert "PROFILE_IDENTITY_MISSING" in receipt.failure_codes
+
+
+def test_smoke_report_cannot_be_promoted_by_acceptance_gate():
+    with pytest.raises(ValueError, match="不能把 Smoke"):
+        semantic_eval.AcceptanceGate.evaluate({}, _dataset(), _stage(gate_type="smoke"))
+
+
+def test_sample_exception_is_journaled_before_evaluation_stops(tmp_path):
+    case = _case()
+    stage = _stage(cap=2)
+    journal_path = tmp_path / "report.journal.jsonl"
+
+    with EvaluationJournal(journal_path, resume=False) as journal:
+        report = semantic_eval.evaluate(
+            _dataset(), cases=[case.model_dump(mode="json")], repeats=1, modes=("auto",),
+            max_model_calls_per_run=2, readiness={"configured": True},
+            runners={"auto": lambda *_args, **_kwargs: (_ for _ in ()).throw(TimeoutError("secret"))},
+            stage=stage, journal=journal,
+        )
+        terminal = [record for record in journal.records if record["record_type"] == "SAMPLE_TERMINAL"]
+
+    assert report["samples"][0]["outcome"] == "EXCEPTION"
+    assert len(terminal) == 1
+    assert terminal[0]["payload"]["sample"]["exception"]["safe_message"].startswith("模型或运行时")
+    assert "secret" not in journal_path.read_text()
+
+
+def test_dataset_and_stage_hashes_are_stable_but_semantic_change_is_detected():
+    dataset = _dataset()
+    first = dataset.model_dump(mode="json")
+    reordered = json.loads(json.dumps(first, ensure_ascii=False))
+    assert fingerprint(first) == fingerprint(reordered)
+
+    reordered["cases"][0]["message"] += "。"
+    assert fingerprint(first) != fingerprint(reordered)

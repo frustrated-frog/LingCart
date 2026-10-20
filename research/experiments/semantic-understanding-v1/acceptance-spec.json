@@ -1,74 +1,76 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "experiment_id": "semantic-understanding-v1",
-  "dataset": "eval/semantic_cases.json",
-  "dataset_cases": 22,
-  "risk_groups": [
-    "conversation",
-    "correction",
-    "cross-turn",
-    "discovery",
-    "evidence-boundary",
-    "general-knowledge",
-    "mixed-capability",
-    "multi-goal",
-    "multilingual",
-    "negation",
-    "trusted-facts"
-  ],
+  "dataset": {
+    "path": "eval/semantic_cases.json",
+    "dataset_id": "semantic-understanding",
+    "dataset_version": "2.0.0",
+    "sha256": "10377b27b3f930c86eb954e21a28a982fc82d4df1d1adcf7c4fd1f3359b58e23",
+    "case_count": 22
+  },
+  "oracle_protocol": {"id": "semantic-goal-oracle", "version": 1},
   "stages": [
     {
       "id": "single-smoke",
-      "case_ids": ["trusted-timezone-normalization"],
-      "modes": ["auto"],
+      "gate_type": "smoke",
+      "claim_scope": "selected_cases_only",
+      "selection": {"case_ids": ["trusted-timezone-normalization"], "all_cases": false},
+      "executions": [{"mode": "auto", "profile_id": "baseline-v1"}],
       "repeats": 1,
-      "max_executions": 1,
-      "max_model_calls_per_run": 2
+      "budget": {"max_executions": 1, "max_model_calls_per_run": 2},
+      "requires": []
     },
     {
       "id": "risk-sample",
-      "case_ids": [
-        "negated-handoff-order-shipment",
-        "multi-goal-time-and-order",
-        "history-order-pronoun",
-        "weather-evidence-boundary",
-        "unsupported-booking-action"
-      ],
-      "modes": ["auto"],
+      "gate_type": "smoke",
+      "claim_scope": "selected_cases_only",
+      "selection": {
+        "case_ids": [
+          "negated-handoff-order-shipment",
+          "multi-goal-time-and-order",
+          "history-order-pronoun",
+          "weather-evidence-boundary",
+          "unsupported-booking-action"
+        ],
+        "all_cases": false
+      },
+      "executions": [{"mode": "auto", "profile_id": "baseline-v1"}],
       "repeats": 1,
-      "max_executions": 5,
-      "max_model_calls_per_run": 3
+      "budget": {"max_executions": 5, "max_model_calls_per_run": 3},
+      "requires": ["single-smoke"]
     },
     {
       "id": "auto-baseline",
-      "selection": "all-cases",
-      "modes": ["auto"],
+      "gate_type": "acceptance",
+      "claim_scope": "frozen_stage",
+      "selection": {"case_ids": [], "all_cases": true},
+      "executions": [{"mode": "auto", "profile_id": "baseline-v1"}],
       "repeats": 1,
-      "max_executions": 22,
-      "max_model_calls_per_run": 4
+      "budget": {"max_executions": 22, "max_model_calls_per_run": 4},
+      "requires": ["single-smoke", "risk-sample"]
     },
     {
       "id": "mode-consistency",
-      "case_ids": [
-        "trusted-timezone-normalization",
-        "negated-payment-query",
-        "multi-goal-time-and-order",
-        "history-order-pronoun",
-        "mixed-supported-and-unsupported"
+      "gate_type": "acceptance",
+      "claim_scope": "frozen_stage",
+      "selection": {
+        "case_ids": [
+          "trusted-timezone-normalization",
+          "negated-payment-query",
+          "multi-goal-time-and-order",
+          "history-order-pronoun",
+          "mixed-supported-and-unsupported"
+        ],
+        "all_cases": false
+      },
+      "executions": [
+        {"mode": "auto", "profile_id": "baseline-v1"},
+        {"mode": "adaptive", "profile_id": "adaptive-v1"}
       ],
-      "modes": ["auto", "adaptive"],
       "repeats": 1,
-      "max_executions": 10,
-      "max_model_calls_per_run": 6
+      "budget": {"max_executions": 10, "max_model_calls_per_run": 6},
+      "requires": ["auto-baseline"]
     }
   ],
-  "gate": {
-    "pass_rate": 1.0,
-    "goal_recall": 1.0,
-    "false_fast_path_rate": 0.0,
-    "auto_adaptive_consistency": 1.0,
-    "require_provider_evidence": true,
-    "require_source_and_dataset_fingerprints": true
-  },
-  "progression_rule": "只有当前阶段通过并完成失败分析后才能提高下一阶段的调用预算；不得为获得通过结果跳过或删除失败案例。"
+  "progression_rule": "只有当前阶段的完整样本网格通过并保存失败分析后，才允许提高下一阶段调用预算；临时案例选择只能形成 ad_hoc_smoke，不能生成 Acceptance 或 Experiment 结论。"
 }

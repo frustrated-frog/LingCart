@@ -1,163 +1,143 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
+  "dataset_id": "semantic-understanding",
+  "dataset_version": "2.0.0",
   "cases": [
     {
-      "id": "negated-handoff-order-shipment",
-      "risk_group": "negation",
+      "id": "negated-handoff-order-shipment", "split": "acceptance", "risk_group": "negation",
       "message": "不要转人工，先帮我查订单 1002 的物流",
-      "must_use_semantic": true,
-      "expected": {"objectives": ["SHIPMENT_TRACKING"], "forbidden_commands": ["HUMAN_HANDOFF"], "statuses": ["SUCCEEDED"]}
+      "execution_policy": {"semantic_path": "required", "side_effects": "forbidden", "trace_integrity": "required"},
+      "oracle": {
+        "goal_set": "exact",
+        "goals": [{"oracle_goal_id": "shipment-1002", "objective_kind": "SHIPMENT_TRACKING", "objective": [{"path": "order_id", "operator": "eq", "value": 1002, "origin": "latest_turn"}], "capability_id": "shipment.track", "required_operations": [{"operation": "track_shipment", "args": [{"path": "order_id", "operator": "eq", "value": 1002}], "result": [{"path": "order_id", "operator": "eq", "value": 1002}], "min_calls": 1, "max_calls": 1, "accepted_statuses": ["SUCCEEDED", "REUSED"]}], "outcome": "SATISFIED"}],
+        "commands": {"required_all": [], "required_any": [], "forbidden": ["HUMAN_HANDOFF"], "allow_extra": false},
+        "forbidden_operations": ["escalate_to_human"],
+        "terminal": {"statuses": ["SUCCEEDED"], "reason": "COMPLETED", "all_goals_satisfied": true}
+      }
     },
     {
-      "id": "negative-catalog-constraint",
-      "risk_group": "negation",
+      "id": "negative-catalog-constraint", "split": "acceptance", "risk_group": "negation",
       "message": "推荐预算 500 元的耳机，不要主动降噪",
-      "must_use_semantic": true,
-      "expected": {"objectives": ["PRODUCT_DISCOVERY"], "objective_fields": {"PRODUCT_DISCOVERY": {"excluded_terms": ["主动降噪"]}}, "statuses": ["SUCCEEDED"]}
+      "execution_policy": {"semantic_path": "required", "side_effects": "forbidden", "trace_integrity": "required"},
+      "oracle": {
+        "goal_set": "exact",
+        "goals": [{"oracle_goal_id": "headphone-discovery", "objective_kind": "PRODUCT_DISCOVERY", "objective": [{"path": "category", "operator": "eq", "value": "耳机", "origin": "latest_turn"}, {"path": "max_price", "operator": "eq", "value": 500.0, "origin": "latest_turn"}, {"path": "excluded_terms", "operator": "contains_all", "value": ["主动降噪"], "origin": "latest_turn"}], "capability_id": "catalog.discover", "required_operations": [{"operation": "discover_products", "args": [{"path": "category", "operator": "eq", "value": "耳机"}, {"path": "max_price", "operator": "eq", "value": 500.0}, {"path": "excluded_terms", "operator": "contains_all", "value": ["主动降噪"]}], "result": [{"path": "data_source", "operator": "eq", "value": "DEMO_CATALOG"}], "min_calls": 1, "max_calls": 1, "accepted_statuses": ["SUCCEEDED", "REUSED"]}], "outcome": "SATISFIED"}],
+        "commands": {"required_all": [], "required_any": [], "forbidden": [], "allow_extra": false}, "forbidden_operations": [],
+        "terminal": {"statuses": ["SUCCEEDED"], "reason": "COMPLETED", "all_goals_satisfied": true}
+      }
     },
     {
-      "id": "open-product-discovery",
-      "risk_group": "discovery",
-      "message": "给我推荐买些什么",
-      "must_use_semantic": true,
-      "expected": {"objectives": ["PRODUCT_DISCOVERY"], "statuses": ["SUCCEEDED"]}
+      "id": "open-product-discovery", "split": "acceptance", "risk_group": "discovery", "message": "给我推荐买些什么",
+      "execution_policy": {"semantic_path": "required", "side_effects": "forbidden", "trace_integrity": "required"},
+      "oracle": {"goal_set": "exact", "goals": [{"oracle_goal_id": "open-discovery", "objective_kind": "PRODUCT_DISCOVERY", "objective": [], "capability_id": "catalog.discover", "required_operations": [{"operation": "discover_products", "args": [], "result": [{"path": "data_source", "operator": "eq", "value": "DEMO_CATALOG"}], "min_calls": 1, "max_calls": 1, "accepted_statuses": ["SUCCEEDED", "REUSED"]}], "outcome": "SATISFIED"}], "commands": {"required_all": [], "required_any": [], "forbidden": [], "allow_extra": false}, "forbidden_operations": [], "terminal": {"statuses": ["SUCCEEDED"], "reason": "COMPLETED", "all_goals_satisfied": true}}
     },
     {
-      "id": "multi-goal-order-and-calculation",
-      "risk_group": "multi-goal",
-      "message": "瞅瞅 1002 那单进展，然后计算 2+2",
-      "must_use_semantic": true,
-      "expected": {"objectives": ["ORDER_STATUS", "CALCULATE"], "statuses": ["SUCCEEDED"]}
+      "id": "multi-goal-order-and-calculation", "split": "acceptance", "risk_group": "multi-goal", "message": "瞅瞅 1002 那单进展，然后计算 2+2",
+      "execution_policy": {"semantic_path": "required", "side_effects": "forbidden", "trace_integrity": "required"},
+      "oracle": {"goal_set": "exact", "goals": [
+        {"oracle_goal_id": "order-1002", "objective_kind": "ORDER_STATUS", "objective": [{"path": "order_id", "operator": "eq", "value": 1002, "origin": "latest_turn"}], "capability_id": "order.status.read", "required_operations": [{"operation": "get_order_status", "args": [{"path": "order_id", "operator": "eq", "value": 1002}], "result": [{"path": "order_id", "operator": "eq", "value": 1002}], "min_calls": 1, "max_calls": 1, "accepted_statuses": ["SUCCEEDED", "REUSED"]}], "outcome": "SATISFIED"},
+        {"oracle_goal_id": "calculation-2-plus-2", "objective_kind": "CALCULATE", "objective": [{"path": "expression", "operator": "eq", "value": "2+2", "origin": "latest_turn"}], "capability_id": "system.math.calculate", "required_operations": [{"operation": "calculate", "args": [{"path": "expression", "operator": "eq", "value": "2+2"}], "result": [{"path": "result", "operator": "eq", "value": 4}, {"path": "data_source", "operator": "eq", "value": "DETERMINISTIC_CALCULATOR"}], "min_calls": 1, "max_calls": 1, "accepted_statuses": ["SUCCEEDED", "REUSED"]}], "outcome": "SATISFIED"}
+      ], "commands": {"required_all": [], "required_any": [], "forbidden": [], "allow_extra": false}, "forbidden_operations": [], "terminal": {"statuses": ["SUCCEEDED"], "reason": "COMPLETED", "all_goals_satisfied": true}}
     },
     {
-      "id": "trusted-timezone-normalization",
-      "risk_group": "trusted-facts",
-      "message": "纽约现在几点",
-      "must_use_semantic": true,
-      "expected": {"objectives": ["SYSTEM_TIME"], "plan_args": {"read_clock": {"timezone": "America/New_York"}}, "statuses": ["SUCCEEDED"]}
+      "id": "trusted-timezone-normalization", "split": "smoke", "risk_group": "trusted-facts", "message": "纽约现在几点",
+      "execution_policy": {"semantic_path": "required", "side_effects": "forbidden", "trace_integrity": "required"},
+      "oracle": {"goal_set": "exact", "goals": [{"oracle_goal_id": "new-york-time", "objective_kind": "SYSTEM_TIME", "objective": [{"path": "timezone", "operator": "eq", "value": "America/New_York"}], "capability_id": "system.clock.read", "required_operations": [{"operation": "read_clock", "args": [{"path": "timezone", "operator": "eq", "value": "America/New_York"}], "result": [{"path": "timezone", "operator": "eq", "value": "America/New_York"}, {"path": "data_source", "operator": "eq", "value": "RUNTIME_CLOCK"}, {"path": "observed_at", "operator": "present"}], "min_calls": 1, "max_calls": 1, "accepted_statuses": ["SUCCEEDED", "REUSED"]}], "outcome": "SATISFIED"}], "commands": {"required_all": [], "required_any": [], "forbidden": [], "allow_extra": false}, "forbidden_operations": [], "terminal": {"statuses": ["SUCCEEDED"], "reason": "COMPLETED", "all_goals_satisfied": true}}
     },
     {
-      "id": "identity-command",
-      "risk_group": "conversation",
-      "message": "你是谁，能做什么？",
-      "must_use_semantic": true,
-      "expected": {"commands_any": ["IDENTITY", "CAPABILITIES"], "statuses": ["SUCCEEDED"]}
+      "id": "identity-command", "split": "acceptance", "risk_group": "conversation", "message": "你是谁，能做什么？",
+      "execution_policy": {"semantic_path": "required", "side_effects": "forbidden", "trace_integrity": "required"},
+      "oracle": {"goal_set": "exact", "goals": [], "commands": {"required_all": ["IDENTITY", "CAPABILITIES"], "required_any": [], "forbidden": [], "allow_extra": false}, "forbidden_operations": [], "terminal": {"statuses": ["SUCCEEDED"], "reason": "COMPLETED", "all_goals_satisfied": null}}
     },
     {
-      "id": "realtime-evidence-boundary",
-      "risk_group": "evidence-boundary",
-      "message": "今天上海金价是多少",
-      "must_use_semantic": true,
-      "expected": {"objectives": ["GENERAL_ANSWER"], "objective_fields": {"GENERAL_ANSWER": {"evidence_requirement": "REALTIME_EXTERNAL"}}, "statuses": ["PARTIAL"], "terminal_reason": "EVIDENCE_UNAVAILABLE"}
+      "id": "realtime-evidence-boundary", "split": "acceptance", "risk_group": "evidence-boundary", "message": "今天上海金价是多少",
+      "execution_policy": {"semantic_path": "required", "side_effects": "forbidden", "trace_integrity": "required"},
+      "oracle": {"goal_set": "exact", "goals": [{"oracle_goal_id": "shanghai-gold-price", "objective_kind": "GENERAL_ANSWER", "objective": [{"path": "evidence_requirement", "operator": "eq", "value": "REALTIME_EXTERNAL"}], "capability_id": null, "required_operations": [], "outcome": null}], "commands": {"required_all": [], "required_any": [], "forbidden": ["UNSUPPORTED"], "allow_extra": false}, "forbidden_operations": [], "terminal": {"statuses": ["PARTIAL"], "reason": "EVIDENCE_UNAVAILABLE", "all_goals_satisfied": false}}
     },
     {
-      "id": "stable-general-answer",
-      "risk_group": "general-knowledge",
-      "message": "解释什么是机会成本",
-      "must_use_semantic": true,
-      "expected": {"objectives": ["GENERAL_ANSWER"], "statuses": ["SUCCEEDED"]}
+      "id": "stable-general-answer", "split": "acceptance", "risk_group": "general-knowledge", "message": "解释什么是机会成本",
+      "execution_policy": {"semantic_path": "required", "side_effects": "forbidden", "trace_integrity": "required"},
+      "oracle": {"goal_set": "exact", "goals": [{"oracle_goal_id": "opportunity-cost", "objective_kind": "GENERAL_ANSWER", "objective": [{"path": "evidence_requirement", "operator": "eq", "value": "MODEL_KNOWLEDGE"}], "capability_id": null, "required_operations": [], "outcome": null}], "commands": {"required_all": [], "required_any": [], "forbidden": [], "allow_extra": false}, "forbidden_operations": [], "terminal": {"statuses": ["SUCCEEDED"], "reason": "COMPLETED", "all_goals_satisfied": true}}
     },
     {
-      "id": "correction-scope",
-      "risk_group": "correction",
-      "message": "不是查订单 1002 的状态，而是查物流",
-      "must_use_semantic": true,
-      "expected": {"objectives": ["SHIPMENT_TRACKING"], "forbidden_objectives": ["ORDER_STATUS"], "statuses": ["SUCCEEDED"]}
+      "id": "correction-scope", "split": "acceptance", "risk_group": "correction", "message": "不是查订单 1002 的状态，而是查物流",
+      "execution_policy": {"semantic_path": "required", "side_effects": "forbidden", "trace_integrity": "required"},
+      "oracle": {"goal_set": "exact", "goals": [{"oracle_goal_id": "corrected-shipment-1002", "objective_kind": "SHIPMENT_TRACKING", "objective": [{"path": "order_id", "operator": "eq", "value": 1002}], "capability_id": "shipment.track", "required_operations": [{"operation": "track_shipment", "args": [{"path": "order_id", "operator": "eq", "value": 1002}], "result": [{"path": "order_id", "operator": "eq", "value": 1002}], "min_calls": 1, "max_calls": 1, "accepted_statuses": ["SUCCEEDED", "REUSED"]}], "outcome": "SATISFIED"}], "commands": {"required_all": [], "required_any": [], "forbidden": [], "allow_extra": false}, "forbidden_operations": ["get_order_status"], "terminal": {"statuses": ["SUCCEEDED"], "reason": "COMPLETED", "all_goals_satisfied": true}}
     },
     {
-      "id": "mixed-supported-and-unsupported",
-      "risk_group": "mixed-capability",
-      "message": "查订单 1002 的状态，然后替我买一张去冰岛的机票",
-      "must_use_semantic": true,
-      "expected": {"objectives": ["ORDER_STATUS"], "commands_any": ["UNSUPPORTED"], "statuses": ["PARTIAL"]}
+      "id": "mixed-supported-and-unsupported", "split": "acceptance", "risk_group": "mixed-capability", "message": "查订单 1002 的状态，然后替我买一张去冰岛的机票",
+      "execution_policy": {"semantic_path": "required", "side_effects": "forbidden", "trace_integrity": "required"},
+      "oracle": {"goal_set": "exact", "goals": [{"oracle_goal_id": "order-status-1002", "objective_kind": "ORDER_STATUS", "objective": [{"path": "order_id", "operator": "eq", "value": 1002}], "capability_id": "order.status.read", "required_operations": [{"operation": "get_order_status", "args": [{"path": "order_id", "operator": "eq", "value": 1002}], "result": [{"path": "order_id", "operator": "eq", "value": 1002}], "min_calls": 1, "max_calls": 1, "accepted_statuses": ["SUCCEEDED", "REUSED"]}], "outcome": "SATISFIED"}], "commands": {"required_all": ["UNSUPPORTED"], "required_any": [], "forbidden": [], "allow_extra": false}, "forbidden_operations": [], "terminal": {"statuses": ["PARTIAL"], "reason": "PARTIAL_UNSUPPORTED_INTENT", "all_goals_satisfied": true}}
     },
     {
-      "id": "current-date-and-weekday",
-      "risk_group": "trusted-facts",
-      "message": "今天是几月几日，星期几？",
-      "must_use_semantic": true,
-      "expected": {"objectives": ["SYSTEM_TIME"], "tools": ["read_clock"], "statuses": ["SUCCEEDED"]}
+      "id": "current-date-and-weekday", "split": "acceptance", "risk_group": "trusted-facts", "message": "今天是几月几日，星期几？",
+      "execution_policy": {"semantic_path": "required", "side_effects": "forbidden", "trace_integrity": "required"},
+      "oracle": {"goal_set": "exact", "goals": [{"oracle_goal_id": "current-date", "objective_kind": "SYSTEM_TIME", "objective": [], "capability_id": "system.clock.read", "required_operations": [{"operation": "read_clock", "args": [{"path": "timezone", "operator": "eq", "value": "Asia/Shanghai"}], "result": [{"path": "date", "operator": "present"}, {"path": "weekday", "operator": "present"}, {"path": "data_source", "operator": "eq", "value": "RUNTIME_CLOCK"}], "min_calls": 1, "max_calls": 1, "accepted_statuses": ["SUCCEEDED", "REUSED"]}], "outcome": "SATISFIED"}], "commands": {"required_all": [], "required_any": [], "forbidden": [], "allow_extra": false}, "forbidden_operations": [], "terminal": {"statuses": ["SUCCEEDED"], "reason": "COMPLETED", "all_goals_satisfied": true}}
     },
     {
-      "id": "english-tokyo-time",
-      "risk_group": "trusted-facts",
-      "message": "What time is it in Tokyo right now?",
-      "must_use_semantic": true,
-      "expected": {"objectives": ["SYSTEM_TIME"], "plan_args": {"read_clock": {"timezone": "Asia/Tokyo"}}, "tools": ["read_clock"], "statuses": ["SUCCEEDED"]}
+      "id": "english-tokyo-time", "split": "acceptance", "risk_group": "trusted-facts", "message": "What time is it in Tokyo right now?",
+      "execution_policy": {"semantic_path": "required", "side_effects": "forbidden", "trace_integrity": "required"},
+      "oracle": {"goal_set": "exact", "goals": [{"oracle_goal_id": "tokyo-time", "objective_kind": "SYSTEM_TIME", "objective": [{"path": "timezone", "operator": "eq", "value": "Asia/Tokyo"}], "capability_id": "system.clock.read", "required_operations": [{"operation": "read_clock", "args": [{"path": "timezone", "operator": "eq", "value": "Asia/Tokyo"}], "result": [{"path": "timezone", "operator": "eq", "value": "Asia/Tokyo"}, {"path": "data_source", "operator": "eq", "value": "RUNTIME_CLOCK"}], "min_calls": 1, "max_calls": 1, "accepted_statuses": ["SUCCEEDED", "REUSED"]}], "outcome": "SATISFIED"}], "commands": {"required_all": [], "required_any": [], "forbidden": [], "allow_extra": false}, "forbidden_operations": [], "terminal": {"statuses": ["SUCCEEDED"], "reason": "COMPLETED", "all_goals_satisfied": true}}
     },
     {
-      "id": "natural-calculation",
-      "risk_group": "trusted-facts",
-      "message": "帮我算一下 (18+6)/3",
-      "must_use_semantic": true,
-      "expected": {"objectives": ["CALCULATE"], "tools": ["calculate"], "statuses": ["SUCCEEDED"]}
+      "id": "natural-calculation", "split": "acceptance", "risk_group": "trusted-facts", "message": "帮我算一下 (18+6)/3",
+      "execution_policy": {"semantic_path": "required", "side_effects": "forbidden", "trace_integrity": "required"},
+      "oracle": {"goal_set": "exact", "goals": [{"oracle_goal_id": "arithmetic-expression", "objective_kind": "CALCULATE", "objective": [{"path": "expression", "operator": "eq", "value": "(18+6)/3"}], "capability_id": "system.math.calculate", "required_operations": [{"operation": "calculate", "args": [{"path": "expression", "operator": "eq", "value": "(18+6)/3"}], "result": [{"path": "result", "operator": "eq", "value": 8.0}, {"path": "data_source", "operator": "eq", "value": "DETERMINISTIC_CALCULATOR"}], "min_calls": 1, "max_calls": 1, "accepted_statuses": ["SUCCEEDED", "REUSED"]}], "outcome": "SATISFIED"}], "commands": {"required_all": [], "required_any": [], "forbidden": [], "allow_extra": false}, "forbidden_operations": [], "terminal": {"statuses": ["SUCCEEDED"], "reason": "COMPLETED", "all_goals_satisfied": true}}
     },
     {
-      "id": "english-shipment-paraphrase",
-      "risk_group": "multilingual",
-      "message": "Could you check where order 1002 is right now?",
-      "must_use_semantic": true,
-      "expected": {"objectives": ["SHIPMENT_TRACKING"], "tools": ["track_shipment"], "statuses": ["SUCCEEDED"]}
+      "id": "english-shipment-paraphrase", "split": "acceptance", "risk_group": "multilingual", "message": "Could you check where order 1002 is right now?",
+      "execution_policy": {"semantic_path": "required", "side_effects": "forbidden", "trace_integrity": "required"},
+      "oracle": {"goal_set": "exact", "goals": [{"oracle_goal_id": "english-shipment-1002", "objective_kind": "SHIPMENT_TRACKING", "objective": [{"path": "order_id", "operator": "eq", "value": 1002}], "capability_id": "shipment.track", "required_operations": [{"operation": "track_shipment", "args": [{"path": "order_id", "operator": "eq", "value": 1002}], "result": [{"path": "order_id", "operator": "eq", "value": 1002}], "min_calls": 1, "max_calls": 1, "accepted_statuses": ["SUCCEEDED", "REUSED"]}], "outcome": "SATISFIED"}], "commands": {"required_all": [], "required_any": [], "forbidden": [], "allow_extra": false}, "forbidden_operations": [], "terminal": {"statuses": ["SUCCEEDED"], "reason": "COMPLETED", "all_goals_satisfied": true}}
     },
     {
-      "id": "negated-payment-query",
-      "risk_group": "negation",
-      "message": "不要支付订单 1001，只查一下它的支付状态",
-      "must_use_semantic": true,
-      "expected": {"objectives": ["PAYMENT_STATUS"], "forbidden_objectives": ["PAYMENT_PROCESS"], "tools": ["get_payment_status"], "forbidden_tools": ["process_payment"], "statuses": ["SUCCEEDED"]}
+      "id": "negated-payment-query", "split": "acceptance", "risk_group": "negation", "message": "不要支付订单 1001，只查一下它的支付状态",
+      "execution_policy": {"semantic_path": "required", "side_effects": "forbidden", "trace_integrity": "required"},
+      "oracle": {"goal_set": "exact", "goals": [{"oracle_goal_id": "payment-status-1001", "objective_kind": "PAYMENT_STATUS", "objective": [{"path": "order_id", "operator": "eq", "value": 1001}], "capability_id": "payment.status.read", "required_operations": [{"operation": "get_payment_status", "args": [{"path": "order_id", "operator": "eq", "value": 1001}], "result": [{"path": "order_id", "operator": "eq", "value": 1001}], "min_calls": 1, "max_calls": 1, "accepted_statuses": ["SUCCEEDED", "REUSED"]}], "outcome": "SATISFIED"}], "commands": {"required_all": [], "required_any": [], "forbidden": [], "allow_extra": false}, "forbidden_operations": ["process_payment"], "terminal": {"statuses": ["SUCCEEDED"], "reason": "COMPLETED", "all_goals_satisfied": true}}
     },
     {
-      "id": "multi-goal-time-and-order",
-      "risk_group": "multi-goal",
-      "message": "告诉我今天的日期，然后查订单 1002 的状态",
-      "must_use_semantic": true,
-      "expected": {"objectives": ["SYSTEM_TIME", "ORDER_STATUS"], "tools": ["read_clock", "get_order_status"], "statuses": ["SUCCEEDED"]}
+      "id": "multi-goal-time-and-order", "split": "acceptance", "risk_group": "multi-goal", "message": "告诉我今天的日期，然后查订单 1002 的状态",
+      "execution_policy": {"semantic_path": "required", "side_effects": "forbidden", "trace_integrity": "required"},
+      "oracle": {"goal_set": "exact", "goals": [
+        {"oracle_goal_id": "date-goal", "objective_kind": "SYSTEM_TIME", "objective": [], "capability_id": "system.clock.read", "required_operations": [{"operation": "read_clock", "args": [{"path": "timezone", "operator": "eq", "value": "Asia/Shanghai"}], "result": [{"path": "date", "operator": "present"}], "min_calls": 1, "max_calls": 1, "accepted_statuses": ["SUCCEEDED", "REUSED"]}], "outcome": "SATISFIED"},
+        {"oracle_goal_id": "order-goal-1002", "objective_kind": "ORDER_STATUS", "objective": [{"path": "order_id", "operator": "eq", "value": 1002}], "capability_id": "order.status.read", "required_operations": [{"operation": "get_order_status", "args": [{"path": "order_id", "operator": "eq", "value": 1002}], "result": [{"path": "order_id", "operator": "eq", "value": 1002}], "min_calls": 1, "max_calls": 1, "accepted_statuses": ["SUCCEEDED", "REUSED"]}], "outcome": "SATISFIED"}
+      ], "commands": {"required_all": [], "required_any": [], "forbidden": [], "allow_extra": false}, "forbidden_operations": [], "terminal": {"statuses": ["SUCCEEDED"], "reason": "COMPLETED", "all_goals_satisfied": true}}
     },
     {
-      "id": "weather-evidence-boundary",
-      "risk_group": "evidence-boundary",
-      "message": "伦敦现在天气怎么样？",
-      "must_use_semantic": true,
-      "expected": {"objectives": ["GENERAL_ANSWER"], "objective_fields": {"GENERAL_ANSWER": {"evidence_requirement": "REALTIME_EXTERNAL"}}, "statuses": ["PARTIAL"], "terminal_reason": "EVIDENCE_UNAVAILABLE"}
+      "id": "weather-evidence-boundary", "split": "acceptance", "risk_group": "evidence-boundary", "message": "伦敦现在天气怎么样？",
+      "execution_policy": {"semantic_path": "required", "side_effects": "forbidden", "trace_integrity": "required"},
+      "oracle": {"goal_set": "exact", "goals": [{"oracle_goal_id": "london-weather", "objective_kind": "GENERAL_ANSWER", "objective": [{"path": "evidence_requirement", "operator": "eq", "value": "REALTIME_EXTERNAL"}], "capability_id": null, "required_operations": [], "outcome": null}], "commands": {"required_all": [], "required_any": [], "forbidden": ["UNSUPPORTED"], "allow_extra": false}, "forbidden_operations": [], "terminal": {"statuses": ["PARTIAL"], "reason": "EVIDENCE_UNAVAILABLE", "all_goals_satisfied": false}}
     },
     {
-      "id": "capability-paraphrase",
-      "risk_group": "conversation",
-      "message": "第一次来，你都可以替我做哪些事情？",
-      "must_use_semantic": true,
-      "expected": {"commands_any": ["CAPABILITIES"], "statuses": ["SUCCEEDED"]}
+      "id": "capability-paraphrase", "split": "acceptance", "risk_group": "conversation", "message": "第一次来，你都可以替我做哪些事情？",
+      "execution_policy": {"semantic_path": "required", "side_effects": "forbidden", "trace_integrity": "required"},
+      "oracle": {"goal_set": "exact", "goals": [], "commands": {"required_all": ["CAPABILITIES"], "required_any": [], "forbidden": [], "allow_extra": false}, "forbidden_operations": [], "terminal": {"statuses": ["SUCCEEDED"], "reason": "COMPLETED", "all_goals_satisfied": null}}
     },
     {
-      "id": "unsupported-booking-action",
-      "risk_group": "mixed-capability",
-      "message": "帮我预订明晚在巴黎的酒店",
-      "must_use_semantic": true,
-      "expected": {"commands_any": ["UNSUPPORTED"], "statuses": ["FAILED"], "terminal_reason": "UNSUPPORTED_INTENT"}
+      "id": "unsupported-booking-action", "split": "acceptance", "risk_group": "mixed-capability", "message": "帮我预订明晚在巴黎的酒店",
+      "execution_policy": {"semantic_path": "required", "side_effects": "forbidden", "trace_integrity": "required"},
+      "oracle": {"goal_set": "exact", "goals": [], "commands": {"required_all": ["UNSUPPORTED"], "required_any": [], "forbidden": [], "allow_extra": false}, "forbidden_operations": [], "terminal": {"statuses": ["FAILED"], "reason": "UNSUPPORTED_INTENT", "all_goals_satisfied": null}}
     },
     {
-      "id": "history-order-pronoun",
-      "risk_group": "cross-turn",
-      "history": [
-        {"role": "human", "content": "我想查订单 1002"},
-        {"role": "assistant", "content": "已经记下订单 1002。"}
-      ],
-      "message": "它现在到哪了？",
-      "must_use_semantic": false,
-      "expected": {"objectives": ["SHIPMENT_TRACKING"], "tools": ["track_shipment"], "statuses": ["SUCCEEDED"]}
+      "id": "history-order-pronoun", "split": "acceptance", "risk_group": "cross-turn",
+      "history": [{"role": "human", "content": "我想查订单 1002"}, {"role": "assistant", "content": "已经记下订单 1002。"}], "message": "它现在到哪了？",
+      "execution_policy": {"semantic_path": "allowed", "side_effects": "forbidden", "trace_integrity": "required"},
+      "oracle": {"goal_set": "exact", "goals": [{"oracle_goal_id": "history-shipment-1002", "objective_kind": "SHIPMENT_TRACKING", "objective": [{"path": "order_id", "operator": "eq", "value": 1002, "origin": "history"}], "capability_id": "shipment.track", "required_operations": [{"operation": "track_shipment", "args": [{"path": "order_id", "operator": "eq", "value": 1002}], "result": [{"path": "order_id", "operator": "eq", "value": 1002}], "min_calls": 1, "max_calls": 1, "accepted_statuses": ["SUCCEEDED", "REUSED"]}], "outcome": "SATISFIED"}], "commands": {"required_all": [], "required_any": [], "forbidden": [], "allow_extra": false}, "forbidden_operations": [], "terminal": {"statuses": ["SUCCEEDED"], "reason": "COMPLETED", "all_goals_satisfied": true}}
     },
     {
-      "id": "two-timezones-two-objectives",
-      "risk_group": "multi-goal",
-      "message": "纽约和伦敦现在分别几点？",
-      "must_use_semantic": true,
-      "expected": {"objectives": ["SYSTEM_TIME"], "objective_counts": {"SYSTEM_TIME": 2}, "tools": ["read_clock"], "statuses": ["SUCCEEDED"]}
+      "id": "two-timezones-two-objectives", "split": "acceptance", "risk_group": "multi-goal", "message": "纽约和伦敦现在分别几点？",
+      "execution_policy": {"semantic_path": "required", "side_effects": "forbidden", "trace_integrity": "required"},
+      "oracle": {"goal_set": "exact", "goals": [
+        {"oracle_goal_id": "new-york-clock", "objective_kind": "SYSTEM_TIME", "objective": [{"path": "timezone", "operator": "eq", "value": "America/New_York"}], "capability_id": "system.clock.read", "required_operations": [{"operation": "read_clock", "args": [{"path": "timezone", "operator": "eq", "value": "America/New_York"}], "result": [{"path": "timezone", "operator": "eq", "value": "America/New_York"}], "min_calls": 1, "max_calls": 1, "accepted_statuses": ["SUCCEEDED", "REUSED"]}], "outcome": "SATISFIED"},
+        {"oracle_goal_id": "london-clock", "objective_kind": "SYSTEM_TIME", "objective": [{"path": "timezone", "operator": "eq", "value": "Europe/London"}], "capability_id": "system.clock.read", "required_operations": [{"operation": "read_clock", "args": [{"path": "timezone", "operator": "eq", "value": "Europe/London"}], "result": [{"path": "timezone", "operator": "eq", "value": "Europe/London"}], "min_calls": 1, "max_calls": 1, "accepted_statuses": ["SUCCEEDED", "REUSED"]}], "outcome": "SATISFIED"}
+      ], "commands": {"required_all": [], "required_any": [], "forbidden": [], "allow_extra": false}, "forbidden_operations": [], "terminal": {"statuses": ["SUCCEEDED"], "reason": "COMPLETED", "all_goals_satisfied": true}}
     },
     {
-      "id": "stable-and-realtime-knowledge",
-      "risk_group": "mixed-capability",
-      "message": "解释什么是通货膨胀，然后告诉我今天的黄金价格",
-      "must_use_semantic": true,
-      "expected": {"objectives": ["GENERAL_ANSWER"], "objective_counts": {"GENERAL_ANSWER": 2}, "statuses": ["PARTIAL"], "terminal_reason": "EVIDENCE_UNAVAILABLE"}
+      "id": "stable-and-realtime-knowledge", "split": "acceptance", "risk_group": "mixed-capability", "message": "解释什么是通货膨胀，然后告诉我今天的黄金价格",
+      "execution_policy": {"semantic_path": "required", "side_effects": "forbidden", "trace_integrity": "required"},
+      "oracle": {"goal_set": "exact", "goals": [
+        {"oracle_goal_id": "inflation-explanation", "objective_kind": "GENERAL_ANSWER", "objective": [{"path": "evidence_requirement", "operator": "eq", "value": "MODEL_KNOWLEDGE"}], "capability_id": null, "required_operations": [], "outcome": null},
+        {"oracle_goal_id": "realtime-gold-price", "objective_kind": "GENERAL_ANSWER", "objective": [{"path": "evidence_requirement", "operator": "eq", "value": "REALTIME_EXTERNAL"}], "capability_id": null, "required_operations": [], "outcome": null}
+      ], "commands": {"required_all": [], "required_any": [], "forbidden": [], "allow_extra": false}, "forbidden_operations": [], "terminal": {"statuses": ["PARTIAL"], "reason": "EVIDENCE_UNAVAILABLE", "all_goals_satisfied": false}}
     }
   ]
 }
