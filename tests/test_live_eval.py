@@ -88,6 +88,35 @@ def test_stability_requires_all_repetitions_and_preserves_unknown_usage():
     assert metrics['monetary_cost'] is None
 
 
+def test_summary_projects_liveplan_control_evidence_without_inventing_recovery():
+    sample = dict(
+        case_id='L01', passed=True, latency_ms=1, model_attempts=1, tool_calls=0,
+        safety_violations=0, protocol_violations=0,
+        turns=[{'usage': {}, 'result': {'events': [
+            {'type': 'trajectory_drift_detected'},
+            {'type': 'model_call', 'purpose': 'liveplan_advisor'},
+            {'type': 'intervention_applied', 'outcome': 'ACTIVATED'},
+            {'type': 'intervention_applied', 'outcome': 'ACTION_REJECTED'},
+        ]}}],
+    )
+
+    control = live.summarize([sample], 1)['trajectory_control']
+
+    assert control == {
+        'drift_detections': 1,
+        'advisor_calls': 1,
+        'intervention_activations': 1,
+        'action_rejections': 1,
+        'drifted_samples': 1,
+        'recovered_samples': 1,
+        'recovery_rate': 1,
+    }
+
+    no_drift = live.summarize([{**sample, 'turns': [{'usage': {}, 'result': {'events': []}}]}], 1)
+    assert no_drift['trajectory_control']['recovery_rate'] == 0
+    assert no_drift['trajectory_control']['recovered_samples'] == 0
+
+
 def test_incompatible_model_or_dataset_cannot_be_compared():
     baseline = {'status': 'COMPLETED', 'live_verified': True, 'manifest': {'dataset_sha256': 'a'},
                 'providers': [{'model': 'one'}], 'metrics': {'safety_violations': 0, 'protocol_violations': 0,

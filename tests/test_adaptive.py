@@ -498,6 +498,8 @@ def test_liveplan_profile_detects_and_blocks_an_exact_no_progress_repeat(monkeyp
     assert result['status'] == 'WAITING_CLARIFICATION'
     assert [entry['args']['query'] for entry in result['trace']] == ['', '', '佩戴舒适']
     assert any(event['type'] == 'trajectory_drift_detected' for event in result['events'])
+    assert any(event['type'] == 'mechanism_applied' and event.get('slot') == 'steering'
+               for event in result['events'])
     assert any(event['type'] == 'intervention_applied' and event['outcome'] == 'ACTION_REJECTED'
                for event in result['events'])
     assert result['liveplan']['advisor_calls'] == 1

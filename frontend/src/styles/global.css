@@ -142,7 +142,7 @@ code, pre { font-family: var(--mono); }
 .kernel-grid p { color: var(--muted); font: 8px/1.7 var(--mono); white-space: pre-line; overflow-wrap: anywhere; }
 
 .fingerprint-head { display: flex; justify-content: space-between; margin: 15px 0 6px; color: var(--muted); font: 8px/1 var(--mono); letter-spacing: .05em; }
-.mechanism-rail { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); border: 1px solid var(--line-strong); }
+.mechanism-rail { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); border: 1px solid var(--line-strong); }
 .mechanism-cell { position: relative; min-width: 0; min-height: 108px; padding: 10px; border-right: 1px solid var(--line); background: #fbfcfd; }
 .mechanism-cell:last-child { border-right: 0; }
 .mechanism-cell.active::before, .mechanism-cell.changed::before { content: ""; position: absolute; left: -1px; top: -1px; right: -1px; height: 3px; background: var(--blue); }
@@ -210,6 +210,15 @@ input:focus, select:focus, textarea:focus { border-color: var(--blue); box-shado
 .tool-grid article > span, .tool-grid small { color: var(--blue); font: 8px/1 var(--mono); }
 .tool-grid h3 { font: 600 11px/1.3 var(--mono); }
 .tool-grid article > div + div { margin-top: 10px; }
+.steering-advice { margin-bottom: 16px; padding: 16px 18px; border: 1px solid #d7cff2; border-left: 3px solid var(--violet); background: var(--violet-soft); }
+.steering-advice > div { display: flex; justify-content: space-between; gap: 16px; }
+.steering-advice span, .steering-advice small, .steering-ledger span, .steering-ledger small { color: var(--violet); font: 8px/1.4 var(--mono); letter-spacing: .05em; }
+.steering-advice b { font: 600 10px/1.3 var(--mono); }
+.steering-advice p { margin: 12px 0 8px; color: #3f3560; font-size: 12px; line-height: 1.65; }
+.steering-ledger { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.steering-ledger article { min-width: 0; padding: 13px; border: 1px solid var(--line); background: var(--surface); }
+.steering-ledger b { display: block; margin-top: 10px; font: 600 10px/1.3 var(--mono); overflow-wrap: anywhere; }
+.steering-ledger p { min-height: 50px; margin: 9px 0; color: var(--ink-2); font-size: 10px; line-height: 1.6; }
 
 .table-wrap { overflow-x: auto; border: 1px solid var(--line); background: var(--surface); }
 table { width: 100%; border-collapse: collapse; }

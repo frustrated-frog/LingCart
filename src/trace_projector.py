@@ -9,6 +9,11 @@ _PHASES = {
     "constraint_binding_rejected": "VERIFY",
     "constraint_bindings_refined": "PLAN",
     "decision_action_surface": "GUARD",
+    "trajectory_monitor_evaluated": "MONITOR",
+    "trajectory_drift_detected": "MONITOR",
+    "corrective_advice_generated": "ADVISOR",
+    "corrective_advice_failed": "ADVISOR",
+    "intervention_applied": "INTERVENTION",
     "request_audited": "VERIFY",
     "context_compacted": "CONTEXT",
     "model_started": "MODEL",
@@ -34,6 +39,11 @@ _LABELS = {
     "constraint_binding_rejected": "目录语义映射未通过独立审查",
     "constraint_bindings_refined": "已依据证据修订执行映射",
     "decision_action_surface": "已按剩余预算收敛决策动作面",
+    "trajectory_monitor_evaluated": "已评估执行轨迹",
+    "trajectory_drift_detected": "检测到轨迹漂移",
+    "corrective_advice_generated": "已生成单步纠偏建议",
+    "corrective_advice_failed": "纠偏模型失败并安全降级",
+    "intervention_applied": "已应用受限干预",
     "request_audited": "原始需求与证据审查完成",
     "context_compacted": "上下文已压缩",
     "model_started": "模型调用开始",
@@ -181,7 +191,8 @@ def project_trace(events: list[dict]) -> dict:
             "phase": _PHASES.get(event_type, "RUNTIME"), "label": _LABELS.get(event_type, "运行事件"),
             **{key: event.get(key) for key in ("status", "agent", "tool", "purpose", "code", "action_fingerprint",
                                               "tool_call_id", "protocol_id", "execution_id", "duration_ms", "policy",
-                                              "transaction_id", "resolution_id", "mode", "reason")},
+                                              "transaction_id", "resolution_id", "mode", "reason", "drift_id",
+                                              "intervention_id", "outcome", "signal_codes")},
         })
     terminals = [event for event in ordered if event.get("type") == "terminal"]
     terminal = terminals[-1] if terminals else None
@@ -208,6 +219,13 @@ def project_trace(events: list[dict]) -> dict:
             "protocol_results": sum(event.get("type") == "tool_protocol" for event in ordered),
             "errors": sum(event.get("type") == "error" for event in ordered),
             "guard_warnings": sum(event.get("type") == "loop_warning" for event in ordered),
+            "drift_detections": sum(event.get("type") == "trajectory_drift_detected" for event in ordered),
+            "advisor_calls": sum(event.get("type") == "model_call" and event.get("purpose") == "liveplan_advisor"
+                                 for event in ordered),
+            "interventions": sum(event.get("type") == "intervention_applied"
+                                 and event.get("outcome") == "ACTIVATED" for event in ordered),
+            "action_rejections": sum(event.get("type") == "intervention_applied"
+                                     and event.get("outcome") == "ACTION_REJECTED" for event in ordered),
             "terminal_status": (terminal or {}).get("status"),
             "terminal_reason": (terminal or {}).get("reason"),
         },

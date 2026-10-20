@@ -26,6 +26,12 @@ def test_registry_view_model_exposes_one_slot_candidate_change():
     assert candidate["research"]["status"] == "candidate"
     assert candidate["execution_sha256"]
 
+    liveplan = profiles["adaptive-liveplan-v1"]
+    liveplan_changed = [slot for slot in liveplan["mechanisms"]
+                        if liveplan["mechanisms"].get(slot) != baseline["mechanisms"].get(slot)]
+    assert liveplan_changed == ["steering"]
+    assert liveplan["research"]["status"] == "candidate"
+
 
 def test_dataset_view_model_reports_real_case_and_split_counts():
     datasets = {item["dataset_id"]: item for item in dataset_catalog()}

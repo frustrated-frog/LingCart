@@ -1,8 +1,8 @@
 import type { HarnessProfile, RunEvent } from '../types'
 
-export const SLOT_ORDER = ['planning', 'context', 'memory', 'verification', 'tool_protocol'] as const
+export const SLOT_ORDER = ['planning', 'context', 'memory', 'verification', 'steering', 'tool_protocol'] as const
 export const SLOT_LABELS: Record<string, string> = {
-  planning: '规划', context: '上下文', memory: '记忆', verification: '核验', tool_protocol: '工具协议',
+  planning: '规划', context: '上下文', memory: '记忆', verification: '核验', steering: '在线纠偏', tool_protocol: '工具协议',
 }
 
 export const STATUS_LABELS: Record<string, string> = {
@@ -61,6 +61,8 @@ export const CAPABILITY_LABELS: Record<string, string> = {
   evidence_retrieval: '证据检索', objective_first_context: '目标证据优先上下文',
   ace_frozen_playbook: 'ACE 冻结策略手册', offline_experience_learning: '离线经验学习',
   goal_verification: '目标核验', durable_resume: '持久化恢复', runtime_steering: '运行时调整',
+  deterministic_trajectory_monitoring: '确定性轨迹监控', conditional_corrective_advice: '条件式纠偏建议',
+  precommit_action_intervention: '执行前动作干预',
 }
 
 export const MECHANISM_LABELS: Record<string, string> = {
@@ -69,6 +71,7 @@ export const MECHANISM_LABELS: Record<string, string> = {
   'evidence-reference-context': '证据引用上下文', 'objective-first-context': '目标证据优先上下文',
   'ace-playbook-context': 'ACE 策略手册上下文', 'objective-ledger': '目标账本',
   'independent-request-audit': '独立请求审查', 'native-strict-tools': '原生严格工具协议',
+  'liveplan-online-steering': 'LivePlan 在线监控与纠偏',
 }
 
 export const ENGINE_LABELS: Record<string, string> = {
@@ -92,6 +95,10 @@ export const METRIC_LABELS: Record<string, string> = {
   all_repeats_success_rate: '全部重复执行成功率', safety_violations: '安全违规次数',
   protocol_violations: '协议违规次数', 'tokens.total_tokens': '总令牌数',
   'latency_ms.p95': '延迟 P95', model_attempts: '模型尝试次数', tool_calls: '工具调用次数',
+  'trajectory_control.drift_detections': '轨迹漂移次数',
+  'trajectory_control.advisor_calls': '纠偏模型调用次数',
+  'trajectory_control.action_rejections': '动作阻断次数',
+  'trajectory_control.recovery_rate': '漂移后恢复率',
 }
 
 const EVENT_LABELS: Record<string, [string, string]> = {
@@ -112,6 +119,9 @@ const EVENT_LABELS: Record<string, [string, string]> = {
   evidence_read: ['证据', '读取证据'], constraint_binding_proposed: ['约束', '生成映射提案'],
   constraint_binding_unresolved: ['约束', '等待兼容证据'], constraint_binding_rejected: ['审查', '拒绝映射提案'],
   constraint_bindings_refined: ['约束', '提交约束映射'], decision_action_surface: ['预算', '收敛决策动作面'],
+  trajectory_monitor_evaluated: ['监控', '评估执行轨迹'], trajectory_drift_detected: ['漂移', '检测轨迹漂移'],
+  corrective_advice_generated: ['纠偏', '生成纠偏建议'], corrective_advice_failed: ['降级', '纠偏建议安全降级'],
+  intervention_applied: ['干预', '应用受限干预'],
   dialogue_protocol_retry: ['理解', '重试对话协议'], unknown_capability_downgraded: ['能力', '降级未知能力'],
   hook_applied: ['扩展', '应用扩展'], hook_failed: ['扩展', '扩展执行失败'],
   knowledge_result: ['知识', '生成知识结果'], error: ['错误', '执行错误'], terminal: ['结束', '运行结束'],
@@ -119,7 +129,7 @@ const EVENT_LABELS: Record<string, [string, string]> = {
 
 const MODEL_PURPOSE_LABELS: Record<string, string> = {
   dialogue_understanding: '对话理解', goal: '目标提取', planner: '任务规划',
-  agent: '智能体执行', final_response: '最终回答', audit: '独立审查',
+  agent: '智能体执行', final_response: '最终回答', audit: '独立审查', liveplan_advisor: 'LivePlan 纠偏建议',
 }
 
 export function localizeEngineeringText(value: string): string {

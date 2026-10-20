@@ -152,7 +152,7 @@ def environment_manifest(dataset, execution_mode, dataset_path=DATASET):
         revision = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip()
     except (OSError, subprocess.CalledProcessError):
         revision = None
-    prompt_files = sorted(set(['src/orchestrator.py', 'src/dialogue_understanding.py', 'src/adaptive.py',
+    prompt_files = sorted(set(['src/orchestrator.py', 'src/dialogue_understanding.py', 'src/adaptive.py', 'src/liveplan.py',
                                'src/adaptive_decision.py', 'src/adaptive_goals.py', 'src/request_audit.py',
                                'src/catalog_concepts.py', 'src/constraint_bindings.py', 'src/native_protocol.py'] +
                              [str(p.relative_to(ROOT)) for p in (ROOT / 'src/agents').glob('*.py')]))
@@ -192,6 +192,11 @@ def summarize(samples, repeats):
     costs = [t.get('usage') or {} for s in samples for t in s['turns']]
     tokens = {key: sum(c[key] for c in costs) if costs and all(c.get(key) is not None for c in costs) else None
               for key in ('input_tokens', 'output_tokens', 'total_tokens')}
+    events = [event for sample in samples for turn in sample.get('turns', [])
+              for event in (turn.get('result') or {}).get('events', [])]
+    drifted_samples = [sample for sample in samples if any(
+        event.get('type') == 'trajectory_drift_detected'
+        for turn in sample.get('turns', []) for event in (turn.get('result') or {}).get('events', []))]
     return {'tasks': len(groups), 'samples': len(samples), 'repeats': repeats,
             'pass_at_1': sum(items[0]['passed'] for items in groups.values()) / len(groups) if groups else None,
             'mean_success_rate': sum(s['passed'] for s in samples) / len(samples) if samples else None,
@@ -200,6 +205,19 @@ def summarize(samples, repeats):
             'tool_calls': sum(s['tool_calls'] for s in samples),
             'safety_violations': sum(s['safety_violations'] for s in samples),
             'protocol_violations': sum(s['protocol_violations'] for s in samples),
+            'trajectory_control': {
+                'drift_detections': sum(event.get('type') == 'trajectory_drift_detected' for event in events),
+                'advisor_calls': sum(event.get('type') == 'model_call'
+                                     and event.get('purpose') == 'liveplan_advisor' for event in events),
+                'intervention_activations': sum(event.get('type') == 'intervention_applied'
+                                                and event.get('outcome') == 'ACTIVATED' for event in events),
+                'action_rejections': sum(event.get('type') == 'intervention_applied'
+                                         and event.get('outcome') == 'ACTION_REJECTED' for event in events),
+                'drifted_samples': len(drifted_samples),
+                'recovered_samples': sum(sample.get('passed') is True for sample in drifted_samples),
+                'recovery_rate': (sum(sample.get('passed') is True for sample in drifted_samples)
+                                  / len(drifted_samples) if drifted_samples else 0),
+            },
             'latency_ms': {'mean': statistics.mean(latencies) if latencies else None,
                            'p50': offline._percentile(latencies, .5) if latencies else None,
                            'p95': offline._percentile(latencies, .95) if latencies else None},
@@ -267,7 +285,7 @@ def evaluate(dataset, *, repeats=3, split='all', case_ids=(), execution_mode='au
     report['providers'] = [{key: p.get(key) for key in ('provider', 'model', 'slot', 'custom_base_url', 'thinking_mode', 'reasoning_effort', 'strict_tools')} for p in status.get('providers', [])]
     from src.model_gateway import load_gateway_config, ModelGatewayConfigurationError
     report['manifest']['purpose_models'] = {}
-    for purpose in ('router', 'goal', 'planner', 'agent', 'final_response'):
+    for purpose in ('router', 'goal', 'planner', 'agent', 'final_response', 'liveplan_advisor'):
         try:
             config = load_gateway_config(purpose=purpose)
             report['manifest']['purpose_models'][purpose] = [{'provider': p.provider, 'model': p.model,

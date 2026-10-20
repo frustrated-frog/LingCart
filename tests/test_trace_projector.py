@@ -44,3 +44,26 @@ def test_trace_projector_exposes_harness_selection_as_a_first_class_phase():
     ])
     assert projected["timeline"][0]["phase"] == "HARNESS"
     assert projected["timeline"][0]["label"] == "已选择 Harness Profile"
+
+
+def test_trace_projector_surfaces_liveplan_monitor_advisor_and_intervention_evidence():
+    projected = project_trace([
+        {"run_id": "one", "sequence": 1, "type": "trajectory_monitor_evaluated"},
+        {"run_id": "one", "sequence": 2, "type": "trajectory_drift_detected",
+         "drift_id": "drift", "signal_codes": ["ACTION_OSCILLATION"]},
+        {"run_id": "one", "sequence": 3, "type": "model_call", "purpose": "liveplan_advisor"},
+        {"run_id": "one", "sequence": 4, "type": "corrective_advice_generated"},
+        {"run_id": "one", "sequence": 5, "type": "intervention_applied",
+         "intervention_id": "intervention", "outcome": "ACTIVATED"},
+        {"run_id": "one", "sequence": 6, "type": "intervention_applied",
+         "intervention_id": "intervention", "outcome": "ACTION_REJECTED"},
+        {"run_id": "one", "sequence": 7, "type": "terminal", "status": "PARTIAL", "reason": "MODEL_STOPPED"},
+    ])
+
+    assert [item["phase"] for item in projected["timeline"][:6]] == [
+        "MONITOR", "MONITOR", "MODEL", "ADVISOR", "INTERVENTION", "INTERVENTION",
+    ]
+    assert projected["summary"]["drift_detections"] == 1
+    assert projected["summary"]["advisor_calls"] == 1
+    assert projected["summary"]["interventions"] == 1
+    assert projected["summary"]["action_rejections"] == 1

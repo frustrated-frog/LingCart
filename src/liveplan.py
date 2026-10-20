@@ -105,6 +105,16 @@ class LivePlanSteeringMechanism:
 
     def install(self, context) -> None:
         context.mechanisms[self.slot] = self
+        if not any(event.get("type") == "mechanism_applied"
+                   and event.get("slot") == self.slot
+                   and event.get("mechanism_id") == self.mechanism_id for event in context.events):
+            context.record(
+                "mechanism_applied",
+                slot=self.slot,
+                mechanism_id=self.mechanism_id,
+                mechanism_version=self.mechanism_version,
+                configuration=self.configuration,
+            )
 
     def provenance(self) -> dict:
         from src.harness.mechanisms import source_fingerprint

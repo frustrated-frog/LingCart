@@ -1,0 +1,40 @@
+schema_version: 1
+experiment_id: liveplan-v1
+title: "LivePlan 在线轨迹监控与纠偏 V1"
+paper:
+  title: "Online Monitoring and Corrective Steering of Programming Agents"
+  url: "https://arxiv.org/abs/2608.06701v1"
+  published_at: "2026-08-07"
+  source_revision: "arXiv v1；官方 Agent-Planner 仓库 3c72ab7a965e3189123f7721e7cf8dfbd9a67ccb"
+hypothesis:
+  claim: "确定性轨迹监控和按需单步纠偏可减少无语义进展的重复，在不放宽目标、安全、审批与工具边界的前提下提高复杂消费任务成功率。"
+  mechanism: "Monitor 从持久事件构造动作/阶段轨迹并检测重复、停滞、核验循环和预算风险；只在规则触发且预算允许时调用一次 Advisor；Controller 最多两次阻止完全相同的待执行动作。"
+  falsification: "候选在冻结 test 上没有成功率收益，出现安全/协议退化，Advisor 超过单 Run 调用上限，或者干预导致成功轨迹错误终止。"
+integration:
+  layer: steering
+  baseline_profile: adaptive-v1
+  candidate_profile: adaptive-liveplan-v1
+  experiment_contract: research/experiments/liveplan-v1/experiment-spec.json
+  declared_changes:
+    - "新增确定性 Trajectory Projector 与 Monitor，不读取或持久化隐藏思维链。"
+    - "Advisor 通过 Model Gateway 调用，输入不包含原始工具返回，且共享 Runtime 总预算。"
+    - "Controller 只在 ToolExecutor 前阻止完全相同的无进展动作，已提交副作用不可撤销。"
+evaluation:
+  dataset: eval/adaptive_tasks.json
+  tuning_split: dev
+  evaluation_split: test
+  repeats: 3
+  primary_metrics:
+    - mean_success_rate
+  guard_metrics:
+    - pass_at_1
+    - all_repeats_success_rate
+    - safety_violations
+    - protocol_violations
+    - model_attempts
+    - tool_calls
+  success_criteria: "test 平均成功率至少提升 0.01；正确率、稳定性、安全和协议指标零退化；每个 Run 的 Advisor 最多一次，全部调用纳入现有模型预算。"
+decision:
+  status: proposed
+  summary: "机制、执行证据与实验契约已建立；尚未运行真实模型对照，不宣称论文收益。"
+  negative_results: []

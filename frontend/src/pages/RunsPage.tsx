@@ -20,7 +20,7 @@ import {
   TOOL_LABELS,
 } from '../components/SystemUI'
 
-type Tab = 'result' | 'evidence' | 'tools' | 'raw'
+type Tab = 'result' | 'evidence' | 'steering' | 'tools' | 'raw'
 
 export function RunsPage({ businessMode = false }: { businessMode?: boolean }) {
   const { runId } = useParams()
@@ -91,13 +91,14 @@ export function RunsPage({ businessMode = false }: { businessMode?: boolean }) {
             <details><summary>查看原始事件数据</summary><JsonBlock value={event} /></details>
           </section>}
           <div className="tab-list" role="tablist">
-            {([['result', '结果与计划'], ['evidence', '上下文与证据'], ['tools', '工具账本'], ['raw', '原始记录']] as Array<[Tab, string]>).map(([id, label]) => (
+            {([['result', '结果与计划'], ['evidence', '上下文与证据'], ['steering', '在线监控与纠偏'], ['tools', '工具账本'], ['raw', '原始记录']] as Array<[Tab, string]>).map(([id, label]) => (
               <button role="tab" aria-selected={tab === id} className={tab === id ? 'active' : ''} onClick={() => setTab(id)} key={id}>{label}</button>
             ))}
           </div>
           <section className="tab-panel">
             {tab === 'result' && <ResultTab detail={detail} />}
             {tab === 'evidence' && <EvidenceTab detail={detail} />}
+            {tab === 'steering' && <SteeringTab detail={detail} />}
             {tab === 'tools' && <ToolsTab detail={detail} />}
             {tab === 'raw' && <JsonBlock value={{ run_id: detail.run_id, harness: detail.profile, events, budget: detail.result.budget, usage: detail.result.usage, commands: detail.commands }} />}
           </section>
@@ -105,6 +106,54 @@ export function RunsPage({ businessMode = false }: { businessMode?: boolean }) {
       </>}
     </>
   )
+}
+
+function record(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {}
+}
+
+function SteeringTab({ detail }: { detail: RunDetail }) {
+  const events = detail.result.events ?? []
+  const monitorEvents = events.filter((item) => item.type === 'trajectory_monitor_evaluated')
+  const driftEvents = events.filter((item) => item.type === 'trajectory_drift_detected')
+  const adviceEvents = events.filter((item) => item.type === 'corrective_advice_generated')
+  const interventionEvents = events.filter((item) => item.type === 'intervention_applied')
+  const rejected = interventionEvents.filter((item) => item.outcome === 'ACTION_REJECTED')
+  const adaptive = record(detail.checkpoint.adaptive)
+  const liveplan = record(adaptive.liveplan)
+  const lastAdvice = record(liveplan.last_advice)
+  const active = record(liveplan.active_intervention)
+  const isEnabled = detail.profile.profile_id.includes('liveplan') || monitorEvents.length > 0 || Object.keys(liveplan).length > 0
+
+  if (!isEnabled) return <div className="empty-inline">该运行未启用在线轨迹监控；不会伪造漂移、建议或恢复数据。</div>
+  return <>
+    <DefinitionGrid items={[
+      ['轨迹评估次数', monitorEvents.length],
+      ['漂移触发次数', driftEvents.length],
+      ['纠偏模型调用', Number(liveplan.advisor_calls ?? 0)],
+      ['执行前阻断', rejected.length],
+    ]} />
+    {Object.keys(lastAdvice).length > 0 ? <section className="steering-advice">
+      <div><span>最近纠偏建议</span><b>{String(lastAdvice.reason_code ?? '未分类')}</b></div>
+      <p>{String(lastAdvice.guidance ?? '建议内容未记录')}</p>
+      <small>{String(lastAdvice.source ?? 'predefined')} · {String(lastAdvice.recommended_action ?? '—')} · 置信度 {String(lastAdvice.confidence ?? '—')}</small>
+    </section> : <div className="empty-inline">Monitor 尚未检测到需要纠偏的轨迹漂移。</div>}
+    <SectionHeading index="M" title="Monitor 漂移证据" note="确定性规则，不调用模型" />
+    {driftEvents.length > 0 ? <div className="table-wrap"><table><thead><tr><th>事件</th><th>漂移信号</th><th>证据序号</th><th>判断依据</th></tr></thead><tbody>
+      {driftEvents.map((item, index) => {
+        const signals = Array.isArray(item.signals) ? item.signals.map(record) : []
+        return <tr key={`${String(item.sequence)}-${index}`}><td>{String(item.sequence ?? '—')}</td><td>{signals.map((signal) => String(signal.code ?? 'UNKNOWN')).join(' / ')}</td><td>{signals.flatMap((signal) => Array.isArray(signal.evidence_sequences) ? signal.evidence_sequences : []).join(', ') || '—'}</td><td>{signals.map((signal) => String(signal.detail ?? '')).join('；') || '—'}</td></tr>
+      })}
+    </tbody></table></div> : <div className="empty-inline">当前轨迹没有确定性漂移证据。</div>}
+    <SectionHeading index="I" title="Advisor 与干预结果" note="建议无执行权限，阻断仅发生在动作提交前" />
+    {adviceEvents.length + interventionEvents.length > 0 ? <div className="steering-ledger">
+      {[...adviceEvents, ...interventionEvents].sort((left, right) => Number(left.sequence ?? 0) - Number(right.sequence ?? 0)).map((item, index) => {
+        const advice = record(item.advice)
+        return <article key={`${String(item.sequence)}-${index}`}><span>{String(item.sequence ?? '—')} / {item.type === 'corrective_advice_generated' ? '建议' : '干预'}</span><b>{String(item.outcome ?? advice.reason_code ?? '已记录')}</b><p>{String(advice.guidance ?? (item.outcome === 'ACTION_REJECTED' ? '候选动作与已确认的无进展动作完全相同，已在执行前阻止。' : '干预状态已持久化。'))}</p><small>{String(item.source ?? item.mode ?? 'deterministic')}</small></article>
+      })}
+    </div> : <div className="empty-inline">尚无 Advisor 或控制器事件。</div>}
+    {Object.keys(active).length > 0 && <details><summary>查看当前未消费干预</summary><JsonBlock value={active} /></details>}
+  </>
 }
 
 function ResultTab({ detail }: { detail: RunDetail }) {

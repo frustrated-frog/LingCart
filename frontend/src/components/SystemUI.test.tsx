@@ -28,10 +28,10 @@ function profile(id: string, planning: string): HarnessProfile {
 }
 
 describe('MechanismRail', () => {
-  it('renders five mechanism slots and marks an experimental delta', () => {
+  it('renders six mechanism slots and marks an experimental delta', () => {
     const { container } = render(<MechanismRail profile={profile('candidate', 'paper-planner')} reference={profile('baseline', 'adaptive-planner')} />)
     expect(screen.getByText('paper-planner')).toBeInTheDocument()
-    expect(container.querySelectorAll('.mechanism-cell')).toHaveLength(5)
+    expect(container.querySelectorAll('.mechanism-cell')).toHaveLength(6)
     expect(container.querySelectorAll('.mechanism-cell.changed')).toHaveLength(1)
   })
 
@@ -67,6 +67,17 @@ describe('ExecutionSpine', () => {
     ]} />)
     expect(screen.getByText('生成映射提案')).toBeInTheDocument()
     expect(screen.getByText('收敛决策动作面')).toBeInTheDocument()
+  })
+
+  it('renders LivePlan monitoring and intervention evidence in Chinese', () => {
+    render(<ExecutionSpine events={[
+      { type: 'trajectory_drift_detected', sequence: 1 },
+      { type: 'corrective_advice_generated', sequence: 2 },
+      { type: 'intervention_applied', sequence: 3 },
+    ]} />)
+    expect(screen.getByText('检测轨迹漂移')).toBeInTheDocument()
+    expect(screen.getByText('生成纠偏建议')).toBeInTheDocument()
+    expect(screen.getByText('应用受限干预')).toBeInTheDocument()
   })
 })
 

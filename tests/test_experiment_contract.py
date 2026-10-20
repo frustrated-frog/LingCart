@@ -20,6 +20,18 @@ def test_template_and_first_experiment_are_machine_validated():
     assert experiment.candidate_profile == 'adaptive-objective-context-v1'
 
 
+def test_liveplan_experiment_freezes_one_steering_mechanism_and_cost_guard():
+    experiment = ExperimentSpec.from_path(
+        ROOT / 'research/experiments/liveplan-v1/experiment-spec.json')
+
+    assert experiment.baseline_profile == 'adaptive-v1'
+    assert experiment.candidate_profile == 'adaptive-liveplan-v1'
+    assert [(change.kind, change.slot, change.implementation_id) for change in experiment.changes] == [
+        ('mechanism', 'steering', 'liveplan-online-steering'),
+    ]
+    assert {'model_attempts', 'tool_calls'} <= {rule.name for rule in experiment.guard_metrics}
+
+
 def test_contract_rejects_missing_guard_and_unreviewed_runtime_change():
     payload = json.loads((ROOT / 'research/templates/experiment-spec.json').read_text())
     payload['guard_metrics'] = payload['guard_metrics'][1:]
