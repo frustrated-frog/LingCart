@@ -1137,16 +1137,31 @@ def main(argv: list[str] | None = None) -> None:
         with EvaluationJournal(journal_path, resume=args.resume) as journal:
             if journal.finalized:
                 report = journal.load_published_report(args.output)
+            elif journal.report_prepared:
+                journal.publish_prepared_report(args.output)
+                journal.finalize_report(args.output)
+                report = journal.load_published_report(args.output)
             else:
-                if args.output.exists() and not journal.report_prepared:
+                if args.output.exists():
                     raise JournalError("最终报告已存在，但 Journal 没有 REPORT_PREPARED 证据")
                 if not _tracked_worktree_clean():
                     raise JournalError("真实评测要求受版本控制的文件保持干净，请先提交实现再运行")
-                from src.llm import get_model_status
+                expected_ids = {
+                    item.get("sample_id")
+                    for item in (((journal.records[0].get("payload") or {}).get("sample_plan") or []))
+                } if journal.records else set()
+                all_samples_committed = bool(expected_ids) and expected_ids == journal.terminal_sample_ids
+                if all_samples_committed:
+                    readiness = (
+                        ((journal.records[0].get("payload") or {}).get("manifest") or {})
+                        .get("model_configuration") or {}
+                    )
+                else:
+                    from src.llm import get_model_status
 
-                readiness = get_model_status()
-                if not readiness.get("configured") or not readiness.get("ready"):
-                    raise JournalError("真实模型尚未就绪：" + readiness.get("message", "未知原因"))
+                    readiness = get_model_status()
+                    if not readiness.get("configured") or not readiness.get("ready"):
+                        raise JournalError("真实模型尚未就绪：" + readiness.get("message", "未知原因"))
                 report = evaluate(
                     dataset,
                     cases=selected,

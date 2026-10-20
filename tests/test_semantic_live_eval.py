@@ -354,3 +354,37 @@ def test_source_manifest_covers_runtime_closure_and_is_recomputable():
     ):
         assert path in manifest["source_files_sha256"]
     assert manifest["source_tree_sha256"] == fingerprint(manifest["source_files_sha256"])
+
+
+def test_prepared_report_resume_finishes_without_provider_readiness(tmp_path, monkeypatch):
+    output = tmp_path / "semantic-report.json"
+    journal_path = output.with_suffix(".journal.jsonl")
+    report = {
+        "schema_version": 2,
+        "metrics": {"pass_rate": 1.0},
+        "gate": {"passed": True, "gate_type": "SMOKE"},
+    }
+    with EvaluationJournal(journal_path, resume=False) as journal:
+        journal.start(
+            evaluation_id="prepared-resume",
+            run_identity_sha256="a" * 64,
+            manifest={"stage_id": "single-smoke"},
+            sample_plan=[{"sample_id": "sample-1"}],
+        )
+        journal.append("SAMPLE_STARTED", {"case_id": "clock"}, sample_id="sample-1")
+        journal.append("SAMPLE_TERMINAL", {
+            "outcome": "COMPLETED", "sample": {"case_id": "clock", "passed": True},
+        }, sample_id="sample-1")
+        journal.prepare_report(output, report, finalization={"gate": report["gate"]})
+
+    import src.llm
+    monkeypatch.setattr(src.llm, "get_model_status", lambda: pytest.fail(
+        "REPORT_PREPARED 恢复不应再次检查 Provider",
+    ))
+    with pytest.raises(SystemExit) as exit_info:
+        semantic_eval.main(["--live", "--resume", "--sleep", "0", "--output", str(output)])
+
+    assert exit_info.value.code == 0
+    assert json.loads(output.read_text(encoding="utf-8")) == report
+    with EvaluationJournal(journal_path, resume=True) as journal:
+        assert journal.finalized is True

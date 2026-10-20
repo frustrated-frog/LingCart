@@ -167,3 +167,20 @@ def test_finalization_rejects_missing_or_tampered_published_report(tmp_path):
         output.write_text('{"tampered":true}\n', encoding="utf-8")
         with pytest.raises(JournalError, match="不一致"):
             journal.finalize_report(output)
+
+
+def test_partial_uncommitted_report_stage_is_rebuilt_on_resume(tmp_path):
+    journal_path = tmp_path / "semantic.journal.jsonl"
+    output = tmp_path / "report.json"
+    report = {"schema_version": 2, "created_at": "frozen", "passed": True}
+
+    with EvaluationJournal(journal_path, resume=False) as journal:
+        _start(journal)
+        _complete_sample(journal)
+    prepared_path = output.with_name(".report.json.evaluation-1.prepared")
+    prepared_path.write_bytes(b'{"partial":')
+
+    with EvaluationJournal(journal_path, resume=True) as journal:
+        journal.prepare_report(output, report, finalization={"gate": {"passed": True}})
+        journal.finalize_report(output)
+        assert journal.load_published_report(output) == report
