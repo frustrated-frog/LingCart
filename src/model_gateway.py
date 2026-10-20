@@ -9,7 +9,7 @@ import time
 SUPPORTED_PROVIDERS = {"auto", "gemini", "groq", "openai", "openai_compatible"}
 MODEL_PURPOSES = {
     "router", "dialogue_understanding", "goal", "planner", "agent", "final_response", "default",
-    "ace_reflector", "ace_curator",
+    "ace_reflector", "ace_curator", "liveplan_advisor",
 }
 DEFAULT_MODELS = {
     "gemini": "gemini-2.5-flash",

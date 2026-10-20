@@ -119,6 +119,13 @@ class ContextEngine:
             context_manifest={'archived_refs': [], 'policy': 'FULL_RECORDS_OR_REFERENCES',
                               'mechanism_id': self.mechanism_id, 'selection_strategy': self.selection_strategy,
                               'history_total': len(history or []), 'omitted_history_indices': []})
+        from src.runtime import current_runtime
+        runtime = current_runtime()
+        steering = runtime.mechanisms.get('steering') if runtime else None
+        if steering is not None and hasattr(steering, 'guidance'):
+            guidance = steering.guidance(state)
+            if guidance:
+                payload['runtime_guidance'] = guidance
         if state.get('constraint_bindings') and not (state.get('feedback') or {}).get('audit_phase'):
             from src.constraint_bindings import effective_goal
             payload['goal'] = effective_goal(state)

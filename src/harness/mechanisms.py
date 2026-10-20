@@ -189,6 +189,8 @@ class AceContextMechanism(EmbeddedMechanism):
 def built_in_mechanisms() -> tuple[HarnessMechanism, ...]:
     """Return exact implementations referenced by built-in Profiles."""
 
+    from src.liveplan import LivePlanSteeringMechanism
+
     return (
         EmbeddedMechanism("planning", "structured-dialogue-understanding", "1", ("orchestrator",),
                           ("src/orchestrator.py", "src/dialogue_understanding.py", "src/intake.py")),
@@ -210,5 +212,6 @@ def built_in_mechanisms() -> tuple[HarnessMechanism, ...]:
                           ("src/request_audit.py", "src/adaptive_goals.py")),
         EmbeddedMechanism("tool_protocol", "native-strict-tools", "1", ("adaptive",),
                           ("src/native_protocol.py", "src/runtime.py")),
+        LivePlanSteeringMechanism(),
     )
 

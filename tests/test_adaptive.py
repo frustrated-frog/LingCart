@@ -473,6 +473,37 @@ def test_model_can_change_query_after_empty_search_without_forced_compare(monkey
     assert result['budget']['consumed']['model_calls'] == 6
 
 
+def test_liveplan_profile_detects_and_blocks_an_exact_no_progress_repeat(monkeypatch):
+    from src.harness import get_runner
+
+    script = model(monkeypatch,
+        search(first=True), search(), search(), search(query='佩戴舒适'), clarification)
+
+    class Advisor:
+        def json_mode(self):
+            return self
+
+        def invoke(self, _messages):
+            return AIMessage(content=json.dumps({
+                'recommended_action': 'CHANGE_APPROACH',
+                'target_objective_ids': ['shopping'],
+                'reason_code': 'ACTION_OSCILLATION',
+                'guidance': '更换检索策略，不要重复相同查询。',
+                'confidence': 0.9,
+            }), usage_metadata={'input_tokens': 20, 'output_tokens': 10, 'total_tokens': 30})
+
+    monkeypatch.setattr('src.llm.get_llm', lambda **_kwargs: Advisor())
+    result = get_runner('adaptive-liveplan-v1')('推荐预算500的耳机')
+
+    assert result['status'] == 'WAITING_CLARIFICATION'
+    assert [entry['args']['query'] for entry in result['trace']] == ['', '', '佩戴舒适']
+    assert any(event['type'] == 'trajectory_drift_detected' for event in result['events'])
+    assert any(event['type'] == 'intervention_applied' and event['outcome'] == 'ACTION_REJECTED'
+               for event in result['events'])
+    assert result['liveplan']['advisor_calls'] == 1
+    assert result['budget']['consumed']['model_calls'] == len(script.inputs) + 2
+
+
 def test_negative_scope_is_model_supplied_without_substring_expansion(monkeypatch):
     understood = goal()
     understood['hard_constraints'].append(dict(description='排除主动降噪', source_quote='不要主动降噪',

@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "profile_id": "adaptive-liveplan-v1",
+  "version": "1.0.0",
+  "display_name": "LivePlan 在线纠偏候选",
+  "description": "以确定性轨迹监控检测重复、停滞、核验循环与预算风险，仅在必要时调用一次受约束 Advisor，并在执行前阻止完全相同的无进展动作。",
+  "engine": {
+    "id": "adaptive",
+    "version": "1"
+  },
+  "mechanisms": [
+    {"slot": "planning", "id": "bounded-model-loop", "version": "1"},
+    {"slot": "context", "id": "evidence-reference-context", "version": "1"},
+    {"slot": "memory", "id": "objective-ledger", "version": "1"},
+    {"slot": "verification", "id": "independent-request-audit", "version": "1"},
+    {"slot": "tool_protocol", "id": "native-strict-tools", "version": "1"},
+    {
+      "slot": "steering",
+      "id": "liveplan-online-steering",
+      "version": "1",
+      "configuration": {
+        "advisor_mode": "model",
+        "max_advisor_calls": 1,
+        "cooldown_steps": 2,
+        "action_repeat_threshold": 2,
+        "phase_dwell_threshold": 4,
+        "evidence_stagnation_threshold": 3,
+        "verification_repeat_threshold": 2,
+        "max_blocking_interventions": 2
+      }
+    }
+  ],
+  "capabilities": [
+    "model_directed_planning",
+    "bounded_replanning",
+    "evidence_retrieval",
+    "goal_verification",
+    "durable_resume",
+    "runtime_steering",
+    "deterministic_trajectory_monitoring",
+    "conditional_corrective_advice",
+    "precommit_action_intervention"
+  ],
+  "research": {
+    "status": "candidate",
+    "source_type": "paper",
+    "paper_id": "arXiv:2608.06701v1",
+    "hypothesis": "确定性轨迹监控与按需单步纠偏可在共享模型预算内减少无进展重复和核验循环，并在不放宽目标、安全、审批与工具边界的前提下提高复杂消费任务的恢复率。"
+  }
+}

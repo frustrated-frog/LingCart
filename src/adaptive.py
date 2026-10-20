@@ -111,6 +111,46 @@ def _save(context, state, plan):
     context.checkpoint(adaptive=deepcopy(state), plan=plan.payload())
 
 
+def _apply_liveplan(context, state, plan):
+    """Run one recoverable monitor/advisor transaction at a committed boundary."""
+
+    mechanism = context.mechanisms.get('steering')
+    if mechanism is None or not hasattr(mechanism, 'evaluate'):
+        return
+    assessment, changed = mechanism.evaluate(context, state, plan)
+    if changed:
+        state['model_cursor'] = context.model_cursor
+        _save(context, state, plan)
+    if assessment is None:
+        return
+    mechanism.reserve_advice(context, state, assessment)
+    state['model_cursor'] = context.model_cursor
+    _save(context, state, plan)
+    mechanism.complete_advice(context, state, assessment)
+    state['model_cursor'] = context.model_cursor
+    _save(context, state, plan)
+
+
+def _review_liveplan_candidate(context, recorder, state, plan, decision):
+    mechanism = context.mechanisms.get('steering')
+    if mechanism is None or not hasattr(mechanism, 'review_candidate'):
+        return False
+    guidance = mechanism.review_candidate(context, state, decision)
+    if guidance is None:
+        return False
+    _discard_native_queue(context, state, 'LIVEPLAN_INTERVENTION')
+    state['feedback'] = {
+        'code': 'LIVEPLAN_ACTION_REJECTED',
+        'message': guidance,
+        'instruction': '遵循运行时纠偏建议，选择不同的下一步；不得放宽用户目标、审批与安全边界。',
+    }
+    state['model_cursor'] = context.model_cursor
+    state['pending'] = None
+    _save(context, state, plan)
+    recorder.record('decision_rejected', code='LIVEPLAN_ACTION_REJECTED', action=decision.action)
+    return True
+
+
 def _apply_binding_transaction(context, recorder, state, plan, history, transaction, *, reject_as_error):
     """Independently audit and atomically apply one content-addressed proposal."""
     from src.request_audit import review_request
@@ -264,6 +304,7 @@ def _present(context, recorder, intake, state, plan, *, reason, message, error=N
     result['request_audit'] = deepcopy(state.get('request_audit'))
     result['binding_audit'] = deepcopy(state.get('binding_audit'))
     result['completion_audit'] = deepcopy(state.get('completion_audit'))
+    result['liveplan'] = deepcopy(state.get('liveplan'))
     return result
 
 
@@ -634,6 +675,7 @@ def _run(context, user_message, history, pending_action):
                          audit_format_feedback=None,
                          dialogue_commands=[],
                          native_queue=[], active_native_submission=None,
+                         liveplan=None,
                          version=state['version'] + 1)
             plan.goals = []
             plan.verification = {}
@@ -649,6 +691,7 @@ def _run(context, user_message, history, pending_action):
                      binding_resolution=None, decision_surface=None,
                      dialogue_commands=[],
                      native_queue=[], active_native_submission=None,
+                     liveplan=None,
                      model_cursor=context.model_cursor)
         _save(context, state, plan)
         recorder.record('plan_created', source='adaptive_model', plan=plan.payload())
@@ -660,6 +703,7 @@ def _run(context, user_message, history, pending_action):
             context.require()
             if state['pending'] is None:
                 try:
+                    _apply_liveplan(context, state, plan)
                     if state.get('native_queue'):
                         queued = state['native_queue'].pop(0)
                         decision = Decision.model_validate(queued['decision'])
@@ -669,6 +713,8 @@ def _run(context, user_message, history, pending_action):
                         decision = decide(context, state, plan, history)
                     # 插话也使审查中的旧目标失效，执行任何动作前再次检查。
                     apply_controls(context)
+                    if _review_liveplan_candidate(context, recorder, state, plan, decision):
+                        continue
                     _accept(context, recorder, state, plan, decision, history)
                     apply_controls(context)
                 except AgentError as error:
