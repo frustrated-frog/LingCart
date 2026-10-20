@@ -1,0 +1,134 @@
+{
+  "schema_version": 1,
+  "dataset_id": "liveplan-monitor-v1",
+  "description": "LivePlan 确定性轨迹监控的冻结正例与反例集；不调用模型。",
+  "split_counts": {"dev": 4, "test": 8},
+  "cases": [
+    {
+      "id": "LP-D01",
+      "split": "dev",
+      "description": "相同查询只改变运行引用，不应被误认为新证据。",
+      "frames": [
+        {"decision": {"action": "tool", "reason": "读取候选", "tool": "search_products", "args": {"query": "耳机"}}, "result": {"products": [{"product_id": "P0001"}]}},
+        {"decision": {"action": "tool", "reason": "再次读取", "tool": "search_products", "args": {"query": "耳机"}}, "result": {"products": [{"product_id": "P0001"}]}}
+      ],
+      "expected_signal_codes": ["ACTION_OSCILLATION"]
+    },
+    {
+      "id": "LP-D02",
+      "split": "dev",
+      "description": "相同动作获得新的权威结果时属于真实进展。",
+      "frames": [
+        {"decision": {"action": "tool", "reason": "读取候选", "tool": "search_products", "args": {"query": "耳机"}}, "result": {"products": [{"product_id": "P0001"}]}},
+        {"decision": {"action": "tool", "reason": "刷新目录", "tool": "search_products", "args": {"query": "耳机"}}, "result": {"products": [{"product_id": "P0002"}]}}
+      ],
+      "expected_signal_codes": []
+    },
+    {
+      "id": "LP-D03",
+      "split": "dev",
+      "description": "连续检查不同引用但没有新增权威观察，应识别证据停滞。",
+      "frames": [
+        {"decision": {"action": "inspect", "reason": "检查证据", "evidence_ref": "evidence:a", "offset": 0, "limit": 20}},
+        {"decision": {"action": "inspect", "reason": "检查证据", "evidence_ref": "evidence:b", "offset": 0, "limit": 20}},
+        {"decision": {"action": "inspect", "reason": "检查证据", "evidence_ref": "evidence:c", "offset": 0, "limit": 20}}
+      ],
+      "expected_signal_codes": ["EVIDENCE_STAGNATION"]
+    },
+    {
+      "id": "LP-D04",
+      "split": "dev",
+      "description": "同一发现阶段持续获得不同权威结果时不应误报停滞。",
+      "frames": [
+        {"decision": {"action": "tool", "reason": "查询一", "tool": "search_products", "args": {"query": "入耳式"}}, "result": {"products": [{"product_id": "P0001"}]}},
+        {"decision": {"action": "tool", "reason": "查询二", "tool": "search_products", "args": {"query": "头戴式"}}, "result": {"products": [{"product_id": "P0002"}]}},
+        {"decision": {"action": "tool", "reason": "查询三", "tool": "search_products", "args": {"query": "开放式"}}, "result": {"products": [{"product_id": "P0003"}]}},
+        {"decision": {"action": "tool", "reason": "查询四", "tool": "search_products", "args": {"query": "降噪"}}, "result": {"products": [{"product_id": "P0004"}]}}
+      ],
+      "expected_signal_codes": []
+    },
+    {
+      "id": "LP-T01",
+      "split": "test",
+      "description": "A-B-A-B 证据读取循环应同时暴露动作、阶段和证据停滞。",
+      "frames": [
+        {"decision": {"action": "inspect", "reason": "读 A", "evidence_ref": "evidence:a", "offset": 0, "limit": 20}},
+        {"decision": {"action": "inspect", "reason": "读 B", "evidence_ref": "evidence:b", "offset": 0, "limit": 20}},
+        {"decision": {"action": "inspect", "reason": "再读 A", "evidence_ref": "evidence:a", "offset": 0, "limit": 20}},
+        {"decision": {"action": "inspect", "reason": "再读 B", "evidence_ref": "evidence:b", "offset": 0, "limit": 20}}
+      ],
+      "expected_signal_codes": ["ACTION_OSCILLATION", "EVIDENCE_STAGNATION", "PHASE_STAGNATION"]
+    },
+    {
+      "id": "LP-T02",
+      "split": "test",
+      "description": "相同失败码与失败集合重复出现时应识别核验循环。",
+      "frames": [
+        {"decision": {"action": "inspect", "reason": "检查一", "evidence_ref": "evidence:a", "offset": 0, "limit": 20}, "verification_failure": {"code": "MISSING_EVIDENCE", "failures": ["objective-1"]}},
+        {"decision": {"action": "inspect", "reason": "检查二", "evidence_ref": "evidence:b", "offset": 0, "limit": 20}, "verification_failure": {"code": "MISSING_EVIDENCE", "failures": ["objective-1"]}}
+      ],
+      "expected_signal_codes": ["VERIFICATION_LOOP"]
+    },
+    {
+      "id": "LP-T03",
+      "split": "test",
+      "description": "目标未完成且模型预算仅剩两次时应提示预算风险。",
+      "budget": {"max_model_calls": 2, "max_tool_calls": 8},
+      "frames": [
+        {"decision": {"action": "inspect", "reason": "检查证据", "evidence_ref": "evidence:a", "offset": 0, "limit": 20}}
+      ],
+      "expected_signal_codes": ["BUDGET_RISK"]
+    },
+    {
+      "id": "LP-T04",
+      "split": "test",
+      "description": "目标已核验后不应仅因低预算产生风险信号。",
+      "budget": {"max_model_calls": 2, "max_tool_calls": 8},
+      "initial_objective_status": "VERIFIED",
+      "frames": [
+        {"decision": {"action": "inspect", "reason": "最终检查", "evidence_ref": "evidence:a", "offset": 0, "limit": 20}}
+      ],
+      "expected_signal_codes": []
+    },
+    {
+      "id": "LP-T05",
+      "split": "test",
+      "description": "时间戳和观察引用变化不能掩盖重复动作。",
+      "frames": [
+        {"decision": {"action": "tool", "reason": "读取目录", "tool": "search_products", "args": {"query": "通勤耳机"}}, "result": {"products": [{"product_id": "P0007"}]}},
+        {"decision": {"action": "tool", "reason": "重新读取目录", "tool": "search_products", "args": {"query": "通勤耳机"}}, "result": {"products": [{"product_id": "P0007"}]}}
+      ],
+      "expected_signal_codes": ["ACTION_OSCILLATION"]
+    },
+    {
+      "id": "LP-T06",
+      "split": "test",
+      "description": "业务参数改变的查询不能被当成完全相同动作。",
+      "frames": [
+        {"decision": {"action": "tool", "reason": "查询耳机", "tool": "search_products", "args": {"query": "耳机"}}, "result": {"products": []}},
+        {"decision": {"action": "tool", "reason": "改查开放式", "tool": "search_products", "args": {"query": "开放式耳机"}}, "result": {"products": []}}
+      ],
+      "expected_signal_codes": []
+    },
+    {
+      "id": "LP-T07",
+      "split": "test",
+      "description": "没有任何语义变化的重复完成动作仍属于动作振荡。",
+      "frames": [
+        {"decision": {"action": "complete", "reason": "尝试完成", "claims": []}},
+        {"decision": {"action": "complete", "reason": "再次完成", "claims": []}}
+      ],
+      "expected_signal_codes": ["ACTION_OSCILLATION"]
+    },
+    {
+      "id": "LP-T08",
+      "split": "test",
+      "description": "约束映射版本真实前进时，相同动作不应被阻断。",
+      "frames": [
+        {"decision": {"action": "tool", "reason": "读取目录", "tool": "search_products", "args": {"query": "耳机"}}, "result": {"products": [{"product_id": "P0001"}]}},
+        {"decision": {"action": "tool", "reason": "映射后复核", "tool": "search_products", "args": {"query": "耳机"}}, "result": {"products": [{"product_id": "P0001"}]}, "state_patch": {"binding_revision": 1}}
+      ],
+      "expected_signal_codes": []
+    }
+  ]
+}

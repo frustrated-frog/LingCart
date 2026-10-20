@@ -21,9 +21,11 @@ integration:
     - "Controller 只在 ToolExecutor 前阻止完全相同的无进展动作，已提交副作用不可撤销。"
 evaluation:
   dataset: eval/adaptive_tasks.json
+  offline_monitor_dataset: eval/liveplan_monitor_cases.json
   tuning_split: dev
   evaluation_split: test
   repeats: 3
+  offline_gate: "test split 的案例完全匹配率、精确率与召回率均为 1，模型调用数为 0。"
   primary_metrics:
     - mean_success_rate
   guard_metrics:

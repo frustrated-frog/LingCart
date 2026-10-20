@@ -51,13 +51,18 @@ LivePlan 状态随 Adaptive Checkpoint 保存，并绑定 `goal_revision`。用�
 
 ## 当前证据边界
 
-当前自动化测试覆盖确定性漂移检测、共享预算、Advisor 降级、执行前阻断、事件恢复、Profile 隔离和完整 Adaptive 集成。尚未运行真实模型 baseline/candidate 对照，因此控制台只能展示“候选机制”和真实运行事件，不能展示收益结论。
+当前自动化测试覆盖确定性漂移检测、共享预算、Advisor 降级、执行前阻断、事件恢复、Profile 隔离和完整 Adaptive 集成。另有 `eval/liveplan_monitor_cases.json` 冻结 Monitor 的正例与反例，使用 `eval/run_liveplan_monitor_eval.py` 重放持久事件，分别报告精确率、召回率、F1、案例完全匹配率和模型调用数。
+
+Monitor 基准只证明确定性规则在冻结轨迹上的分类行为，不证明 Advisor 建议质量，也不证明最终任务成功率提升。尚未运行真实模型 baseline/candidate 对照，因此控制台只能展示“候选机制”和真实运行事件，不能展示收益结论。
 
 正式实验前先在 `dev` 调整阈值；冻结后只在 `test` 运行三次重复。基线和候选必须使用同一提交、Provider、模型、温度、任务集和总预算。任何安全或协议违规都会直接阻止晋升。
 
 ## 复现命令
 
 ```bash
+# 离线 Monitor Gate；固定为零模型调用
+venv/bin/python eval/run_liveplan_monitor_eval.py --split test --gate
+
 # 只校验实验契约和 test 样本数量；不调用模型
 venv/bin/python eval/run_live_eval.py \
   --dataset eval/adaptive_tasks.json \
