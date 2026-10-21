@@ -2,14 +2,14 @@
 
 CompilationCoverage 只能证明模型已经声明的 AST 节点都进入执行器；本模块从人类原文
 重新枚举要求，检查理解层是否漏读、反转或擅自增加语义。它只在 CATALOG_QUERY 路径
-调用一次独立模型，不执行工具，也不接收业务运行结果。
+调用独立模型；协议无效时整轮最多追加一次格式修复，不执行工具，也不接收业务运行结果。
 """
 from __future__ import annotations
 
 import json
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from src.agents.base import as_text
 from src.catalog_query import CatalogQuerySpec
@@ -23,9 +23,20 @@ class StrictModel(BaseModel):
 
 class CatalogRequirementReview(StrictModel):
     source_quote: str = Field(min_length=1, max_length=500)
+    source_turn: Literal["LATEST", "HISTORY"] = "LATEST"
     interpretation: str = Field(min_length=1, max_length=500)
     requirement_ids: list[str] = Field(default_factory=list, max_length=24)
-    status: Literal["COVERED", "MISSING", "MISINTERPRETED", "UNCERTAIN"]
+    status: Literal["COVERED", "MISSING", "MISINTERPRETED", "UNCERTAIN", "NOT_APPLICABLE"]
+
+    @model_validator(mode="after")
+    def mapping_matches_status(self):
+        if self.status == "COVERED" and not self.requirement_ids:
+            raise ValueError("Covered requirements must reference at least one declared requirement")
+        if self.status == "NOT_APPLICABLE" and (
+            self.source_turn != "HISTORY" or self.requirement_ids
+        ):
+            raise ValueError("Only history may be NOT_APPLICABLE and it cannot reference requirements")
+        return self
 
 
 class CatalogRequestAudit(StrictModel):
@@ -36,7 +47,9 @@ class CatalogRequestAudit(StrictModel):
     @model_validator(mode="after")
     def verdict_matches_rows(self):
         if self.verdict == "APPROVED" and (
-            self.issues or any(row.status != "COVERED" or not row.requirement_ids for row in self.requirements)
+            self.issues
+            or not any(row.status == "COVERED" for row in self.requirements)
+            or any(row.status not in {"COVERED", "NOT_APPLICABLE"} for row in self.requirements)
         ):
             raise ValueError("Approval requires complete coverage without issues")
         if self.verdict != "APPROVED" and not self.issues:
@@ -56,6 +69,11 @@ from declared_requirements (for example "catalog_view:order_price_asc"), never a
 2) every supplied AST requirement is grounded and faithful, with no invented restriction.
 Use REVISE for omissions or semantic changes. Use CLARIFY only when two materially different executable meanings remain.
 Write interpretation and issues in Chinese; keep protocol identifiers in English. Never choose products or call tools.
+
+Set source_turn=LATEST for the current request and source_turn=HISTORY only for a quoted prior HUMAN turn. Omit irrelevant
+history unless explaining why it is not inherited; such an explanatory row must use status=NOT_APPLICABLE and an empty
+requirement_ids list. NOT_APPLICABLE is forbidden for any substring of the latest request. Applicable historical constraints
+must use status=COVERED and map to declared requirement IDs exactly like current-turn requirements.
 
 Runtime semantics that are facts, not open questions:
 - availability=ALL plus selector=ALL is the lossless representation of “所有/全部商品”; it adds no availability filter.
@@ -104,8 +122,57 @@ def _canonical_requirement_ids(
     return audit.model_copy(update={"requirements": normalized_rows}), repairs
 
 
-def review_catalog_request(user_message: str, history: list | None, objectives: list, *, model) -> dict:
-    """Run one fail-closed audit and bind it to the exact proposed AST."""
+def _error_details(exc: Exception) -> str:
+    if isinstance(exc, ValidationError):
+        details = [
+            {"path": ".".join(map(str, issue["loc"])), "message": issue["msg"]}
+            for issue in exc.errors(include_input=False, include_url=False)[:8]
+        ]
+        return json.dumps(details, ensure_ascii=False, separators=(",", ":"))
+    return str(exc)[:800]
+
+
+def _validate_audit_response(
+    content: str,
+    *,
+    user_message: str,
+    history_sources: list[str],
+    aliases: dict[str, set[str]],
+    known_ids: set[str],
+) -> tuple[CatalogRequestAudit, list[dict[str, str]]]:
+    audit = CatalogRequestAudit.model_validate_json(content)
+    audit, protocol_repairs = _canonical_requirement_ids(audit, aliases)
+    referenced: set[str] = set()
+    for row in audit.requirements:
+        if row.source_turn == "LATEST":
+            if row.source_quote not in user_message:
+                raise ValueError(f"LATEST audit quote is not an exact current HUMAN substring: {row.source_quote!r}")
+        else:
+            if row.source_quote in user_message:
+                raise ValueError("A current-request substring cannot be dismissed as history")
+            if not any(row.source_quote in source for source in history_sources):
+                raise ValueError(f"HISTORY audit quote is not an exact prior HUMAN substring: {row.source_quote!r}")
+        if not set(row.requirement_ids) <= known_ids:
+            raise ValueError("Audit referenced an unknown catalog requirement")
+        referenced.update(row.requirement_ids)
+    if audit.verdict == "APPROVED" and referenced != known_ids:
+        raise ValueError("Approved audit did not account for every declared AST requirement")
+    return audit, protocol_repairs
+
+
+def review_catalog_request(
+    user_message: str,
+    history: list | None,
+    objectives: list,
+    *,
+    model,
+    allow_protocol_repair: bool = True,
+) -> dict:
+    """Run a fail-closed audit and bind it to the exact proposed AST.
+
+    At most one additional model call repairs a malformed audit protocol. Semantic
+    REVISE/CLARIFY verdicts are returned unchanged and never rewritten as approval.
+    """
 
     catalog_objectives = [objective for objective in objectives if objective.catalog_query is not None]
     if not catalog_objectives:
@@ -157,46 +224,76 @@ def review_catalog_request(user_message: str, history: list | None, objectives: 
     )
     context = current_runtime()
     selected = model.json_mode() if hasattr(model, "json_mode") else model
-    response = (
-        context.model_call(
-            selected,
-            prompt,
-            purpose="catalog_request_audit",
-            agent="catalog_request_auditor",
-            allow_tools=False,
-            schemas=[{"name": "CatalogRequestAudit"}],
+    attempts = 2 if allow_protocol_repair else 1
+    previous_output = ""
+    error_text = ""
+    for attempt in range(attempts):
+        call_prompt = prompt
+        if attempt:
+            call_prompt += (
+                "\nThe previous audit OUTPUT failed protocol validation. Preserve its semantic judgment, but return one "
+                "corrected JSON object. Do not change REVISE or CLARIFY to APPROVED merely to pass validation.\n"
+                + json.dumps(
+                    {"validation_error": error_text, "previous_output": previous_output},
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                )
+            )
+        response = (
+            context.model_call(
+                selected,
+                call_prompt,
+                purpose="catalog_request_audit" if attempt == 0 else "catalog_request_audit_repair",
+                agent="catalog_request_auditor",
+                allow_tools=False,
+                schemas=[{"name": "CatalogRequestAudit"}],
+            )
+            if context
+            else selected.invoke(call_prompt)
         )
-        if context
-        else selected.invoke(prompt)
-    )
-    try:
-        if getattr(response, "tool_calls", []):
-            raise ValueError("Catalog auditor cannot call tools")
-        audit = CatalogRequestAudit.model_validate_json(as_text(response.content))
-        audit, protocol_repairs = _canonical_requirement_ids(audit, aliases)
-        referenced: set[str] = set()
-        for row in audit.requirements:
-            if not any(row.source_quote in source for source in sources):
-                raise ValueError(f"Audit quote is not an exact HUMAN substring: {row.source_quote!r}")
-            if not set(row.requirement_ids) <= known_ids:
-                raise ValueError("Audit referenced an unknown catalog requirement")
-            referenced.update(row.requirement_ids)
-        if audit.verdict == "APPROVED" and referenced != known_ids:
-            raise ValueError("Approved audit did not account for every declared AST requirement")
-    except (ValueError, TypeError) as exc:
-        raise AgentError(
-            "CATALOG_AUDIT_FORMAT_ERROR",
-            f"目录需求独立审查响应无效：{exc}",
-            retryable=False,
-        ) from exc
+        previous_output = as_text(response.content)
+        try:
+            if getattr(response, "tool_calls", []):
+                raise ValueError("Catalog auditor cannot call tools")
+            audit, protocol_repairs = _validate_audit_response(
+                previous_output,
+                user_message=user_message,
+                history_sources=sources[1:],
+                aliases=aliases,
+                known_ids=known_ids,
+            )
+            break
+        except (ValueError, TypeError, ValidationError) as exc:
+            error_text = _error_details(exc)
+            if attempt + 1 >= attempts:
+                raise AgentError(
+                    "CATALOG_AUDIT_FORMAT_ERROR",
+                    f"目录需求独立审查响应无效：{error_text}",
+                    retryable=False,
+                ) from exc
+            if context:
+                context.record(
+                    "catalog_audit_protocol_retry",
+                    attempt=attempt + 1,
+                    error=error_text,
+                )
+    else:  # pragma: no cover - loop exits by success or typed failure
+        raise AgentError("CATALOG_AUDIT_FORMAT_ERROR", "目录需求独立审查响应无效", retryable=False)
     record = audit.model_dump(mode="json")
     record["protocol_repairs"] = protocol_repairs
+    record["protocol_attempts"] = attempt + 1
     if context:
-        if protocol_repairs:
+        if protocol_repairs or attempt:
+            strategies = []
+            if attempt:
+                strategies.append("BOUNDED_MODEL_PROTOCOL_REPAIR")
+            if protocol_repairs:
+                strategies.append("UNIQUE_AST_REQUIREMENT_ALIAS")
             context.record(
                 "catalog_audit_protocol_repaired",
                 repairs=protocol_repairs,
-                strategy="UNIQUE_AST_REQUIREMENT_ALIAS",
+                strategy="+".join(strategies),
+                attempts=attempt + 1,
             )
         event = context.record(
             "catalog_request_audited",

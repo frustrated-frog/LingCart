@@ -1,7 +1,7 @@
 import json
 
 import pytest
-from langchain_core.messages import AIMessage
+from langchain_core.messages import AIMessage, HumanMessage
 from pydantic import ValidationError
 
 from src import orchestrator, tools
@@ -536,6 +536,91 @@ def test_catalog_audit_rejects_ambiguous_ast_requirement_id_aliases():
     })
 
     with pytest.raises(AgentError, match="unknown or ambiguous") as captured:
-        review_catalog_request(message, [], objectives, model=model)
+        review_catalog_request(message, [], objectives, model=model, allow_protocol_repair=False)
+
+    assert captured.value.code == "CATALOG_AUDIT_FORMAT_ERROR"
+
+
+def test_catalog_audit_repairs_an_irrelevant_history_row_once(monkeypatch):
+    message = "我想让你把所有商品，按照类目全部展示，每个类目下的商品按照价格从小到大排序"
+    prior_message = "推荐一个适合出差的降噪耳机"
+    spec = grouped_catalog_spec()
+    requirement_ids = [
+        f"catalog_view:{row.requirement_id}"
+        for row in CatalogQuerySpec.model_validate(spec, strict=True).requirements()
+    ]
+    understanding = {
+        "reason": "完整保留范围、分组和排序要求",
+        "commands": [],
+        "objectives": [{
+            "id": "catalog_view",
+            "kind": "CATALOG_QUERY",
+            "source_quote": message,
+            "catalog_query": spec,
+        }],
+    }
+    malformed_audit = {
+        "verdict": "APPROVED",
+        "requirements": [
+            {
+                "source_quote": message,
+                "source_turn": "LATEST",
+                "interpretation": "本轮目录要求全部覆盖",
+                "requirement_ids": requirement_ids,
+                "status": "COVERED",
+            },
+            {
+                "source_quote": prior_message,
+                "source_turn": "HISTORY",
+                "interpretation": "上一轮推荐目标不需要继承",
+                "requirement_ids": [],
+                "status": "COVERED",
+            },
+        ],
+        "issues": [],
+    }
+    repaired_audit = {
+        **malformed_audit,
+        "requirements": [
+            malformed_audit["requirements"][0],
+            {**malformed_audit["requirements"][1], "status": "NOT_APPLICABLE"},
+        ],
+    }
+    model = ScriptedModel(understanding, malformed_audit, repaired_audit)
+    monkeypatch.setattr(orchestrator, "get_llm", lambda **_kwargs: model)
+
+    result = orchestrator.run_orchestrator(message, [HumanMessage(content=prior_message)])
+
+    assert result["status"] == "SUCCEEDED"
+    assert result["catalog_request_audit"]["protocol_attempts"] == 2
+    assert result["catalog_request_audit"]["requirements"][-1]["status"] == "NOT_APPLICABLE"
+    assert sum(event["type"] == "catalog_audit_protocol_retry" for event in result["events"]) == 1
+    assert sum(event["type"] == "catalog_audit_protocol_repaired" for event in result["events"]) == 1
+    assert model.index == 3
+
+
+def test_catalog_audit_cannot_dismiss_the_latest_request_as_not_applicable():
+    message = "所有商品"
+    spec = grouped_catalog_spec()
+    objective = BusinessObjective.model_validate({
+        "id": "catalog_view",
+        "kind": "CATALOG_QUERY",
+        "source_quote": message,
+        "catalog_query": spec,
+    })
+    model = ScriptedModel({
+        "verdict": "APPROVED",
+        "requirements": [{
+            "source_quote": message,
+            "source_turn": "LATEST",
+            "interpretation": "错误地忽略本轮请求",
+            "requirement_ids": [],
+            "status": "NOT_APPLICABLE",
+        }],
+        "issues": [],
+    })
+
+    with pytest.raises(AgentError, match="Only history may be NOT_APPLICABLE") as captured:
+        review_catalog_request(message, [], [objective], model=model, allow_protocol_repair=False)
 
     assert captured.value.code == "CATALOG_AUDIT_FORMAT_ERROR"

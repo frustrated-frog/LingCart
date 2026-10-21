@@ -121,6 +121,7 @@ def _execute_understanding(user_message, history, pending_action, intake, run_id
                 understanding.objectives,
                 model=get_llm(purpose="goal"),
             )
+            audit_protocol_repair_used = audit.get("protocol_attempts", 1) > 1
             if audit.get("verdict") == "REVISE":
                 understanding = understand_turn(
                     user_message,
@@ -134,6 +135,7 @@ def _execute_understanding(user_message, history, pending_action, intake, run_id
                     history,
                     understanding.objectives,
                     model=get_llm(purpose="goal"),
+                    allow_protocol_repair=not audit_protocol_repair_used,
                 )
             if audit.get("verdict") == "CLARIFY":
                 result = _simple_result(
