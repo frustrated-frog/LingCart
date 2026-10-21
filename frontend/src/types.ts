@@ -228,15 +228,19 @@ export interface CatalogResultArtifact {
   result_set_id: string
   source_result_set_id?: string | null
   catalog_snapshot: { version?: string; fingerprint?: string; source?: string; [key: string]: unknown }
+  catalog_data_fingerprint: string
+  result_data_fingerprint: string
   query_spec: {
     partition?: { field: CatalogFieldRef } | null
     ordering: Array<{ field: CatalogFieldRef; direction: 'ASC' | 'DESC' }>
     selector: { mode: 'ALL' | 'TOP_K' | 'PAGE' | 'ARGMIN' | 'ARGMAX' }
+    metrics?: Array<{ alias: string; function: 'COUNT' | 'MIN' | 'MAX' | 'AVG' | 'SUM'; field?: CatalogFieldRef | null }>
     projection: { fields: CatalogFieldRef[] }
     [key: string]: unknown
   }
   matched_count: number
   delivered_count: number
+  population_ids: string[]
   member_ids: string[]
   products: CatalogResultProduct[]
   groups: Array<{ key: string; product_ids: string[]; count: number }>
@@ -245,6 +249,12 @@ export interface CatalogResultArtifact {
     mode: string
     requested_complete: boolean
     complete: boolean
+    selection_complete: boolean
+    population_complete: boolean
+    has_more: boolean
+    page: number | null
+    page_size: number | null
+    next_page: number | null
     matched_count: number
     delivered_count: number
   }

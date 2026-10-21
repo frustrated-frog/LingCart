@@ -147,6 +147,7 @@ class ChatResponse(BaseModel):
     error: dict | None = None
     latency_ms: float | None = None
     usage: Usage
+    artifacts: list[dict] = Field(default_factory=list)
     cached: bool = False
 
 
@@ -277,6 +278,7 @@ def _response(session_id, result):
         error=result.get("error"),
         latency_ms=result.get("latency_ms"),
         usage=Usage(**(result.get("usage") or {})),
+        artifacts=result.get("artifacts") or [],
         cached=result.get("cached", False),
     )
 

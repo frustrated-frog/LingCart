@@ -19,6 +19,16 @@ function fieldLabel(field: { core?: string | null; concept_id?: string | null })
   return labels[identity] ?? identity
 }
 
+function metricLabel(
+  alias: string,
+  definitions: CatalogResultArtifact['query_spec']['metrics'] = [],
+): string {
+  const definition = definitions.find((item) => item.alias === alias)
+  if (!definition) return alias
+  const functions = { COUNT: '数量', MIN: '最低', MAX: '最高', AVG: '平均', SUM: '合计' }
+  return `${functions[definition.function]}${definition.field ? fieldLabel(definition.field) : ''}`
+}
+
 function ProductTable({ products }: { products: CatalogResultProduct[] }) {
   return <div className="catalog-table-wrap"><table className="catalog-result-table">
     <thead><tr><th>商品</th><th>价格</th><th>库存</th><th>已验证目录信息</th></tr></thead>
@@ -41,6 +51,16 @@ function CatalogArtifactView({ artifact }: { artifact: CatalogResultArtifact }) 
     `${fieldLabel(item.field)}${item.direction === 'ASC' ? '升序' : '降序'}`,
   ).join('、')
   const metricEntries = Object.entries(artifact.metrics)
+  const deliveryLabel = artifact.delivery.mode === 'PAGE'
+    ? `第 ${artifact.delivery.page} 页`
+    : artifact.delivery.mode === 'TOP_K'
+      ? '前 K 项'
+      : artifact.delivery.population_complete
+        ? '完整'
+        : '目标结果'
+  const deliveryDetail = artifact.delivery.has_more
+    ? `仍有后续${artifact.delivery.next_page ? ` · 下一页 ${artifact.delivery.next_page}` : ''}`
+    : ordering || '已完成所选范围'
 
   return <section className="catalog-result" aria-label="结构化商品目录结果">
     <header className="catalog-result-head">
@@ -50,10 +70,10 @@ function CatalogArtifactView({ artifact }: { artifact: CatalogResultArtifact }) 
     <div className="catalog-result-summary">
       <div><Database size={15} /><span>结果规模</span><strong>{artifact.delivered_count}</strong><small>匹配 {artifact.matched_count} 款</small></div>
       <div><Layers3 size={15} /><span>结果组织</span><strong>{groups.length}</strong><small>{artifact.groups.length ? '按请求分组' : '未分组'}</small></div>
-      <div><CheckCircle2 size={15} /><span>交付状态</span><strong>{artifact.delivery.complete ? '完整' : '按页'}</strong><small>{ordering || '目录默认顺序'}</small></div>
+      <div><CheckCircle2 size={15} /><span>交付状态</span><strong>{deliveryLabel}</strong><small>{deliveryDetail}</small></div>
     </div>
     {metricEntries.length > 0 && <dl className="catalog-metrics">{metricEntries.map(([name, value]) =>
-      <div key={name}><dt>{name}</dt><dd>{String(value ?? '无可用值')}</dd></div>)}</dl>}
+      <div key={name}><dt>{metricLabel(name, artifact.query_spec.metrics)}</dt><dd>{String(value ?? '无可用值')}</dd></div>)}</dl>}
     <div className="catalog-groups">{groups.map((group, index) => <section className="catalog-group" key={group.key}>
       <div className="catalog-group-head"><div><span>{String(index + 1).padStart(2, '0')} / GROUP</span><h4>{group.key}</h4></div><b>{group.products.length} 款</b></div>
       <ProductTable products={group.products} />

@@ -105,12 +105,59 @@ def _execute_understanding(user_message, history, pending_action, intake, run_id
     from src.dialogue_understanding import command_kinds, render_direct_commands, to_task_plan, understand_turn
 
     if understanding is None:
+        understanding_model = get_llm(purpose="dialogue_understanding")
         understanding = understand_turn(
             user_message,
             history,
             pending_action,
-            model=get_llm(purpose="dialogue_understanding"),
+            model=understanding_model,
         )
+        if any(objective.catalog_query is not None for objective in understanding.objectives):
+            from src.catalog_request_audit import review_catalog_request
+
+            audit = review_catalog_request(
+                user_message,
+                history,
+                understanding.objectives,
+                model=get_llm(purpose="catalog_request_audit"),
+            )
+            if audit.get("verdict") == "REVISE":
+                understanding = understand_turn(
+                    user_message,
+                    history,
+                    pending_action,
+                    model=understanding_model,
+                    review_feedback={"issues": audit.get("issues"), "requirements": audit.get("requirements")},
+                )
+                audit = review_catalog_request(
+                    user_message,
+                    history,
+                    understanding.objectives,
+                    model=get_llm(purpose="catalog_request_audit"),
+                )
+            if audit.get("verdict") == "CLARIFY":
+                result = _simple_result(
+                    intake,
+                    run_id,
+                    reply="；".join(audit.get("issues") or ["这个目录请求仍有需要确认的含义。"]),
+                    agent="intake",
+                    route="CLARIFY",
+                    status="WAITING_CLARIFICATION",
+                    terminal_reason="CATALOG_REQUEST_AMBIGUOUS",
+                )
+                result["understanding"] = understanding.model_dump()
+                result["catalog_request_audit"] = audit
+                return result
+            if audit.get("verdict") != "APPROVED":
+                raise AgentError(
+                    "INCOMPLETE_REQUEST_COVERAGE",
+                    "目录请求经过一次修正后仍未通过原始需求覆盖审查",
+                    retryable=False,
+                )
+        else:
+            audit = None
+    else:
+        audit = None
     kinds = command_kinds(understanding)
     payload = understanding.model_dump()
 
@@ -201,6 +248,8 @@ def _execute_understanding(user_message, history, pending_action, intake, run_id
             terminal_reason="COMPLETED",
         )
     result["understanding"] = payload
+    if audit:
+        result["catalog_request_audit"] = audit
     return result
 
 

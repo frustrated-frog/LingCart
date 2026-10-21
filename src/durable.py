@@ -200,8 +200,11 @@ def execute_claim(claim, *, store=None, runner=None):
                 artifact = catalog_artifacts[-1]
                 state["catalog_result_set"] = {
                     "result_set_id": artifact["result_set_id"],
+                    "source_run_id": result["run_id"],
                     "source_result_set_id": artifact.get("source_result_set_id"),
                     "catalog_snapshot": artifact["catalog_snapshot"],
+                    "catalog_data_fingerprint": artifact["catalog_data_fingerprint"],
+                    "result_data_fingerprint": artifact["result_data_fingerprint"],
                     "query_spec": artifact["query_spec"],
                     "member_ids": artifact["member_ids"],
                     "matched_count": artifact["matched_count"],

@@ -468,6 +468,108 @@ def _projection_rows(products: list[dict], projection: CatalogProjection) -> lis
     return rows
 
 
+def _delivery_evidence(spec: CatalogQuerySpec, matched_count: int, delivered_count: int) -> dict:
+    population_complete = delivered_count == matched_count
+    has_more = False
+    next_page = None
+    if spec.selector.mode == "PAGE":
+        end = (spec.selector.page - 1) * spec.selector.page_size + delivered_count
+        has_more = end < matched_count
+        next_page = spec.selector.page + 1 if has_more else None
+    elif spec.selector.mode == "TOP_K":
+        has_more = delivered_count < matched_count
+    return {
+        "mode": spec.selector.mode,
+        "requested_complete": spec.selector.mode == "ALL",
+        # complete means the declared selector was fully evaluated, while
+        # population_complete says whether every matching row was delivered.
+        "complete": True,
+        "selection_complete": True,
+        "population_complete": population_complete,
+        "has_more": has_more,
+        "page": spec.selector.page if spec.selector.mode == "PAGE" else None,
+        "page_size": spec.selector.page_size if spec.selector.mode == "PAGE" else None,
+        "next_page": next_page,
+        "matched_count": matched_count,
+        "delivered_count": delivered_count,
+    }
+
+
+def _catalog_record(product: dict) -> dict:
+    """Normalize an authoritative row for hashing and frozen result-set reuse."""
+
+    return {
+        "product_id": product["product_id"],
+        "name": product["name"],
+        "category": product["category"],
+        "price": product["price"],
+        "currency": product.get("currency", "CNY"),
+        "summary": product["summary"],
+        "stock": product["stock"],
+        "specs": product.get("specs") or {},
+        "data_source": product.get("data_source", "DEMO_CATALOG"),
+    }
+
+
+def _catalog_data_fingerprint(products: list[dict]) -> str:
+    payload = [_catalog_record(product) for product in sorted(products, key=lambda row: row["product_id"])]
+    encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False)
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def _load_persisted_result_set(base_result_set: dict) -> tuple[dict, list[dict]]:
+    """Resolve a compact conversation pointer to the immutable prior artifact."""
+
+    result_set_id = base_result_set.get("result_set_id")
+    source_run_id = base_result_set.get("source_run_id")
+    artifact = None
+    if source_run_id:
+        from src.persistence import RunStore
+
+        stored = RunStore().run(str(source_run_id))
+        result = (stored or {}).get("result") or {}
+        artifact = next(
+            (
+                candidate for candidate in result.get("artifacts", [])
+                if isinstance(candidate, dict) and candidate.get("result_set_id") == result_set_id
+            ),
+            None,
+        )
+    # Explicit inline artifacts remain useful for isolated executor tests, but
+    # production conversation state stores only a run/result-set pointer.
+    if artifact is None and isinstance(base_result_set.get("products"), list):
+        artifact = base_result_set
+    if not isinstance(artifact, dict):
+        raise AgentError(
+            "CATALOG_RESULT_SET_UNAVAILABLE",
+            "上一组商品结果已经不可用，无法安全继承其范围",
+            retryable=False,
+        )
+    rows = artifact.get("products")
+    member_ids = artifact.get("member_ids")
+    if (
+        not isinstance(rows, list)
+        or not isinstance(member_ids, list)
+        or member_ids != [row.get("product_id") for row in rows]
+        or base_result_set.get("member_ids") != member_ids
+    ):
+        raise AgentError(
+            "CATALOG_RESULT_SET_CORRUPT",
+            "上一组商品结果的成员证据不一致",
+            retryable=False,
+        )
+    products = [_catalog_record(row) for row in rows]
+    fingerprint = _catalog_data_fingerprint(products)
+    expected = base_result_set.get("result_data_fingerprint") or artifact.get("result_data_fingerprint")
+    if expected and fingerprint != expected:
+        raise AgentError(
+            "CATALOG_RESULT_SET_CORRUPT",
+            "上一组商品结果的数据指纹不一致",
+            retryable=False,
+        )
+    return artifact, products
+
+
 def query_catalog(spec: dict, base_result_set: dict | None = None,
                   compilation_coverage: list[dict] | None = None) -> dict:
     """Execute one constrained catalog AST against the real local repository."""
@@ -484,9 +586,13 @@ def query_catalog(spec: dict, base_result_set: dict | None = None,
         products = [tools._product_dict(product) for product in records]
     if parsed.scope.kind == "PREVIOUS_RESULT_SET":
         if not base_result_set or not isinstance(base_result_set.get("member_ids"), list):
-            return {"error": "缺少可验证的上一组商品结果"}
-        allowed = set(base_result_set["member_ids"])
-        products = [product for product in products if product["product_id"] in allowed]
+            raise AgentError(
+                "MISSING_PREVIOUS_RESULT_SET",
+                "缺少可验证的上一组商品结果",
+                retryable=False,
+            )
+        _, products = _load_persisted_result_set(base_result_set)
+    source_data_fingerprint = _catalog_data_fingerprint(products)
     if parsed.availability.scope == "AVAILABLE":
         products = [product for product in products if product["stock"] > 0]
     resolved_filters = []
@@ -505,35 +611,33 @@ def query_catalog(spec: dict, base_result_set: dict | None = None,
     member_ids = [product["product_id"] for product in selected]
     result_identity = {
         "snapshot": snapshot.fingerprint,
+        "catalog_data": source_data_fingerprint,
         "spec": parsed.model_dump(mode="json"),
         "base": (base_result_set or {}).get("result_set_id"),
+        "population": [product["product_id"] for product in ordered],
         "members": member_ids,
     }
     encoded = json.dumps(result_identity, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     result_set_id = "crs_" + hashlib.sha256(encoded.encode("utf-8")).hexdigest()[:24]
-    requested_complete = parsed.selector.mode == "ALL"
     artifact = {
         "artifact_type": "catalog_query_result",
         "version": CATALOG_QUERY_VERSION,
         "result_set_id": result_set_id,
         "source_result_set_id": (base_result_set or {}).get("result_set_id"),
         "catalog_snapshot": snapshot.audit_identity(),
+        "catalog_data_fingerprint": source_data_fingerprint,
+        "result_data_fingerprint": _catalog_data_fingerprint(selected),
         "query_spec": parsed.model_dump(mode="json"),
         "compilation_coverage": expected_coverage,
         "resolved_filters": resolved_filters,
         "matched_count": len(products),
         "delivered_count": len(rows),
+        "population_ids": [product["product_id"] for product in ordered],
         "member_ids": member_ids,
         "products": rows,
         "groups": _groups(rows, parsed.partition),
         "metrics": _metrics(products, parsed.metrics),
-        "delivery": {
-            "mode": parsed.selector.mode,
-            "requested_complete": requested_complete,
-            "complete": (not requested_complete) or len(rows) == len(products),
-            "matched_count": len(products),
-            "delivered_count": len(rows),
-        },
+        "delivery": _delivery_evidence(parsed, len(products), len(rows)),
         "generated_at": datetime.now(UTC).isoformat(),
         "data_source": "DEMO_CATALOG",
     }
@@ -541,17 +645,14 @@ def query_catalog(spec: dict, base_result_set: dict | None = None,
             "data_source": "DEMO_CATALOG"}
 
 
-def _field_values(rows: list[dict], field: CatalogFieldRef) -> list[object]:
-    return [_field_value(row, field) for row in rows]
-
-
 def validate_catalog_operation(result: object, arguments: dict) -> None:
     if not isinstance(result, dict) or not isinstance(result.get("artifact"), dict):
         raise AgentError("INVALID_TOOL_RESULT", "目录查询没有返回结构化结果产物", retryable=False)
     artifact = result["artifact"]
     required = {
-        "artifact_type", "version", "result_set_id", "catalog_snapshot", "query_spec",
-        "compilation_coverage", "resolved_filters", "matched_count", "delivered_count", "member_ids",
+        "artifact_type", "version", "result_set_id", "catalog_snapshot", "catalog_data_fingerprint",
+        "result_data_fingerprint", "query_spec",
+        "compilation_coverage", "resolved_filters", "matched_count", "delivered_count", "population_ids", "member_ids",
         "products", "groups", "metrics", "delivery", "data_source",
     }
     if not required <= artifact.keys() or artifact.get("artifact_type") != "catalog_query_result":
@@ -566,10 +667,44 @@ def validate_catalog_operation(result: object, arguments: dict) -> None:
         raise AgentError("CATALOG_FILTER_EVIDENCE_MISMATCH", "目录筛选绑定与语义目标不一致", retryable=False)
     rows = artifact.get("products")
     ids = artifact.get("member_ids")
-    if not isinstance(rows, list) or not isinstance(ids, list) or ids != [row.get("product_id") for row in rows]:
+    population_ids = artifact.get("population_ids")
+    if (not isinstance(rows, list) or not isinstance(ids, list) or not isinstance(population_ids, list)
+            or ids != [row.get("product_id") for row in rows]):
         raise AgentError("INVALID_CATALOG_RESULT_SET", "目录结果成员与证据行不一致", retryable=False)
-    if len(ids) != len(set(ids)) or artifact.get("delivered_count") != len(rows):
+    if (len(ids) != len(set(ids)) or len(population_ids) != len(set(population_ids))
+            or not set(ids) <= set(population_ids)
+            or artifact.get("matched_count") != len(population_ids)
+            or artifact.get("delivered_count") != len(rows)):
         raise AgentError("INVALID_CATALOG_RESULT_SET", "目录结果包含重复或错误计数", retryable=False)
+    if artifact.get("result_data_fingerprint") != _catalog_data_fingerprint(rows):
+        raise AgentError("CATALOG_RESULT_SET_CORRUPT", "目录结果行与数据指纹不一致", retryable=False)
+
+
+def _authoritative_population(spec: CatalogQuerySpec, arguments: dict, resolved_filters: list[dict]) -> list[dict]:
+    """Independently reconstruct the declared population from authoritative rows."""
+
+    from src import tools
+
+    with tools._session() as session:
+        records = session.scalars(select(tools.Product).order_by(tools.Product.product_id)).all()
+        products = [tools._product_dict(product) for product in records]
+    if spec.scope.kind == "PREVIOUS_RESULT_SET":
+        _, products = _load_persisted_result_set(arguments.get("base_result_set") or {})
+    expected_fingerprint = (arguments.get("base_result_set") or {}).get("result_data_fingerprint")
+    current_fingerprint = _catalog_data_fingerprint(products)
+    if expected_fingerprint and current_fingerprint != expected_fingerprint:
+        raise AgentError(
+            "CATALOG_RESULT_SET_CORRUPT",
+            "上一组商品结果的数据指纹与执行输入不一致",
+            retryable=False,
+        )
+    if spec.availability.scope == "AVAILABLE":
+        products = [product for product in products if product["stock"] > 0]
+    for item in resolved_filters:
+        field = CatalogFieldRef.model_validate(item["field"], strict=True)
+        products = [product for product in products
+                    if _compare(_field_value(product, field), item["operator"], item["value"])]
+    return _partitioned(_ordered(products, spec.ordering), spec.partition)
 
 
 def verify_catalog_goal(result: dict, arguments: dict) -> dict:
@@ -591,28 +726,34 @@ def verify_catalog_goal(result: dict, arguments: dict) -> dict:
             continue
         if any(not _compare(_field_value(row, field), operator, expected) for row in rows):
             failures.append(str(item["requirement_id"]))
-    if spec.partition:
-        for group in artifact.get("groups") or []:
-            allowed = set(group.get("product_ids") or [])
-            group_rows = [row for row in rows if row.get("product_id") in allowed]
-            ordered = _ordered(group_rows, spec.ordering)
-            if [row["product_id"] for row in ordered] != [row["product_id"] for row in group_rows]:
-                failures.extend(item.requirement_id for item in spec.ordering)
-                break
-    else:
-        ordered = _ordered(rows, spec.ordering)
-        if [row["product_id"] for row in ordered] != [row["product_id"] for row in rows]:
-            failures.extend(item.requirement_id for item in spec.ordering)
-    if spec.partition:
-        groups = artifact.get("groups") or []
-        grouped_ids = [identity for group in groups for identity in group.get("product_ids", [])]
-        if grouped_ids != [row["product_id"] for row in rows]:
-            failures.append(spec.partition.requirement_id)
-    if spec.selector.mode in {"ARGMIN", "ARGMAX"} and rows:
-        values = _field_values(rows, spec.selector.field)
-        if any(value is None for value in values) or len(set(values)) != 1:
-            failures.append(spec.selector.requirement_id)
-    expected_metrics = _metrics(rows, spec.metrics)
+    population = _authoritative_population(spec, arguments, resolved)
+    source_products = population
+    if spec.availability.scope == "AVAILABLE" or spec.filters:
+        # The artifact fingerprint binds the unfiltered source population. The
+        # authoritative source is reconstructed separately to avoid accepting
+        # a result-derived fingerprint.
+        if spec.scope.kind == "PREVIOUS_RESULT_SET":
+            _, source_products = _load_persisted_result_set(arguments.get("base_result_set") or {})
+        else:
+            from src import tools
+            with tools._session() as session:
+                records = session.scalars(select(tools.Product).order_by(tools.Product.product_id)).all()
+                source_products = [tools._product_dict(product) for product in records]
+    if artifact.get("catalog_data_fingerprint") != _catalog_data_fingerprint(source_products):
+        failures.append(spec.scope.requirement_id)
+    expected_population_ids = [product["product_id"] for product in population]
+    if artifact.get("population_ids") != expected_population_ids:
+        failures.extend([spec.scope.requirement_id, spec.availability.requirement_id,
+                         *(item.requirement_id for item in spec.filters),
+                         *(item.requirement_id for item in spec.ordering)])
+    expected_selected = _select(population, spec.selector)
+    expected_rows = _projection_rows(expected_selected, spec.projection)
+    if rows != expected_rows:
+        failures.extend([spec.selector.requirement_id, spec.projection.requirement_id])
+    expected_groups = _groups(expected_rows, spec.partition)
+    if artifact.get("groups") != expected_groups:
+        failures.append(spec.partition.requirement_id if spec.partition else spec.selector.requirement_id)
+    expected_metrics = _metrics(population, spec.metrics)
     if spec.metrics and artifact.get("metrics") != expected_metrics:
         failures.extend(metric.requirement_id for metric in spec.metrics)
     verdict = "SATISFIED" if not failures else "FAILED"
@@ -627,13 +768,18 @@ def verify_catalog_delivery(result: dict, arguments: dict) -> dict:
     failures = []
     if delivery.get("delivered_count") != len(artifact.get("products") or []):
         failures.append("DELIVERED_COUNT_MISMATCH")
+    expected = _delivery_evidence(spec, artifact.get("matched_count"), artifact.get("delivered_count"))
+    if delivery != expected:
+        failures.append("DELIVERY_EVIDENCE_MISMATCH")
     if spec.selector.mode == "ALL" and (
-        not delivery.get("complete")
+        not delivery.get("population_complete")
         or artifact.get("matched_count") != artifact.get("delivered_count")
     ):
         failures.append("COMPLETE_RESULT_TRUNCATED")
     return {"verdict": "SATISFIED" if not failures else "FAILED", "failures": failures,
-            "mode": spec.selector.mode, "complete": bool(delivery.get("complete"))}
+            "mode": spec.selector.mode, "complete": bool(delivery.get("complete")),
+            "population_complete": bool(delivery.get("population_complete")),
+            "has_more": bool(delivery.get("has_more")), "next_page": delivery.get("next_page")}
 
 
 def verify_catalog_result(result: object, arguments: dict) -> tuple[dict, dict]:
@@ -653,14 +799,47 @@ def render_catalog_result(result: dict) -> str:
     rows = artifact["products"]
     if not rows and not artifact["metrics"]:
         return "当前真实目录中没有符合这些条件的商品。"
+    labels = {
+        "product_id": "商品编号", "name": "商品名称", "category": "类目",
+        "price": "价格", "stock": "库存", "summary": "商品摘要",
+    }
+
+    def field_label(field: CatalogFieldRef | None) -> str:
+        if field is None:
+            return "商品"
+        if field.core is not None:
+            return labels[field.core]
+        return get_catalog_concept_registry().definition(str(field.concept_id)).description
+
+    def display_value(field: CatalogFieldRef | None, value: object, row: dict | None = None) -> str:
+        if field and field.core == "price" and isinstance(value, (int, float)):
+            return f"¥{value:.2f}"
+        if field and field.core == "stock" and isinstance(value, (int, float)):
+            return f"{value:g} 件"
+        return str(value if value is not None else "无可用值")
+
     if spec.selector.mode in {"ARGMIN", "ARGMAX"} and rows:
         row = rows[0]
         label = "最低值" if spec.selector.mode == "ARGMIN" else "最高值"
-        return f"在上一结果范围内，{label}对应 {row['name']}（{row['product_id']}），价格 ¥{row['price']:.2f}。"
-    if artifact["metrics"] and not rows:
-        metrics = "，".join(f"{key}：{value}" for key, value in artifact["metrics"].items())
+        scope = "上一结果范围" if spec.scope.kind == "PREVIOUS_RESULT_SET" else "当前目录范围"
+        field = spec.selector.field
+        value = _field_value(row, field)
+        return (
+            f"在{scope}内，{field_label(field)}{label}对应 {row['name']}（{row['product_id']}），"
+            f"{field_label(field)}为 {display_value(field, value, row)}。"
+        )
+    if artifact["metrics"]:
+        metric_labels = {"COUNT": "数量", "MIN": "最低", "MAX": "最高", "AVG": "平均", "SUM": "合计"}
+        values = []
+        for metric in spec.metrics:
+            label = metric_labels[metric.function]
+            if metric.field is not None:
+                label += field_label(metric.field)
+            values.append(f"{label}：{display_value(metric.field, artifact['metrics'].get(metric.alias))}")
+        metrics = "，".join(values)
         return f"已完成目录聚合：{metrics}。"
-    partition = f"，按 {spec.partition.field.identity} 分为 {len(artifact['groups'])} 组" if spec.partition else ""
+    partition_label = labels.get(spec.partition.field.identity, spec.partition.field.identity) if spec.partition else ""
+    partition = f"，按{partition_label}分为 {len(artifact['groups'])} 组" if spec.partition else ""
     ordering = "，并按指定顺序排列" if spec.ordering else ""
     completeness = "完整结果已附在下方结构化目录中" if spec.selector.mode == "ALL" else "所选结果已附在下方结构化目录中"
     return f"已从真实目录得到 {artifact['delivered_count']} 款商品{partition}{ordering}；{completeness}。"
