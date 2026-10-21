@@ -51,11 +51,13 @@ function CatalogArtifactView({ artifact }: { artifact: CatalogResultArtifact }) 
     `${fieldLabel(item.field)}${item.direction === 'ASC' ? '升序' : '降序'}`,
   ).join('、')
   const metricEntries = Object.entries(artifact.metrics)
+  const populationComplete = artifact.delivery.population_complete
+    ?? (artifact.delivery.requested_complete && artifact.delivery.complete)
   const deliveryLabel = artifact.delivery.mode === 'PAGE'
-    ? `第 ${artifact.delivery.page} 页`
+    ? `第 ${artifact.delivery.page ?? 1} 页`
     : artifact.delivery.mode === 'TOP_K'
       ? '前 K 项'
-      : artifact.delivery.population_complete
+      : populationComplete
         ? '完整'
         : '目标结果'
   const deliveryDetail = artifact.delivery.has_more

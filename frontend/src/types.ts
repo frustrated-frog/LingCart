@@ -249,12 +249,12 @@ export interface CatalogResultArtifact {
     mode: string
     requested_complete: boolean
     complete: boolean
-    selection_complete: boolean
-    population_complete: boolean
-    has_more: boolean
-    page: number | null
-    page_size: number | null
-    next_page: number | null
+    selection_complete?: boolean
+    population_complete?: boolean
+    has_more?: boolean
+    page?: number | null
+    page_size?: number | null
+    next_page?: number | null
     matched_count: number
     delivered_count: number
   }
