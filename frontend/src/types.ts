@@ -234,8 +234,10 @@ export interface CatalogResultArtifact {
   version: string
   result_set_id: string
   source_result_set_id?: string | null
+  source_result_set_view?: 'DELIVERED' | 'POPULATION' | null
   catalog_snapshot: { version?: string; fingerprint?: string; source?: string; [key: string]: unknown }
   catalog_data_fingerprint: string
+  population_data_fingerprint?: string
   result_data_fingerprint: string
   query_spec: {
     partition?: { field: CatalogFieldRef } | null
@@ -248,6 +250,9 @@ export interface CatalogResultArtifact {
   matched_count: number
   delivered_count: number
   population_ids: string[]
+  population_products?: Product[]
+  selected_ids?: string[]
+  delivered_ids?: string[]
   member_ids: string[]
   products: CatalogResultProduct[]
   groups: Array<{ key: string; product_ids: string[]; count: number }>
@@ -266,8 +271,10 @@ export interface CatalogResultArtifact {
     delivered_count: number
   }
   verification?: {
+    status?: 'PENDING' | 'VERIFIED' | 'REJECTED' | 'PARTIAL'
     goal?: { verdict?: string; checked_requirements?: string[] }
     delivery?: { verdict?: string; complete?: boolean }
+    error?: { code?: string; message?: string; retryable?: boolean }
   }
   data_source: string
 }

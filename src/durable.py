@@ -195,6 +195,7 @@ def execute_claim(claim, *, store=None, runner=None):
             catalog_artifacts = [
                 artifact for artifact in result.get("artifacts", [])
                 if isinstance(artifact, dict) and artifact.get("artifact_type") == "catalog_query_result"
+                and (artifact.get("verification") or {}).get("status") == "VERIFIED"
             ]
             if catalog_artifacts:
                 artifact = catalog_artifacts[-1]
@@ -204,8 +205,12 @@ def execute_claim(claim, *, store=None, runner=None):
                     "source_result_set_id": artifact.get("source_result_set_id"),
                     "catalog_snapshot": artifact["catalog_snapshot"],
                     "catalog_data_fingerprint": artifact["catalog_data_fingerprint"],
+                    "population_data_fingerprint": artifact["population_data_fingerprint"],
                     "result_data_fingerprint": artifact["result_data_fingerprint"],
                     "query_spec": artifact["query_spec"],
+                    "population_ids": artifact["population_ids"],
+                    "selected_ids": artifact["selected_ids"],
+                    "delivered_ids": artifact["delivered_ids"],
                     "member_ids": artifact["member_ids"],
                     "matched_count": artifact["matched_count"],
                     "delivered_count": artifact["delivered_count"],

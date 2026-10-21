@@ -83,6 +83,8 @@ Runtime semantics that are facts, not open questions:
 - “完整展示” may be represented by the canonical public fields product_id, name, category, price, stock and summary.
 - a singular “哪款/哪一个” permits ARGMIN/ARGMAX with include_ties=false; include_ties=true is required only when the
   human explicitly asks to retain every tied extreme. ARGMIN/ARGMAX never need ordering, limit or pagination fields.
+- PREVIOUS_RESULT_SET with result_set_view=POPULATION continues the parent query across pages. DELIVERED limits a
+  follow-up to the rows actually shown; confusing these views changes the request scope and must be REVISE.
 """
 
 

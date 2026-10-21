@@ -1,3 +1,4 @@
+from copy import deepcopy
 import json
 
 import pytest
@@ -10,7 +11,9 @@ from src.backend.seed import seed
 from src.catalog_query import (
     CatalogFieldRef,
     CatalogQuerySpec,
+    PredicateTruth,
     _catalog_data_fingerprint,
+    _compare,
     compilation_coverage,
     query_catalog,
     render_catalog_result,
@@ -131,6 +134,8 @@ def test_delivery_verifier_rejects_a_truncated_complete_result():
     result = query_catalog(**args)
     result["artifact"]["products"] = result["artifact"]["products"][:4]
     result["artifact"]["member_ids"] = result["artifact"]["member_ids"][:4]
+    result["artifact"]["selected_ids"] = result["artifact"]["selected_ids"][:4]
+    result["artifact"]["delivered_ids"] = result["artifact"]["delivered_ids"][:4]
     result["artifact"]["delivered_count"] = 4
     result["artifact"]["delivery"]["delivered_count"] = 4
     result["artifact"]["delivery"]["complete"] = False
@@ -140,6 +145,7 @@ def test_delivery_verifier_rejects_a_truncated_complete_result():
         verify_catalog_result(result, args)
 
     assert captured.value.code == "CATALOG_DELIVERY_INCOMPLETE"
+    assert result["artifact"]["verification"]["status"] == "REJECTED"
 
 
 def test_catalog_query_rejects_a_forged_compilation_coverage():
@@ -225,6 +231,8 @@ def test_goal_verifier_rejects_an_internally_consistent_non_minimum_selection():
     artifact = result["artifact"]
     artifact["products"] = [wrong]
     artifact["member_ids"] = [wrong["product_id"]]
+    artifact["selected_ids"] = [wrong["product_id"]]
+    artifact["delivered_ids"] = [wrong["product_id"]]
     artifact["delivered_count"] = 1
     artifact["delivery"]["delivered_count"] = 1
     artifact["result_data_fingerprint"] = _catalog_data_fingerprint([wrong])
@@ -233,6 +241,110 @@ def test_goal_verifier_rejects_an_internally_consistent_non_minimum_selection():
         verify_catalog_result(result, args)
 
     assert captured.value.code == "CATALOG_GOAL_NOT_SATISFIED"
+    assert artifact["verification"]["status"] == "REJECTED"
+
+
+def test_goal_verifier_rejects_self_hashed_tampering_in_undelivered_population_rows():
+    spec = grouped_catalog_spec()
+    spec["partition"] = None
+    spec["ordering"] = [{
+        "requirement_id": "price_order", "source_quote": "价格升序",
+        "field": {"core": "price"}, "direction": "ASC",
+    }]
+    spec["selector"] = {
+        "requirement_id": "first_page", "source_quote": "第一页每页七款",
+        "mode": "PAGE", "page": 1, "page_size": 7, "include_ties": False,
+    }
+    args = query_args(spec)
+    result = query_catalog(**args)
+    artifact = result["artifact"]
+    assert artifact["population_products"][8]["product_id"] not in artifact["member_ids"]
+    artifact["population_products"][8]["price"] = 0.01
+    artifact["population_data_fingerprint"] = _catalog_data_fingerprint(artifact["population_products"])
+
+    with pytest.raises(AgentError) as captured:
+        verify_catalog_result(result, args)
+
+    assert captured.value.code == "CATALOG_GOAL_NOT_SATISFIED"
+    assert artifact["verification"]["status"] == "REJECTED"
+
+
+def test_missing_attribute_is_unknown_and_cannot_satisfy_negative_filters():
+    assert _compare(None, "NE", "静音轴") is PredicateTruth.UNKNOWN
+    assert _compare(None, "NOT_CONTAINS", "主动") is PredicateTruth.UNKNOWN
+    assert _compare("红轴", "NE", "静音轴") is PredicateTruth.TRUE
+
+    message = "不是静音轴的商品"
+    spec = grouped_catalog_spec()
+    spec["scope"]["source_quote"] = message
+    spec["availability"]["source_quote"] = message
+    spec["partition"] = None
+    spec["ordering"] = []
+    spec["filters"] = [{
+        "requirement_id": "not_silent",
+        "source_quote": "不是静音轴",
+        "concept": {
+            "schema_revision": "demo-catalog/product-concepts/v1",
+            "concept_id": "keyboard.switch_type",
+            "operator": "ne",
+            "canonical_value": "silent",
+        },
+    }]
+    spec["selector"] = {
+        "requirement_id": "all", "source_quote": message, "mode": "ALL", "include_ties": False,
+    }
+    spec["projection"]["source_quote"] = message
+    args = query_args(spec)
+
+    result = query_catalog(**args)
+    verify_catalog_result(result, args)
+
+    assert result["artifact"]["products"]
+    assert all(row["category"] == "键盘" for row in result["artifact"]["products"])
+    assert all(row["specs"]["轴体"] != "静音轴" for row in result["artifact"]["products"])
+
+
+def test_previous_population_continues_pagination_without_repaginating_the_delivered_page():
+    first_spec = grouped_catalog_spec()
+    first_spec["partition"] = None
+    first_spec["ordering"] = [{
+        "requirement_id": "price_order", "source_quote": "价格升序",
+        "field": {"core": "price"}, "direction": "ASC",
+    }]
+    first_spec["selector"] = {
+        "requirement_id": "first_page", "source_quote": "第一页每页七款",
+        "mode": "PAGE", "page": 1, "page_size": 7, "include_ties": False,
+    }
+    first_args = query_args(first_spec)
+    first = query_catalog(**first_args)
+    verify_catalog_result(first, first_args)
+
+    second_spec = grouped_catalog_spec()
+    second_spec["scope"] = {
+        "requirement_id": "scope", "source_quote": "下一页",
+        "kind": "PREVIOUS_RESULT_SET", "result_set_view": "POPULATION",
+    }
+    second_spec["availability"]["source_quote"] = "下一页"
+    second_spec["partition"] = None
+    second_spec["ordering"] = [{
+        "requirement_id": "price_order", "source_quote": "下一页",
+        "field": {"core": "price"}, "direction": "ASC",
+    }]
+    second_spec["selector"] = {
+        "requirement_id": "next_page", "source_quote": "下一页",
+        "mode": "PAGE", "page": 2, "page_size": 7, "include_ties": False,
+    }
+    second_spec["projection"]["source_quote"] = "下一页"
+    second_args = query_args(second_spec, base=first["artifact"])
+
+    second = query_catalog(**second_args)
+    verify_catalog_result(second, second_args)
+
+    expected_ids = first["artifact"]["population_ids"][7:14]
+    assert second["artifact"]["member_ids"] == expected_ids
+    assert second["artifact"]["source_result_set_view"] == "POPULATION"
+    assert second["artifact"]["delivered_count"] == 7
+    assert second["artifact"]["verification"]["status"] == "VERIFIED"
 
 
 def test_query_protocol_rejects_ambiguous_or_untrusted_shapes():
@@ -431,6 +543,45 @@ def test_conversation_projection_restores_persisted_artifacts(monkeypatch):
 
     assistant = next(item for item in conversation["messages"] if item["role"] == "assistant")
     assert assistant["result"]["artifacts"] == result["artifacts"]
+
+
+def test_rejected_catalog_artifact_cannot_replace_the_verified_conversation_scope(monkeypatch):
+    message = "耳机都有哪些"
+    spec = headphones_spec(message)
+    model = ScriptedModel(
+        {"reason": "列出耳机", "commands": [], "objectives": [{
+            "id": "headphones", "kind": "CATALOG_QUERY", "source_quote": message,
+            "catalog_query": spec,
+        }]},
+        approved_audit(spec, message, "headphones"),
+    )
+    monkeypatch.setattr(orchestrator, "get_llm", lambda **_kwargs: model)
+    session_id = "catalog-rejected-scope"
+    first = run_conversation(message, session_id, request_id="verified-catalog", store=RunStore())
+    verified_scope = deepcopy(RunStore().conversation(session_id)["state"]["catalog_result_set"])
+    rejected = deepcopy(first["artifacts"][0])
+    rejected["result_set_id"] = "crs_rejected_scope"
+    rejected["verification"] = {
+        "status": "REJECTED",
+        "error": {"code": "CATALOG_GOAL_NOT_SATISFIED", "message": "目录目标未满足", "retryable": False},
+    }
+
+    def rejected_runner(_request, **_kwargs):
+        return {
+            "reply": "目录核验失败。", "agent": "shopping", "route": "CATALOG",
+            "status": "FAILED", "terminal_reason": "CATALOG_GOAL_NOT_SATISFIED",
+            "error": rejected["verification"]["error"], "trace": [], "pending_action": None,
+            "usage": {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0},
+            "artifacts": [rejected],
+        }
+
+    second = run_conversation(
+        "给我一个核验失败的目录产物", session_id,
+        request_id="rejected-catalog", store=RunStore(), runner=rejected_runner,
+    )
+
+    assert second["status"] == "FAILED"
+    assert RunStore().conversation(session_id)["state"]["catalog_result_set"] == verified_scope
 
 
 def test_independent_catalog_audit_repairs_an_omitted_order_before_execution(monkeypatch):

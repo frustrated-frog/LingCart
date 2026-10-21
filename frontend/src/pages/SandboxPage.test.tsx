@@ -48,7 +48,7 @@ describe('SandboxPage durable session behavior', () => {
             matched_count: 2, delivered_count: 2, population_ids: ['P1', 'P2'], member_ids: ['P1', 'P2'], products,
             groups: [{ key: '耳机', product_ids: ['P1'], count: 1 }, { key: '键盘', product_ids: ['P2'], count: 1 }],
             metrics: {}, delivery: { mode: 'ALL', requested_complete: true, complete: true, selection_complete: true, population_complete: true, has_more: false, page: null, page_size: null, next_page: null, matched_count: 2, delivered_count: 2 },
-            verification: { goal: { verdict: 'SATISFIED' }, delivery: { verdict: 'SATISFIED', complete: true } }, data_source: 'DEMO_CATALOG',
+            verification: { status: 'VERIFIED', goal: { verdict: 'SATISFIED' }, delivery: { verdict: 'SATISFIED', complete: true } }, data_source: 'DEMO_CATALOG',
           }],
         } },
       ],
@@ -63,6 +63,39 @@ describe('SandboxPage durable session behavior', () => {
     expect(screen.getByText('基础耳机')).toBeInTheDocument()
     expect(screen.getByText('静音键盘')).toBeInTheDocument()
     expect(screen.getByText('价格升序')).toBeInTheDocument()
+  })
+
+  it('does not present a rejected catalog artifact as verified product output', async () => {
+    const product = { product_id: 'P1', name: '未核验耳机', category: '耳机', price: 99, currency: 'CNY', summary: '诊断行', specs: {}, stock: 3, data_source: 'DEMO_CATALOG', values: {} }
+    vi.spyOn(api, 'conversation').mockResolvedValue({
+      active_run_id: null,
+      state: {},
+      messages: [
+        { role: 'user', content: '给我目录结果', run_id: 'rejected-catalog-run' },
+        { role: 'assistant', content: '目录核验失败。', run_id: 'rejected-catalog-run', result: {
+          run_id: 'rejected-catalog-run', reply: '目录核验失败。', agent: 'shopping', route: 'DIRECT', status: 'FAILED',
+          terminal_reason: 'CATALOG_GOAL_NOT_SATISFIED', events: [], trace: [], pending_action: null,
+          usage: { input_tokens: 0, output_tokens: 0, total_tokens: 0 },
+          artifacts: [{
+            artifact_type: 'catalog_query_result', version: 'catalog-query/v1', result_set_id: 'crs_rejected',
+            catalog_snapshot: { version: 'snapshot-v1' }, catalog_data_fingerprint: 'source', result_data_fingerprint: 'result',
+            query_spec: { partition: null, ordering: [], selector: { mode: 'ALL' }, projection: { fields: [{ core: 'name' }] } },
+            matched_count: 1, delivered_count: 1, population_ids: ['P1'], member_ids: ['P1'], products: [product],
+            groups: [], metrics: {}, delivery: { mode: 'ALL', requested_complete: true, complete: false, matched_count: 1, delivered_count: 1 },
+            verification: { status: 'REJECTED', error: { code: 'CATALOG_GOAL_NOT_SATISFIED', message: '目录结果没有满足全部语义目标' } },
+            data_source: 'DEMO_CATALOG',
+          }],
+        } },
+      ],
+    })
+
+    renderPage()
+
+    expect(await screen.findByLabelText('目录结果未通过核验')).toBeInTheDocument()
+    expect(screen.getByText('REJECTED')).toBeInTheDocument()
+    expect(screen.getByText('CATALOG_GOAL_NOT_SATISFIED')).toBeInTheDocument()
+    expect(screen.queryByText('目标与交付已核验')).not.toBeInTheDocument()
+    expect(screen.queryByText('未核验耳机')).not.toBeInTheDocument()
   })
 
   it('restores a pending approval from persisted conversation state', async () => {

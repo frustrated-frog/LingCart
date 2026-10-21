@@ -163,8 +163,7 @@ def verify_observation(step):
     """Evidence must refer to this goal and contain the fields used in replies."""
     result, name = step.result, step.tool
     if name == CATALOG_QUERY_OPERATION:
-        goal, delivery = verify_catalog_result(result, step.args)
-        result["artifact"]["verification"] = {"goal": goal, "delivery": delivery}
+        verify_catalog_result(result, step.args)
         return
     contract = get_capability_registry().operation_contract(name)
     if contract is not None:
@@ -333,6 +332,18 @@ def execute_plan(intake, run_id, *, plan=None, source="deterministic", incomplet
                 step.outcome = "FAILED"
                 step.error = {"code": error.code, "message": str(error), "retryable": error.retryable}
                 errors.append(step.error)
+                artifact = step.result.get("artifact") if isinstance(step.result, dict) else None
+                if (
+                    step.tool == CATALOG_QUERY_OPERATION
+                    and isinstance(artifact, dict)
+                    and (artifact.get("verification") or {}).get("status") == "REJECTED"
+                ):
+                    recorder.record(
+                        "catalog_verification_rejected",
+                        step_id=step.step_id,
+                        result_set_id=artifact.get("result_set_id"),
+                        error=step.error,
+                    )
                 if "BUDGET" in error.code or error.code in {"RUN_LEASE_LOST", "UNCERTAIN_TOOL_OUTCOME"}:
                     stop_error = step.error
             recorder.record("step_completed", step_id=step.step_id, specialist=step.specialist, status=step.status, error=step.error)

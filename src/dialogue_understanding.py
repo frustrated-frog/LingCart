@@ -124,7 +124,9 @@ pagination, superlatives and PREVIOUS_RESULT_SET references. Preserve each of th
 a distinct requirement_id and exact source_quote. For each objective, emit only its accepted fields; omit unrelated
 generic fields rather than filling them with null, empty, or redundant values. Use PREVIOUS_RESULT_SET for anaphoric or
 elliptical follow-ups to the prior visible set; when the latest turn explicitly names a category and does not refer to
-the prior set, use CATALOG even if history contains a result. ARGMIN/ARGMAX accept field and include_ties, but never
+the prior set, use CATALOG even if history contains a result. For PREVIOUS_RESULT_SET, use result_set_view=POPULATION
+only when continuing the parent query across pages; use DELIVERED for “这些/其中” operations over rows the user actually
+saw. ARGMIN/ARGMAX accept field and include_ties, but never
 ordering, limit, page or page_size. PRODUCT_SEARCH is only literal simple lookup. PRODUCT_DISCOVERY is
 recommendation/exploration; never use it for a structured catalog view. Exclusions belong in excluded_terms.
 SYSTEM_TIME reads current time; CALCULATE evaluates a literal expression. Missing required values stay null/empty.

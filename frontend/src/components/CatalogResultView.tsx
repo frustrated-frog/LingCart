@@ -1,8 +1,12 @@
-import { CheckCircle2, Database, Layers3 } from 'lucide-react'
+import { AlertTriangle, CheckCircle2, Clock3, Database, Layers3 } from 'lucide-react'
 import type { CatalogResultArtifact, CatalogResultProduct, ResultArtifact } from '../types'
 
 function isCatalogArtifact(artifact: ResultArtifact): artifact is CatalogResultArtifact {
   return artifact.artifact_type === 'catalog_query_result'
+    && Array.isArray(artifact.products)
+    && Array.isArray(artifact.groups)
+    && Array.isArray(artifact.member_ids)
+    && typeof artifact.delivery === 'object'
 }
 
 function price(value: number, currency: string): string {
@@ -41,7 +45,33 @@ function ProductTable({ products }: { products: CatalogResultProduct[] }) {
   </table></div>
 }
 
+function verificationStatus(artifact: CatalogResultArtifact) {
+  if (artifact.verification?.status) return artifact.verification.status
+  if (artifact.verification?.goal?.verdict === 'SATISFIED'
+      && artifact.verification?.delivery?.verdict === 'SATISFIED') return 'VERIFIED'
+  return 'PENDING'
+}
+
 function CatalogArtifactView({ artifact }: { artifact: CatalogResultArtifact }) {
+  const verification = verificationStatus(artifact)
+  if (verification !== 'VERIFIED') {
+    const rejected = verification === 'REJECTED'
+    const label = rejected ? '目录结果未通过核验' : verification === 'PARTIAL' ? '目录结果仅部分核验' : '目录结果尚未核验'
+    return <section className={`catalog-result catalog-result-${verification.toLowerCase()}`} aria-label={label}>
+      <header className="catalog-result-head">
+        <div><span>CATALOG EVIDENCE</span><h3>{label}</h3></div>
+        <div className="catalog-result-proof"><AlertTriangle size={14} /><span>{verification}</span></div>
+      </header>
+      <div className="catalog-verification-warning" role="alert">
+        <AlertTriangle size={16} />
+        <div><strong>未将该产物作为可信商品结果交付</strong>
+          <p>{artifact.verification?.error?.message ?? '目标或交付核验尚未全部完成，商品行仅保留为运行诊断证据。'}</p>
+          {artifact.verification?.error?.code && <code>{artifact.verification.error.code}</code>}
+        </div>
+      </div>
+      <footer><code>{artifact.result_set_id}</code><span>{artifact.data_source} · 诊断证据</span></footer>
+    </section>
+  }
   const productById = new Map(artifact.products.map((product) => [product.product_id, product]))
   const groups = artifact.groups.length > 0
     ? artifact.groups.map((group) => ({ ...group, products: group.product_ids
@@ -72,7 +102,7 @@ function CatalogArtifactView({ artifact }: { artifact: CatalogResultArtifact }) 
     <div className="catalog-result-summary">
       <div><Database size={15} /><span>结果规模</span><strong>{artifact.delivered_count}</strong><small>匹配 {artifact.matched_count} 款</small></div>
       <div><Layers3 size={15} /><span>结果组织</span><strong>{groups.length}</strong><small>{artifact.groups.length ? '按请求分组' : '未分组'}</small></div>
-      <div><CheckCircle2 size={15} /><span>交付状态</span><strong>{deliveryLabel}</strong><small>{deliveryDetail}</small></div>
+      <div><Clock3 size={15} /><span>交付状态</span><strong>{deliveryLabel}</strong><small>{deliveryDetail}</small></div>
     </div>
     {metricEntries.length > 0 && <dl className="catalog-metrics">{metricEntries.map(([name, value]) =>
       <div key={name}><dt>{metricLabel(name, artifact.query_spec.metrics)}</dt><dd>{String(value ?? '无可用值')}</dd></div>)}</dl>}
