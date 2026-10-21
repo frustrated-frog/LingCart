@@ -28,6 +28,8 @@ export const TERMINAL_REASON_LABELS: Record<string, string> = {
   AMBIGUOUS_ORDER_GOALS: '订单目标存在歧义',
   MULTIPLE_ACTIONS_REQUIRE_SEPARATE_APPROVAL: '多个操作需要分别确认',
   MODEL_ERROR: '模型调用失败', MODEL_TIMEOUT: '模型调用超时', TOOL_ERROR: '工具执行失败',
+  CATALOG_AUDIT_FORMAT_ERROR: '目录需求审查协议无效',
+  INCOMPLETE_REQUEST_COVERAGE: '目录需求覆盖不完整',
   BUDGET_EXHAUSTED: '运行预算已用尽', LOOP_GUARD: '循环保护终止',
 }
 

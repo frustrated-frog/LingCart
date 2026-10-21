@@ -280,6 +280,12 @@ details summary { padding: 10px 0; color: var(--blue); font-size: 10px; cursor: 
 .message.assistant.has-catalog { width: 100%; max-width: 100%; padding: 16px; }
 .message-role { margin-bottom: 8px; color: var(--muted); font: 8px/1 var(--mono); letter-spacing: .07em; }
 .message-copy { font-size: 12px; line-height: 1.7; white-space: pre-wrap; }
+.message-error-evidence { margin-top: 11px; padding: 10px 11px; border-left: 2px solid var(--red); background: var(--red-soft); }
+.message-error-evidence > div { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.message-error-evidence strong { color: var(--red); font-size: 10px; }
+.message-error-evidence code { color: var(--red); font-size: 8px; }
+.message-error-evidence p { margin: 7px 0 5px; color: var(--ink); font-size: 10px; line-height: 1.55; overflow-wrap: anywhere; }
+.message-error-evidence small { color: var(--muted); font-size: 8px; }
 .message-meta { display: flex; align-items: center; gap: 8px; margin-top: 10px; padding-top: 9px; border-top: 1px solid rgba(105,117,138,.18); }
 .message-meta > span:last-child { color: var(--muted); font: 8px/1 var(--mono); }
 .catalog-result { margin-top: 14px; border: 1px solid var(--line-strong); background: var(--surface); }

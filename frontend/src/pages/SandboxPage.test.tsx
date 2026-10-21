@@ -81,6 +81,30 @@ describe('SandboxPage durable session behavior', () => {
     expect(screen.getByText(/审批状态已持久化/)).toBeInTheDocument()
   })
 
+  it('shows persisted machine-readable failure evidence', async () => {
+    vi.spyOn(api, 'conversation').mockResolvedValue({
+      active_run_id: null,
+      state: {},
+      messages: [
+        { role: 'user', content: '耳机里面最便宜的是哪款', run_id: 'failed-run' },
+        { role: 'assistant', content: '任务执行失败，系统已保留明确的错误原因，请稍后重试。', run_id: 'failed-run', result: {
+          run_id: 'failed-run', reply: '任务执行失败，系统已保留明确的错误原因，请稍后重试。', agent: 'runtime',
+          route: 'CATALOG_AUDIT_FORMAT_ERROR', status: 'FAILED', terminal_reason: 'CATALOG_AUDIT_FORMAT_ERROR',
+          events: [], trace: [], pending_action: null, usage: { input_tokens: 10, output_tokens: 5, total_tokens: 15 },
+          error: { code: 'CATALOG_AUDIT_FORMAT_ERROR', message: '目录需求独立审查响应无效：历史上下文未标记为不适用\n内部详情', retryable: false },
+        } },
+      ],
+    })
+
+    renderPage()
+
+    expect(await screen.findByLabelText('运行失败详情')).toBeInTheDocument()
+    expect(screen.getByText('目录需求审查协议无效')).toBeInTheDocument()
+    expect(screen.getByText('CATALOG_AUDIT_FORMAT_ERROR')).toBeInTheDocument()
+    expect(screen.getByText('目录需求独立审查响应无效：历史上下文未标记为不适用')).toBeInTheDocument()
+    expect(screen.queryByText('内部详情')).not.toBeInTheDocument()
+  })
+
   it('reuses one request id when the user retries an unacknowledged start', async () => {
     vi.spyOn(api, 'conversation').mockResolvedValue({ active_run_id: null, messages: [], state: {} })
     const start = vi.spyOn(api, 'startRun').mockRejectedValue(new ApiError(503, '暂时无法连接'))

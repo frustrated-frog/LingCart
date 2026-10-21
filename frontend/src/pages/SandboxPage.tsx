@@ -5,7 +5,7 @@ import type { FormEvent } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { api, ApiError, streamRunEvents } from '../api/client'
 import { CatalogResultViews } from '../components/CatalogResultView'
-import { ExecutionSpine, PageHeader, StatusBadge } from '../components/SystemUI'
+import { ExecutionSpine, PageHeader, StatusBadge, TERMINAL_REASON_LABELS } from '../components/SystemUI'
 import { getPreferenceProfileId, getSessionId, resetSessionId } from '../state/localSession'
 import { clearRunOperation, loadRunOperation, saveRunOperation } from '../state/runOperation'
 import type { RunOperation } from '../state/runOperation'
@@ -32,6 +32,10 @@ function mergeEvents(current: RunEvent[], incoming: RunEvent[]): RunEvent[] {
   const keyed = new Map(current.map((event, index) => [event.sequence ?? index + 1, event]))
   incoming.forEach((event, index) => keyed.set(event.sequence ?? current.length + index + 1, event))
   return [...keyed.entries()].sort(([left], [right]) => left - right).map(([, event]) => event)
+}
+
+function conciseFailure(message: string): string {
+  return message.split('\n', 1)[0].slice(0, 240)
 }
 
 export function SandboxPage() {
@@ -234,6 +238,11 @@ export function SandboxPage() {
             <div className="message-role">{message.role === 'user' ? 'YOU' : 'LINGCART AGENT'}</div>
             <div className="message-copy">{message.content}</div>
             {message.result && <CatalogResultViews artifacts={message.result.artifacts} />}
+            {message.result?.error && <div className="message-error-evidence" role="alert" aria-label="运行失败详情">
+              <div><strong>{TERMINAL_REASON_LABELS[message.result.error.code] ?? '运行协议拒绝'}</strong><code>{message.result.error.code}</code></div>
+              <p>{conciseFailure(message.result.error.message)}</p>
+              <small>{message.result.error.retryable ? '该错误允许使用同一请求编号重试' : '该错误需要修正协议或输入后再执行'}</small>
+            </div>}
             {message.result && <div className="message-meta"><StatusBadge status={message.result.status} /><span>{message.result.agent} · {message.result.run_id.slice(0, 10)} · {message.result.trace.length} tools</span></div>}
           </article>)}
           {(send.isPending || running) && <article className="message assistant pending"><div className="message-role">LINGCART AGENT</div><div className="thinking-line"><i /><span>{send.isPending ? '正在提交可恢复任务' : '正在执行并持久化事件'}</span></div></article>}

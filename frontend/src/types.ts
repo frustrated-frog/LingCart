@@ -151,6 +151,12 @@ export interface RunEvent {
   [key: string]: unknown
 }
 
+export interface RunFailure {
+  code: string
+  message: string
+  retryable: boolean
+}
+
 export interface RunResult {
   run_id?: string
   reply?: string
@@ -165,6 +171,7 @@ export interface RunResult {
   usage?: Record<string, number | null>
   pending_action?: PendingAction | null
   artifacts?: ResultArtifact[]
+  error?: RunFailure | null
   [key: string]: unknown
 }
 
