@@ -16,6 +16,8 @@ from src.catalog_query import (
     render_catalog_result,
     verify_catalog_result,
 )
+from src.catalog_request_audit import review_catalog_request
+from src.dialogue_understanding import BusinessObjective
 from src.durable import run_conversation
 from src.errors import AgentError
 from src.persistence import RunStore
@@ -476,3 +478,64 @@ def test_independent_catalog_audit_repairs_an_omitted_order_before_execution(mon
     assert [row["direction"] for row in result["artifacts"][0]["query_spec"]["ordering"]] == ["ASC"]
     assert sum(event["type"] == "catalog_request_audited" for event in result["events"]) == 2
     assert model.index == 4
+
+
+def test_catalog_audit_normalizes_unique_ast_requirement_ids():
+    message = "把所有商品按类目完整展示，每个类目内按库存从高到低排序"
+    spec = grouped_catalog_spec()
+    objective = BusinessObjective.model_validate({
+        "id": "catalog_view",
+        "kind": "CATALOG_QUERY",
+        "source_quote": message,
+        "catalog_query": spec,
+    })
+    raw_ids = [row.requirement_id for row in objective.catalog_query.requirements()]
+    model = ScriptedModel({
+        "verdict": "APPROVED",
+        "requirements": [{
+            "source_quote": message,
+            "interpretation": "全部要求均已覆盖",
+            "requirement_ids": raw_ids,
+            "status": "COVERED",
+        }],
+        "issues": [],
+    })
+
+    audit = review_catalog_request(message, [], [objective], model=model)
+
+    assert audit["requirements"][0]["requirement_ids"] == [
+        f"catalog_view:{requirement_id}" for requirement_id in raw_ids
+    ]
+    assert audit["protocol_repairs"] == [
+        {"received": requirement_id, "canonical": f"catalog_view:{requirement_id}"}
+        for requirement_id in raw_ids
+    ]
+
+
+def test_catalog_audit_rejects_ambiguous_ast_requirement_id_aliases():
+    message = "所有商品"
+    spec = grouped_catalog_spec()
+    objectives = [
+        BusinessObjective.model_validate({
+            "id": objective_id,
+            "kind": "CATALOG_QUERY",
+            "source_quote": message,
+            "catalog_query": spec,
+        })
+        for objective_id in ("first", "second")
+    ]
+    model = ScriptedModel({
+        "verdict": "REVISE",
+        "requirements": [{
+            "source_quote": message,
+            "interpretation": "无法唯一定位范围要求",
+            "requirement_ids": ["scope"],
+            "status": "MISINTERPRETED",
+        }],
+        "issues": ["requirement_id 不明确"],
+    })
+
+    with pytest.raises(AgentError, match="unknown or ambiguous") as captured:
+        review_catalog_request(message, [], objectives, model=model)
+
+    assert captured.value.code == "CATALOG_AUDIT_FORMAT_ERROR"
