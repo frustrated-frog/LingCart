@@ -3,6 +3,11 @@ from __future__ import annotations
 
 
 _PHASES = {
+    "agent_status_changed": "RUNTIME",
+    "response_started": "RESPONSE",
+    "response_delta": "RESPONSE",
+    "response_completed": "RESPONSE",
+    "response_failed": "RESPONSE",
     "harness_profile_selected": "HARNESS",
     "constraint_binding_proposed": "PLAN",
     "constraint_binding_unresolved": "PLAN",
@@ -28,6 +33,11 @@ _PHASES = {
 }
 
 _LABELS = {
+    "agent_status_changed": "Agent 状态变化",
+    "response_started": "回答流开始",
+    "response_delta": "回答流增量",
+    "response_completed": "回答流完成",
+    "response_failed": "回答流中断",
     "harness_profile_selected": "已选择 Harness Profile",
     "constraint_binding_proposed": "已生成目录语义映射提案",
     "constraint_binding_unresolved": "目录语义映射等待兼容证据",
@@ -51,6 +61,48 @@ _LABELS = {
     "error": "运行错误",
     "terminal": "任务结束",
 }
+
+
+def _audit_response_streams(events):
+    from src.response_stream import content_sha256
+
+    streams, issues = {}, []
+    for event in events:
+        event_type = event.get("type")
+        if event_type not in {"response_started", "response_delta", "response_completed", "response_failed"}:
+            continue
+        message_id = event.get("message_id")
+        if not message_id:
+            issues.append("MISSING_RESPONSE_MESSAGE_ID")
+            continue
+        state = streams.setdefault(message_id, {"started": 0, "chunks": {}, "terminal": []})
+        if event_type == "response_started":
+            state["started"] += 1
+        elif event_type == "response_delta":
+            index, delta = event.get("chunk_index"), event.get("delta")
+            if type(index) is not int or index < 0 or not isinstance(delta, str):
+                issues.append("INVALID_RESPONSE_CHUNK")
+            elif index in state["chunks"] and state["chunks"][index] != delta:
+                issues.append("CONFLICTING_RESPONSE_CHUNK")
+            else:
+                state["chunks"][index] = delta
+        else:
+            state["terminal"].append(event)
+    for state in streams.values():
+        if state["started"] != 1:
+            issues.append("INVALID_RESPONSE_START_COUNT")
+        if len(state["terminal"]) != 1:
+            issues.append("INVALID_RESPONSE_TERMINAL_COUNT")
+            continue
+        chunks = state["chunks"]
+        if chunks and sorted(chunks) != list(range(max(chunks) + 1)):
+            issues.append("RESPONSE_CHUNK_GAP")
+        terminal = state["terminal"][0]
+        if terminal.get("type") == "response_completed":
+            content = "".join(chunks[index] for index in sorted(chunks))
+            if terminal.get("chunk_count") != len(chunks) or terminal.get("content_sha256") != content_sha256(content):
+                issues.append("RESPONSE_COMPLETION_MISMATCH")
+    return (not issues), issues, len(streams)
 
 
 def _audit_pairs(events):
@@ -178,14 +230,19 @@ def project_trace(events: list[dict]) -> dict:
         event_type = event.get("type", "unknown")
         timeline.append({
             "sequence": event.get("sequence"), "timestamp": event.get("timestamp"), "type": event_type,
-            "phase": _PHASES.get(event_type, "RUNTIME"), "label": _LABELS.get(event_type, "运行事件"),
+            "phase": _PHASES.get(event_type, "RUNTIME"),
+            "label": event.get("label") if event_type == "agent_status_changed" else _LABELS.get(event_type, "运行事件"),
             **{key: event.get(key) for key in ("status", "agent", "tool", "purpose", "code", "action_fingerprint",
                                               "tool_call_id", "protocol_id", "execution_id", "duration_ms", "policy",
-                                              "transaction_id", "resolution_id", "mode", "reason")},
+                                              "transaction_id", "resolution_id", "mode", "reason", "source",
+                                              "message_id", "chunk_index", "char_count")},
         })
     terminals = [event for event in ordered if event.get("type") == "terminal"]
     terminal = terminals[-1] if terminals else None
     tool_pairs, protocol_pairs, replay_evidence, legacy, issues = _audit_pairs(ordered)
+    has_response_events = any(event.get("type", "").startswith("response_") for event in ordered)
+    response_stream, response_issues, response_count = _audit_response_streams(ordered)
+    issues.extend(response_issues)
     checks = {
         "sequential": actual == expected and all(type(value) is int for value in actual),
         "single_run": len(run_ids) == 1 and all(event.get("run_id") for event in ordered),
@@ -194,6 +251,8 @@ def project_trace(events: list[dict]) -> dict:
         "protocol_pairs": protocol_pairs,
         "replay_evidence": replay_evidence,
     }
+    if has_response_events:
+        checks["response_stream"] = response_stream
     complete = False if any(value is False for value in checks.values()) else (
         None if any(value is None for value in checks.values()) else True)
     return {
@@ -208,6 +267,8 @@ def project_trace(events: list[dict]) -> dict:
             "protocol_results": sum(event.get("type") == "tool_protocol" for event in ordered),
             "errors": sum(event.get("type") == "error" for event in ordered),
             "guard_warnings": sum(event.get("type") == "loop_warning" for event in ordered),
+            "response_streams": response_count,
+            "response_chunks": sum(event.get("type") == "response_delta" for event in ordered),
             "terminal_status": (terminal or {}).get("status"),
             "terminal_reason": (terminal or {}).get("reason"),
         },
