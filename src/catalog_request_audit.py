@@ -81,6 +81,8 @@ Runtime semantics that are facts, not open questions:
 - projection records which values must be evidenced. Product identity and the canonical public product card remain attached
   to every result row, so projection never excludes catalog members and canonical public fields do not invent filters.
 - “完整展示” may be represented by the canonical public fields product_id, name, category, price, stock and summary.
+- a singular “哪款/哪一个” permits ARGMIN/ARGMAX with include_ties=false; include_ties=true is required only when the
+  human explicitly asks to retain every tied extreme. ARGMIN/ARGMAX never need ordering, limit or pagination fields.
 """
 
 

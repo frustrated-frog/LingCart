@@ -122,10 +122,19 @@ Objective kinds and accepted fields come only from the runtime catalog. All enti
 text/history. CATALOG_QUERY handles catalog listing, filtering, ordering, partitioning, projection, aggregation,
 pagination, superlatives and PREVIOUS_RESULT_SET references. Preserve each of those requirements in its AST node with
 a distinct requirement_id and exact source_quote. For each objective, emit only its accepted fields; omit unrelated
-generic fields rather than filling them with null, empty, or redundant values. PRODUCT_SEARCH is only literal simple lookup. PRODUCT_DISCOVERY is
+generic fields rather than filling them with null, empty, or redundant values. Use PREVIOUS_RESULT_SET for anaphoric or
+elliptical follow-ups to the prior visible set; when the latest turn explicitly names a category and does not refer to
+the prior set, use CATALOG even if history contains a result. ARGMIN/ARGMAX accept field and include_ties, but never
+ordering, limit, page or page_size. PRODUCT_SEARCH is only literal simple lookup. PRODUCT_DISCOVERY is
 recommendation/exploration; never use it for a structured catalog view. Exclusions belong in excluded_terms.
 SYSTEM_TIME reads current time; CALCULATE evaluates a literal expression. Missing required values stay null/empty.
 """
+
+_RESULT_SET_REFERENCE = re.compile(
+    r"(?:刚才|之前|上次|上一|上面|前面|其中|这些|那些|这组|那组|结果|候选|列表|"
+    r"\b(?:same|previous|above|those|these|result|list)\b)",
+    re.IGNORECASE,
+)
 
 
 def _human_sources(user_message: str, history: list | None) -> list[str]:
@@ -137,6 +146,25 @@ def _human_sources(user_message: str, history: list | None) -> list[str]:
             if getattr(message, "type", None) == "human"
         ],
     ]
+
+
+def _validate_catalog_scope(spec: CatalogQuerySpec, user_message: str) -> None:
+    """Prevent explicit current-turn populations from inheriting stale result scope."""
+
+    if spec.scope.kind != "PREVIOUS_RESULT_SET" or _RESULT_SET_REFERENCE.search(user_message):
+        return
+    explicit_category = any(
+        predicate.field is not None
+        and predicate.field.core == "category"
+        and predicate.source_quote in user_message
+        for predicate in spec.filters
+    )
+    if explicit_category:
+        raise AgentError(
+            "CATALOG_SCOPE_CONFLICT",
+            "本轮已明确商品类目且没有引用上一结果集，目录范围必须使用 CATALOG",
+            retryable=False,
+        )
 
 
 def _coordinated_goal_clauses(user_message: str) -> list[str]:
@@ -265,6 +293,7 @@ def _validate_grounding(understanding: TurnUnderstanding, user_message: str, his
                 raise AgentError("UNGROUNDED_PLAN_ENTITY", f"开放参数 {path} 必须来自用户或受信解析器", retryable=False)
         if objective.catalog_query is not None:
             validate_catalog_query_grounding(objective.catalog_query, sources)
+            _validate_catalog_scope(objective.catalog_query, user_message)
     _validate_goal_coverage(understanding, user_message)
 
 
@@ -359,7 +388,12 @@ def understand_turn(user_message: str, history: list | None, pending_action: dic
                 )
             return understanding
         except AgentError as exc:
-            repairable = {"UNKNOWN_CAPABILITY", "INVALID_CAPABILITY_ARGUMENTS", "INCOMPLETE_REQUEST_COVERAGE"}
+            repairable = {
+                "UNKNOWN_CAPABILITY",
+                "INVALID_CAPABILITY_ARGUMENTS",
+                "INCOMPLETE_REQUEST_COVERAGE",
+                "CATALOG_SCOPE_CONFLICT",
+            }
             if exc.code == "UNKNOWN_CAPABILITY" and attempt > 0:
                 registered = {item["objective_kind"] for item in get_capability_registry().prompt_catalog()}
                 unknown = [objective for objective in understanding.objectives if objective.kind not in registered]

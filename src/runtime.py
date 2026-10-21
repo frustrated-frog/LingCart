@@ -31,9 +31,12 @@ class BudgetLimits:
     # 运行时目前用 UTF-8 字节数做保守预留（不是供应商 token 数）；该上限允许一次正常调用
     # 加一次协议修复，真实调用次数仍由 max_model_calls 独立限制。
     max_prompt_tokens: int = 48000
-    max_completion_tokens: int = 3000
-    max_seconds: float = 30
-    call_timeout: float = 10
+    # 目录理解、独立审查与至多一次修正共享预算；上限不是调用配额，实际调用仍按事件计量。
+    max_completion_tokens: int = 6000
+    # 推理型 Provider 的审查请求常超过 10 秒。较长单次时限可避免超时后重复计费，
+    # 总时限仍限制最坏路径，且所有副作用继续由工具 deadline 与账本独立保护。
+    max_seconds: float = 60
+    call_timeout: float = 20
     max_steps: int = 8
     max_depth: int = 4
     read_attempts: int = 2

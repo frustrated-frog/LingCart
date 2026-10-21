@@ -110,7 +110,7 @@ def test_budget_priority_and_strict_argument_types():
     context = RunRuntime("limits", BudgetLimits(max_model_calls=0, max_tool_calls=0, max_prompt_tokens=0))
     assert context.stop_reason("model", 1) == "MODEL_ROUND_BUDGET_EXHAUSTED"
     assert context.stop_reason("tool") == "TOOL_BUDGET_EXHAUSTED"
-    context.started -= 31
+    context.started -= context.limits.max_seconds + 1
     assert context.stop_reason("model", 1) == "TIME_BUDGET_EXHAUSTED"
     with pytest.raises(AgentError) as error:
         ToolExecutor({"echo": ToolSpec(echo)}, TraceRecorder("strict")).execute("echo", {"value": 123})
