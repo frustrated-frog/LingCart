@@ -119,7 +119,7 @@ def _execute_understanding(user_message, history, pending_action, intake, run_id
                 user_message,
                 history,
                 understanding.objectives,
-                model=get_llm(purpose="catalog_request_audit"),
+                model=get_llm(purpose="goal"),
             )
             if audit.get("verdict") == "REVISE":
                 understanding = understand_turn(
@@ -133,7 +133,7 @@ def _execute_understanding(user_message, history, pending_action, intake, run_id
                     user_message,
                     history,
                     understanding.objectives,
-                    model=get_llm(purpose="catalog_request_audit"),
+                    model=get_llm(purpose="goal"),
                 )
             if audit.get("verdict") == "CLARIFY":
                 result = _simple_result(
