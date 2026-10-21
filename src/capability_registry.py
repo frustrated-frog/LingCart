@@ -16,9 +16,11 @@ from typing import Callable, Mapping
 
 from src import tools
 from src.catalog_metadata import CATALOG_FACETS_DEPENDENCY, CatalogMetadataProvider, CatalogMetadataSnapshot
+from src.catalog_query import CATALOG_QUERY_OPERATION, compile_catalog_query, query_catalog
 from src.errors import AgentError
 from src.intake import (
     FAQ,
+    CATALOG_QUERY,
     ORDER_DETAILS,
     ORDER_STATUS,
     PAYMENT_PROCESS,
@@ -443,6 +445,20 @@ def _compare(objective: Mapping[str, object], _request: str) -> tuple[CompiledOp
                               {"product_ids": objective.get("product_ids", [])}),)
 
 
+def _catalog_query(objective: Mapping[str, object], _request: str) -> tuple[CompiledOperation, ...]:
+    arguments = compile_catalog_query(objective.get("catalog_query"))
+    from src.runtime import current_runtime
+    context = current_runtime()
+    if context:
+        context.record(
+            "compilation_coverage",
+            objective_id=objective.get("id"),
+            operation=CATALOG_QUERY_OPERATION,
+            coverage=arguments["compilation_coverage"],
+        )
+    return (CompiledOperation("catalog-result", "shopping", CATALOG_QUERY_OPERATION, arguments),)
+
+
 def _general_answer(objective: Mapping[str, object], _request: str) -> tuple[CompiledOperation, ...]:
     return (CompiledOperation("answer", "knowledge", MODEL_ANSWER_OPERATION, {
         "question": objective["question"],
@@ -569,6 +585,12 @@ def _builtin_registrations() -> tuple[CapabilityRegistration, ...]:
               metadata_dependencies=(CATALOG_FACETS_DEPENDENCY,),
               missing_question="请提供要比较的两到三个商品编号。",
               handlers={"compare_products": tools.compare_products}),
+        _spec(CATALOG_QUERY, "catalog.query", "对真实商品目录执行受限的筛选、排序、分组、投影、聚合、分页或结果集追问",
+              "catalog_result", "CATALOG", _catalog_query,
+              required=("catalog_query",), accepted=("catalog_query",),
+              metadata_dependencies=(CATALOG_FACETS_DEPENDENCY,),
+              missing_question="请说明要查询的商品范围、条件或期望的结果形式。",
+              handlers={CATALOG_QUERY_OPERATION: query_catalog}),
         _spec(GENERAL_ANSWER, "knowledge.answer", "回答无需业务工具的稳定知识、解释、写作和一般咨询；需要实时外部证据时明确能力边界",
               "knowledge", "MODEL_KNOWLEDGE", _general_answer, required=("question",),
               accepted=("question",), under_specified=True,

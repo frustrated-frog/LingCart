@@ -192,6 +192,21 @@ def execute_claim(claim, *, store=None, runner=None):
             memory.update_last_order_id(result["trace"])
             state.update(last_order_id=memory.last_order_id, pending_action=result["pending_action"])
             state["clarification"] = result.get("intake") if result.get("terminal_reason") == "MISSING_ORDER_ID" else None
+            catalog_artifacts = [
+                artifact for artifact in result.get("artifacts", [])
+                if isinstance(artifact, dict) and artifact.get("artifact_type") == "catalog_query_result"
+            ]
+            if catalog_artifacts:
+                artifact = catalog_artifacts[-1]
+                state["catalog_result_set"] = {
+                    "result_set_id": artifact["result_set_id"],
+                    "source_result_set_id": artifact.get("source_result_set_id"),
+                    "catalog_snapshot": artifact["catalog_snapshot"],
+                    "query_spec": artifact["query_spec"],
+                    "member_ids": artifact["member_ids"],
+                    "matched_count": artifact["matched_count"],
+                    "delivered_count": artifact["delivered_count"],
+                }
             return store.finish(claim["run_id"], claim["token"], result, state)
     except BaseException:
         # Simulated/process interruptions retain the saved prefix for explicit resume.

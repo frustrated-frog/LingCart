@@ -3,6 +3,11 @@ from dataclasses import asdict, dataclass, field
 import math
 
 from src.capability_registry import MODEL_ANSWER_OPERATION, get_capability_registry
+from src.catalog_query import (
+    CATALOG_QUERY_OPERATION,
+    render_catalog_result,
+    verify_catalog_result,
+)
 from src.direct_executor import _READ_ONLY_TOOLS, _STATUS_ZH, _TRACKING_ZH, _finish, _trace_entry
 from src.errors import AgentError
 from src.intake import (FAQ, ORDER_DETAILS, ORDER_STATUS, PAYMENT_PROCESS, PAYMENT_STATUS, PRODUCT_COMPARE,
@@ -131,6 +136,8 @@ def _facts(step):
         return result["message"]
     if name == MODEL_ANSWER_OPERATION:
         return result["answer"]
+    if name == CATALOG_QUERY_OPERATION:
+        return render_catalog_result(result)
     if name in {"search_products", "discover_products", "compare_products"}:
         products = result.get("products", [])
         if not products:
@@ -155,6 +162,10 @@ def _facts(step):
 def verify_observation(step):
     """Evidence must refer to this goal and contain the fields used in replies."""
     result, name = step.result, step.tool
+    if name == CATALOG_QUERY_OPERATION:
+        goal, delivery = verify_catalog_result(result, step.args)
+        result["artifact"]["verification"] = {"goal": goal, "delivery": delivery}
+        return
     contract = get_capability_registry().operation_contract(name)
     if contract is not None:
         if not contract.validate_result(result, step.args):
@@ -301,6 +312,20 @@ def execute_plan(intake, run_id, *, plan=None, source="deterministic", incomplet
                                 else "BUSINESS_DATA_NOT_FOUND")
                         raise AgentError(code, step.result["error"], retryable=False)
                     verify_observation(step)
+                    if step.tool == CATALOG_QUERY_OPERATION:
+                        verification = step.result["artifact"]["verification"]
+                        recorder.record(
+                            "catalog_goal_verified",
+                            step_id=step.step_id,
+                            result_set_id=step.result["artifact"]["result_set_id"],
+                            **verification["goal"],
+                        )
+                        recorder.record(
+                            "catalog_delivery_verified",
+                            step_id=step.step_id,
+                            result_set_id=step.result["artifact"]["result_set_id"],
+                            **verification["delivery"],
+                        )
                     contract = get_capability_registry().operation_contract(step.tool)
                     step.outcome = contract.outcome(step.result, step.args) if contract else "SATISFIED"
             except AgentError as error:
@@ -356,6 +381,11 @@ def execute_plan(intake, run_id, *, plan=None, source="deterministic", incomplet
         status, reason = "PARTIAL", incomplete_reason
     response = _finish(recorder, intake, run_id, agent, trace, reply="\n\n".join(_facts(s) for s in plan.steps) or "没有可执行的业务步骤。",
                        status=status, terminal_reason=reason, pending_action=pending, error=errors[-1] if errors else None)
+    response["artifacts"] = [
+        step.result["artifact"] for step in plan.steps
+        if step.tool == CATALOG_QUERY_OPERATION and isinstance(step.result, dict)
+        and isinstance(step.result.get("artifact"), dict)
+    ]
     if any(step.tool == MODEL_ANSWER_OPERATION for step in plan.steps):
         response["route"] = "KNOWLEDGE" if len(plan.steps) == 1 else "MIXED"
     response["plan"] = plan.payload()

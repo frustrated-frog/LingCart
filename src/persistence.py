@@ -96,8 +96,15 @@ class RunStore:
                 return {"state": {}, "messages": [], "active_run_id": None}
             messages = session.scalars(select(ConversationMessage).where(ConversationMessage.session_id == session_id)
                                        .order_by(ConversationMessage.message_id.desc()).limit(40)).all()
+            run_ids = {message.run_id for message in messages if message.role == "assistant"}
+            results = {
+                run.run_id: run.result
+                for run in session.scalars(select(AgentRun).where(AgentRun.run_id.in_(run_ids))).all()
+            } if run_ids else {}
             return {"state": conversation.state, "active_run_id": conversation.active_run_id,
-                    "messages": [{"role": m.role, "content": m.content, "run_id": m.run_id} for m in reversed(messages)]}
+                    "messages": [{"role": m.role, "content": m.content, "run_id": m.run_id,
+                                  **({"result": results.get(m.run_id)} if m.role == "assistant" else {})}
+                                 for m in reversed(messages)]}
 
     def claim(self, session_id, request_id, request, limits, *, resume_id=None, action_id=None,
               execution_contract=None):

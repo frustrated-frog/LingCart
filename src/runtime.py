@@ -28,14 +28,18 @@ from src.runtime_state import restore_runtime_snapshot
 class BudgetLimits:
     max_model_calls: int = 8
     max_tool_calls: int = 12
-    max_prompt_tokens: int = 16000
+    # 运行时目前用 UTF-8 字节数做保守预留（不是供应商 token 数）；该上限允许一次正常调用
+    # 加一次协议修复，真实调用次数仍由 max_model_calls 独立限制。
+    max_prompt_tokens: int = 48000
     max_completion_tokens: int = 3000
     max_seconds: float = 30
     call_timeout: float = 10
     max_steps: int = 8
     max_depth: int = 4
     read_attempts: int = 2
-    max_context_chars: int = 12000
+    # 直接语义协议包含受限目录查询 AST 与版本化概念菜单；16k 字符仍保持小上下文，
+    # 同时为有来源的跨轮引用保留空间。
+    max_context_chars: int = 16000
     max_tool_observation_chars: int = 4000
     max_history_message_chars: int = 6000
 
@@ -413,6 +417,7 @@ _PRODUCTION_TOOL_POLICIES = {
         "initiate_refund": {"side_effect": True, "transactional": True, "approval_action": "INITIATE_REFUND"},
     },
     "src.agents.faq_agent": {"answer_faq": {}},
+    "src.catalog_query": {"query_catalog": {}},
 }
 
 

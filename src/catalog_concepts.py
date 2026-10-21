@@ -65,6 +65,8 @@ class ValueCodec(Protocol):
 
     def validate_observations(self, values: tuple[Scalar, ...]) -> None: ...
 
+    def decode(self, value: Scalar) -> Scalar: ...
+
     def manifest(self) -> dict: ...
 
 
@@ -85,6 +87,11 @@ class EnumCodec:
         encoded = set(dict(self.values).values())
         if not values or any(not isinstance(value, str) or value not in encoded for value in values):
             raise CatalogConceptError(f"codec {self.codec_id} 与已观察目录值不兼容")
+
+    def decode(self, value: Scalar) -> Scalar:
+        if not isinstance(value, str) or value not in set(dict(self.values).values()):
+            raise CatalogConceptError(f"codec {self.codec_id} 无法解码目录值 {value!r}")
+        return value
 
     def manifest(self) -> dict:
         return {"codec_id": self.codec_id, "kind": "enum", "values": dict(self.values)}
@@ -115,6 +122,17 @@ class QuantityCodec:
                 continue
             if not isinstance(value, str) or pattern.fullmatch(value) is None:
                 raise CatalogConceptError(f"codec {self.codec_id} 无法无损解释已观察目录值 {value!r}")
+
+    def decode(self, value: Scalar) -> Scalar:
+        if self.allow_stored_number and type(value) in {int, float} and math.isfinite(value):
+            return value
+        if not isinstance(value, str) or re.fullmatch(self.stored_pattern, value) is None:
+            raise CatalogConceptError(f"codec {self.codec_id} 无法解码目录值 {value!r}")
+        matched = re.search(r"\d+(?:\.\d+)?", value)
+        if matched is None:
+            raise CatalogConceptError(f"codec {self.codec_id} 无法提取数量 {value!r}")
+        number = float(matched.group())
+        return int(number) if number.is_integer() else number
 
     def manifest(self) -> dict:
         return {"codec_id": self.codec_id, "kind": "quantity", "unit": self.unit,
@@ -200,6 +218,15 @@ class CatalogConceptRegistry:
 
     def field_for(self, reference: CatalogConceptRef) -> str:
         return self.validate_reference(reference).field
+
+    def definition(self, concept_id: str) -> ConceptDefinition:
+        definition = self._definitions.get(concept_id)
+        if definition is None:
+            raise CatalogConceptError(f"unknown catalog concept {concept_id!r}")
+        return definition
+
+    def decode_observation(self, concept_id: str, value: Scalar) -> Scalar:
+        return self.definition(concept_id).codec.decode(value)
 
     def constrain_schema(self, schema: dict) -> dict:
         """Constrain generated JSON Schema without pretending cross-field JSON Schema support."""
