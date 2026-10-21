@@ -265,3 +265,26 @@ def test_shared_budget_request_runs_through_registered_capability(monkeypatch):
     assert state["constraint_solution_set"]["source_run_id"] == result["run_id"]
     assert state["constraint_solution_set"]["verification"]["global_goal"] is True
     assert model.index == 2
+
+
+def test_verified_infeasible_plan_has_a_distinct_non_success_terminal(monkeypatch):
+    message = "我只有1元预算，想买一个耳机一个键盘"
+    spec = shared_budget_spec(budget=1)
+    dialogue = {
+        "reason": "共享预算需要约束规划",
+        "commands": [],
+        "objectives": [{
+            "id": "bundle", "kind": "CONSTRAINT_PLAN", "source_quote": message,
+            "constraint_plan": spec,
+        }],
+    }
+    model = ScriptedModel(dialogue, approved_audit(spec, message))
+    monkeypatch.setattr(orchestrator, "get_llm", lambda **_kwargs: model)
+
+    result = orchestrator.run_orchestrator(message)
+
+    assert result["status"] == "PARTIAL"
+    assert result["terminal_reason"] == "NO_FEASIBLE_SOLUTION"
+    assert result["plan"]["verification"]["all_goals_satisfied"] is False
+    assert result["artifacts"][0]["verification"]["verdict"] == "PROVEN_INFEASIBLE"
+    assert result["error"] is None

@@ -389,6 +389,12 @@ def execute_plan(intake, run_id, *, plan=None, source="deterministic", incomplet
     # An empty search is a verified outcome, not a claim that products exist.
     if not errors and not pending and len(plan.steps) == 1 and plan.steps[0].tool in {"search_products", "discover_products"} and not plan.steps[0].result.get("products"):
         reason = "NO_CANDIDATE_EVIDENCE" if plan.steps[0].tool == "discover_products" else "NO_MATCHING_PRODUCTS"
+    if (
+        not errors and not pending and len(plan.steps) == 1
+        and plan.steps[0].tool == CONSTRAINT_PLAN_OPERATION
+        and plan.steps[0].result.get("artifact", {}).get("feasibility") == "INFEASIBLE"
+    ):
+        reason = "NO_FEASIBLE_SOLUTION"
     if incomplete_reason and status == "SUCCEEDED":
         status, reason = "PARTIAL", incomplete_reason
     response = _finish(recorder, intake, run_id, agent, trace, reply="\n\n".join(_facts(s) for s in plan.steps) or "没有可执行的业务步骤。",
