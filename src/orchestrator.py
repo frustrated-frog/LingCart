@@ -326,15 +326,22 @@ def _run_orchestrator(user_message: str, history: list | None = None, pending_ac
             terminal_reason="MISSING_ORDER_ID" if "order_id" in intake.missing_slots else "AMBIGUOUS_ORDER_GOALS",
         )
     elif intake.execution_mode == UNSUPPORTED:
+        shared_budget = "MULTI_ITEM_SHARED_CONSTRAINT" in intake.semantic_hazards
+        code = "UNSUPPORTED_SHARED_BUDGET" if shared_budget else "UNSUPPORTED_INTENT"
         result = _simple_result(
             intake,
             run_id,
-            reply="这个请求超出了当前消费服务助手的能力范围。我目前可以处理订单、物流、退款、支付状态和服务规则。",
+            reply=(
+                "我识别到这是多个商品共享总预算的组合选购请求。当前运行时还不能可靠求解并核验组合总价，"
+                "因此没有用单品推荐替代，也没有把任务标记为完成。"
+                if shared_budget else
+                "这个请求超出了当前消费服务助手的能力范围。我目前可以处理订单、物流、退款、支付状态和服务规则。"
+            ),
             agent="intake",
-            route="UNSUPPORTED",
+            route=code if shared_budget else "UNSUPPORTED",
             status="FAILED",
-            terminal_reason="UNSUPPORTED_INTENT",
-            error={"code": "UNSUPPORTED_INTENT", "message": intake.reason, "retryable": False},
+            terminal_reason=code,
+            error={"code": code, "message": intake.reason, "retryable": False},
         )
     elif intake.execution_mode == ESCALATION_REQUESTED:
         result = _explicit_escalation(intake, run_id, user_message)

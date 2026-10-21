@@ -173,6 +173,22 @@ def test_unsupported_request_is_not_escalated(monkeypatch):
     assert result["route"] == "UNSUPPORTED"
 
 
+def test_shared_budget_fast_path_fails_closed_without_model_or_tool_calls(monkeypatch):
+    def unexpected_model(**_kwargs):
+        raise AssertionError("共享预算门禁不应调用模型")
+
+    monkeypatch.setattr(orchestrator, "get_llm", unexpected_model)
+
+    result = orchestrator.run_orchestrator("我有400元预算，想买一个耳机一个键盘，有什么推荐吗")
+
+    assert result["status"] == "FAILED"
+    assert result["terminal_reason"] == "UNSUPPORTED_SHARED_BUDGET"
+    assert result["route"] == "UNSUPPORTED_SHARED_BUDGET"
+    assert result["trace"] == []
+    assert result["usage"]["total_tokens"] == 0
+    assert "没有用单品推荐替代" in result["reply"]
+
+
 def test_every_event_is_ordered_and_linked_to_run():
     result = orchestrator.run_orchestrator("查询订单 1002 的状态和物流")
     assert result["run_id"]

@@ -97,15 +97,23 @@ def handoff_is_negated(text: str) -> bool:
     ))
 
 
-def _catalog_terms(text: str, facets: dict) -> tuple[str | None, list[str]]:
+def _catalog_terms(text: str, facets: dict) -> tuple[list[str], list[str]]:
     """Resolve terms from an explicit metadata snapshot supplied by a capability."""
 
     folded = text.casefold()
-    categories = [str(value) for value in facets.get("categories", []) if str(value).casefold() in folded]
-    category = max(categories, key=len) if categories else None
-    if category is None:
-        category = next((name for name, aliases in facets.get("category_aliases", {}).items()
-                         if any(str(alias).casefold() in folded for alias in aliases)), None)
+    category_positions: dict[str, int] = {}
+    for raw in facets.get("categories", []):
+        category = str(raw)
+        position = folded.find(category.casefold())
+        if position >= 0:
+            category_positions[category] = position
+    for name, aliases in facets.get("category_aliases", {}).items():
+        positions = [folded.find(str(alias).casefold()) for alias in aliases]
+        positions = [position for position in positions if position >= 0]
+        if positions:
+            category_positions[str(name)] = min(category_positions.get(str(name), min(positions)), min(positions))
+    categories = sorted(category_positions, key=lambda value: (category_positions[value], -len(value), value))
+    category_terms = [category.casefold() for category in categories]
     matches: list[str] = []
     for raw in facets.get("searchable_values", []):
         value = str(raw).casefold()
@@ -122,16 +130,15 @@ def _catalog_terms(text: str, facets: dict) -> tuple[str | None, list[str]]:
                 None,
             )
             has_language = any(character.isalpha() or "\u4e00" <= character <= "\u9fff" for character in candidate or "")
-            category_folded = (category or "").casefold()
             if (candidate and has_language and candidate not in matches
-                    and candidate != category_folded and candidate not in category_folded):
+                    and not any(candidate == category or candidate in category for category in category_terms)):
                 matches.append(candidate)
                 break
     matches.sort(key=lambda value: (folded.find(value), -len(value), value))
     for alias, canonical in facets.get("search_aliases", {}).items():
         if str(alias).casefold() in folded and canonical not in matches:
             matches.append(str(canonical))
-    return category, matches
+    return categories, matches
 
 
 def parse_approval_response(user_message: str, pending_action: dict | None = None) -> str:
@@ -199,7 +206,7 @@ def analyze_request(user_message: str, *, _check_clause_coverage: bool = True) -
     shopping_action = recommendation_action or _has_any(
         shopping_text, ("找", "对比", "比较", "搜索", "预算", "search", "compare", "find")
     )
-    category, catalog_terms = None, []
+    categories, catalog_terms = [], []
     metadata_lookup_required = bool(
         product_ids
         or recommendation_action
@@ -214,18 +221,30 @@ def analyze_request(user_message: str, *, _check_clause_coverage: bool = True) -
                 PRODUCT_SEARCH,
                 CATALOG_FACETS_DEPENDENCY,
             )
-            category, catalog_terms = _catalog_terms(shopping_text, snapshot.facets)
+            categories, catalog_terms = _catalog_terms(shopping_text, snapshot.facets)
         except Exception:  # pragma: no cover - semantic fallback remains available
-            category, catalog_terms = None, []
-    if shopping_action and (category or product_ids or "商品" in shopping_text):
+            categories, catalog_terms = [], []
+    category = categories[0] if len(categories) == 1 else None
+    shared_catalog_budget = False
+    if shopping_action and (categories or product_ids or "商品" in shopping_text):
         budget_match = re.search(r"(?:预算\s*(?:为|是|不超过)?\s*[¥￥]?\s*)(-?\d+(?:\.\d+)?)", shopping_text)
         if not budget_match:
             budget_match = re.search(r"(\d+(?:\.\d+)?)\s*元?\s*(?:以内|以下|不超过)", shopping_text)
         if not budget_match:
+            budget_match = re.search(r"(-?\d+(?:\.\d+)?)\s*(?:元|块)?\s*(?:的)?预算", shopping_text)
+        if not budget_match:
             budget_match = re.search(r"(?:under|budget|max(?:imum)?)\s*(?:cny|rmb|[¥￥])?\s*(-?\d+(?:\.\d+)?)", shopping_text)
-        shopping_entities = {"category": category, "query": ""}
+        shopping_entities = {"query": ""}
+        if category is not None:
+            shopping_entities["category"] = category
+        if len(categories) > 1:
+            shopping_entities["categories"] = categories
         if budget_match:
-            shopping_entities["max_price"] = float(budget_match.group(1))
+            if len(categories) > 1:
+                shopping_entities["shared_budget"] = float(budget_match.group(1))
+                shared_catalog_budget = True
+            else:
+                shopping_entities["max_price"] = float(budget_match.group(1))
         if product_ids:
             shopping_entities["product_ids"] = list(dict.fromkeys(value.upper() for value in product_ids))
         shopping_entities["query"] = " ".join(catalog_terms)
@@ -235,7 +254,7 @@ def analyze_request(user_message: str, *, _check_clause_coverage: bool = True) -
         elif not product_ids:
             if recommendation_action and not catalog_terms and "max_price" not in shopping_entities:
                 intents.append(PRODUCT_DISCOVERY)
-            elif category or "商品" in shopping_text:
+            elif categories or "商品" in shopping_text:
                 intents.append(PRODUCT_SEARCH)
         if product_ids:
             intents.append(PRODUCT_COMPARE)
@@ -319,6 +338,21 @@ def analyze_request(user_message: str, *, _check_clause_coverage: bool = True) -
                         reason="复合请求包含确定性规则无法完整覆盖的子句",
                         route_hints=tuple(intents),
                     )
+    if len(categories) > 1:
+        hazard = "MULTI_ITEM_SHARED_CONSTRAINT" if shared_catalog_budget else "MULTI_ITEM_CATALOG_SCOPE"
+        return TaskIntake(
+            request=request,
+            entities=entities,
+            execution_mode=UNSUPPORTED if shared_catalog_budget else LLM_REQUIRED,
+            confidence=0.0,
+            reason=(
+                "当前运行时尚未注册可验证的多商品共享预算求解能力"
+                if shared_catalog_budget
+                else "多个商品目标不能由单类目确定性快路径完整表达"
+            ),
+            route_hints=tuple(dict.fromkeys(intents)),
+            semantic_hazards=(hazard,),
+        )
     if hazards:
         return TaskIntake(
             request=request,

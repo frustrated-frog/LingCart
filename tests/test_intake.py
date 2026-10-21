@@ -12,6 +12,7 @@ from src.intake import (
     ORDER_STATUS,
     PAYMENT_PROCESS,
     PAYMENT_STATUS,
+    PRODUCT_DISCOVERY,
     REFUND_ELIGIBILITY,
     REFUND_REQUEST,
     SHIPMENT_TRACKING,
@@ -100,6 +101,26 @@ def test_negative_product_constraint_is_not_treated_as_a_positive_search_term():
     assert result.intents == ()
     assert result.route_hints
     assert result.semantic_hazards == ("NEGATION_SCOPE",)
+
+
+def test_multi_item_shared_budget_never_enters_the_single_category_fast_path():
+    result = analyze_request("我有400元预算，想买一个耳机一个键盘，有什么推荐吗")
+
+    assert result.execution_mode == UNSUPPORTED
+    assert result.intents == ()
+    assert result.entities["categories"] == ["耳机", "键盘"]
+    assert result.entities["shared_budget"] == 400.0
+    assert result.route_hints == (PRODUCT_DISCOVERY,)
+    assert result.semantic_hazards == ("MULTI_ITEM_SHARED_CONSTRAINT",)
+
+
+def test_multiple_catalog_targets_without_shared_constraints_require_semantic_understanding():
+    result = analyze_request("推荐一个耳机和一个键盘")
+
+    assert result.execution_mode == LLM_REQUIRED
+    assert result.intents == ()
+    assert result.entities["categories"] == ["耳机", "键盘"]
+    assert result.semantic_hazards == ("MULTI_ITEM_CATALOG_SCOPE",)
 
 
 def test_out_of_domain_request_uses_open_set_model_fallback():
