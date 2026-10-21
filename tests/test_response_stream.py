@@ -2,7 +2,7 @@ import pytest
 from langchain_core.messages import AIMessageChunk
 
 from src.errors import AgentError
-from src.response_stream import content_sha256, response_text
+from src.response_stream import content_sha256, response_text, terminal_public_status
 from src.runtime import BudgetLimits, RunRuntime
 
 
@@ -97,3 +97,11 @@ def test_response_reassembly_rejects_gaps_and_conflicts():
     ]
     with pytest.raises(AgentError, match="冲突"):
         response_text(conflict, "m")
+
+
+@pytest.mark.parametrize("status", ["WAITING_APPROVAL", "WAITING_CLARIFICATION", "WAITING_HUMAN"])
+def test_waiting_terminal_states_remain_user_actionable(status):
+    public_status, label = terminal_public_status(status)
+
+    assert public_status == "WAITING_USER"
+    assert "等待" in label

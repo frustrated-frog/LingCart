@@ -15,6 +15,7 @@ import type {
   RunHandle,
   RunSummary,
 } from '../types'
+import type { StreamConnectionState } from '../state/runStream'
 
 const API_BASE = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.replace(/\/$/, '')
   ?? (import.meta.env.DEV ? 'http://127.0.0.1:8000' : '')
@@ -65,31 +66,62 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export function streamRunEvents(runId: string, sessionId: string, onEvent: (event: RunEvent) => void,
-  after = 0): AbortController {
+  after = 0, onState?: (state: StreamConnectionState) => void): AbortController {
   const controller = new AbortController()
-  const path = `/runs/${encodeURIComponent(runId)}/events${query({ session_id: sessionId, after })}`
-  void fetch(`${API_BASE}${path}`, { signal: controller.signal, headers: { Accept: 'text/event-stream' } })
-    .then(async (response) => {
-      if (!response.ok || !response.body) throw new ApiError(response.status, `事件流连接失败（${response.status}）`)
-      const reader = response.body.getReader()
-      const decoder = new TextDecoder()
-      let buffer = ''
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
-        buffer += decoder.decode(value, { stream: true }).replaceAll('\r\n', '\n')
-        const frames = buffer.split('\n\n')
-        buffer = frames.pop() ?? ''
-        for (const frame of frames) {
-          const data = frame.split('\n').filter((line) => line.startsWith('data:'))
-            .map((line) => line.slice(5).trimStart()).join('\n')
-          if (data) onEvent(JSON.parse(data) as RunEvent)
+  const pause = (milliseconds: number) => new Promise<void>((resolve) => {
+    const timer = window.setTimeout(resolve, milliseconds)
+    controller.signal.addEventListener('abort', () => {
+      window.clearTimeout(timer)
+      resolve()
+    }, { once: true })
+  })
+  const aborted = (error: unknown) => error instanceof Error && error.name === 'AbortError'
+  void (async () => {
+    let cursor = after
+    let retries = 0
+    let terminal = false
+    while (!controller.signal.aborted && !terminal) {
+      onState?.(retries ? 'reconnecting' : 'connecting')
+      const path = `/runs/${encodeURIComponent(runId)}/events${query({ session_id: sessionId, after: cursor })}`
+      try {
+        const response = await fetch(`${API_BASE}${path}`, {
+          signal: controller.signal,
+          headers: { Accept: 'text/event-stream', ...(cursor ? { 'Last-Event-ID': String(cursor) } : {}) },
+        })
+        if (!response.ok || !response.body) throw new ApiError(response.status, `事件流连接失败（${response.status}）`)
+        onState?.('connected')
+        retries = 0
+        const reader = response.body.getReader()
+        const decoder = new TextDecoder()
+        let buffer = ''
+        while (!controller.signal.aborted) {
+          const { done, value } = await reader.read()
+          if (done) break
+          buffer += decoder.decode(value, { stream: true }).replaceAll('\r\n', '\n')
+          const frames = buffer.split('\n\n')
+          buffer = frames.pop() ?? ''
+          for (const frame of frames) {
+            const data = frame.split('\n').filter((line) => line.startsWith('data:'))
+              .map((line) => line.slice(5).trimStart()).join('\n')
+            if (!data) continue
+            const event = JSON.parse(data) as RunEvent
+            if (typeof event.sequence === 'number' && event.sequence <= cursor) continue
+            if (typeof event.sequence === 'number') cursor = event.sequence
+            onEvent(event)
+            if (event.type === 'terminal') terminal = true
+          }
         }
+      } catch (error) {
+        if (!controller.signal.aborted && !aborted(error)) console.warn(error)
       }
-    })
-    .catch((error: unknown) => {
-      if (!(error instanceof DOMException && error.name === 'AbortError')) console.warn(error)
-    })
+      if (!terminal && !controller.signal.aborted) {
+        retries += 1
+        onState?.('reconnecting')
+        await pause(Math.min(2_000, 250 * 2 ** Math.min(retries - 1, 3)))
+      }
+    }
+    onState?.('closed')
+  })()
   return controller
 }
 

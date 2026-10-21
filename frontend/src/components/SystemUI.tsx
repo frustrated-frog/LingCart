@@ -95,6 +95,9 @@ export const METRIC_LABELS: Record<string, string> = {
 }
 
 const EVENT_LABELS: Record<string, [string, string]> = {
+  agent_status_changed: ['状态', 'Agent 执行状态'], response_started: ['回答', '开始生成回答'],
+  response_delta: ['回答', '接收回答分片'], response_completed: ['回答', '回答生成完成'],
+  response_failed: ['回答', '回答生成中断'],
   harness_profile_selected: ['配置', '装配配置'], mechanism_applied: ['机制', '应用机制'],
   intake: ['接入', '解析需求'], route_decision: ['路由', '选择路径'], plan_created: ['计划', '生成计划'],
   step_started: ['步骤', '开始步骤'], step_completed: ['步骤', '完成步骤'], step_skipped: ['步骤', '跳过步骤'],
@@ -189,6 +192,7 @@ export function MechanismRail({ profile, reference }: { profile: HarnessProfile;
 
 export function eventLabel(event: RunEvent): [string, string] {
   const [code, defaultLabel] = EVENT_LABELS[event.type] ?? ['事件', event.type]
+  if (event.type === 'agent_status_changed' && typeof event.label === 'string') return [code, event.label]
   if (event.type.startsWith('tool_') && event.tool) return [code, TOOL_LABELS[event.tool] ?? event.tool]
   if (event.type.startsWith('model_') && event.purpose) return [code, `模型 · ${MODEL_PURPOSE_LABELS[event.purpose] ?? event.purpose}`]
   if (event.type === 'terminal' && event.status) return [code, STATUS_LABELS[event.status] ?? event.status]

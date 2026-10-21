@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ArrowUp, Check, CircleStop, CornerDownRight, RotateCcw, Search, Sparkles } from 'lucide-react'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { api, ApiError, streamRunEvents } from '../api/client'
@@ -8,6 +8,8 @@ import { ExecutionSpine, PageHeader, StatusBadge } from '../components/SystemUI'
 import { getPreferenceProfileId, getSessionId, resetSessionId } from '../state/localSession'
 import { clearRunOperation, loadRunOperation, saveRunOperation } from '../state/runOperation'
 import type { RunOperation } from '../state/runOperation'
+import { projectAgentStatus, projectRunResponse } from '../state/runStream'
+import type { StreamConnectionState } from '../state/runStream'
 import type { ExecutionResult, PendingAction, RunEvent } from '../types'
 
 interface Message {
@@ -46,6 +48,10 @@ export function SandboxPage() {
   const [activeRunId, setActiveRunId] = useState<string | null>(() => operation?.runId ?? null)
   const [liveEvents, setLiveEvents] = useState<RunEvent[]>([])
   const [controlDraft, setControlDraft] = useState('')
+  const [streamConnection, setStreamConnection] = useState<StreamConnectionState>('idle')
+  const messageListRef = useRef<HTMLDivElement>(null)
+  const followOutputRef = useRef(true)
+  const streamCursorRef = useRef({ runId: '', sequence: 0 })
 
   const conversation = useQuery({
     queryKey: ['conversation', sessionId],
@@ -99,18 +105,34 @@ export function SandboxPage() {
     }
   }, [conversation.data, sessionId])
 
+  const activeRunStatus = activeRun.data?.status
+  const activeRunFinished = Boolean(activeRun.data?.result)
   useEffect(() => {
-    if (!activeRunId) return
-    setLiveEvents(activeRun.data?.events ?? [])
-    const last = activeRun.data?.events.at(-1)?.sequence ?? 0
+    if (!activeRunId || activeRunStatus === 'INTERRUPTED' || activeRunFinished) return
+    if (streamCursorRef.current.runId !== activeRunId) {
+      streamCursorRef.current = { runId: activeRunId, sequence: 0 }
+      setLiveEvents(activeRun.data?.events ?? [])
+    } else if (activeRun.data?.events) {
+      setLiveEvents((current) => mergeEvents(current, activeRun.data?.events ?? []))
+    }
+    const persistedLast = activeRun.data?.events.at(-1)?.sequence ?? 0
+    streamCursorRef.current.sequence = Math.max(streamCursorRef.current.sequence, persistedLast)
     const stream = streamRunEvents(activeRunId, sessionId,
-      (event) => setLiveEvents((current) => mergeEvents(current, [event])), last)
+      (event) => {
+        if (typeof event.sequence === 'number') streamCursorRef.current.sequence = event.sequence
+        setLiveEvents((current) => mergeEvents(current, [event]))
+      }, streamCursorRef.current.sequence, setStreamConnection)
     return () => stream.abort()
-  }, [activeRunId, sessionId])
+  }, [activeRunFinished, activeRunId, activeRunStatus, sessionId])
 
   useEffect(() => {
     if (activeRun.data?.events) setLiveEvents((current) => mergeEvents(current, activeRun.data?.events ?? []))
   }, [activeRun.data?.events])
+
+  useEffect(() => {
+    const node = messageListRef.current
+    if (node && followOutputRef.current) node.scrollTop = node.scrollHeight
+  }, [liveEvents, messages])
 
   useEffect(() => {
     const result = activeRun.data?.result
@@ -188,7 +210,8 @@ export function SandboxPage() {
 
   const running = Boolean(activeRunId && activeRun.data?.result === null && activeRun.data?.status === 'RUNNING')
   const interrupted = Boolean(activeRunId && activeRun.data?.result === null && activeRun.data?.status === 'INTERRUPTED')
-  const busy = send.isPending || running || interrupted
+  const pendingRun = Boolean(activeRunId && !activeRun.data?.result && !interrupted)
+  const busy = send.isPending || pendingRun || interrupted
   const submit = (message: string, action?: PendingAction) => {
     const value = message.trim()
     if (!value || busy) return
@@ -201,6 +224,8 @@ export function SandboxPage() {
     }
     saveRunOperation(sessionId, next)
     setOperation(next)
+    setLiveEvents([])
+    setStreamConnection('idle')
     setMessages((current) => [...current, { role: 'user', content: value, runId: `pending:${next.requestId}` }])
     setDraft('')
     send.mutate(next)
@@ -210,6 +235,10 @@ export function SandboxPage() {
   const pending = latestResult?.pending_action ?? activeRun.data?.result?.pending_action
     ?? conversation.data?.state.pending_action ?? null
   const events = liveEvents.length ? liveEvents : activeRun.data?.events ?? []
+  const liveResponse = useMemo(() => projectRunResponse(events), [events])
+  const agentStatus = useMemo(() => projectAgentStatus(events), [events])
+  const liveStatusLabel = send.isPending ? '正在提交可恢复任务'
+    : agentStatus?.label ?? '任务已接收，正在恢复执行状态'
   const revision = commands.data?.revision
   const runControl = (kind: 'steer' | 'cancel' | 'follow-up') => {
     const message = kind === 'cancel' ? '' : controlDraft.trim()
@@ -227,14 +256,23 @@ export function SandboxPage() {
           <div><span>CONVERSATION</span><code>{sessionId.slice(0, 12)}</code></div>
           <label className="mode-switch"><input type="checkbox" checked={adaptive} disabled={busy} onChange={(event) => setAdaptive(event.target.checked)} /><span>自适应规划</span></label>
         </div>
-        <div className="message-list">
+        <div className="message-list" ref={messageListRef} onScroll={(event) => {
+          const node = event.currentTarget
+          followOutputRef.current = node.scrollHeight - node.scrollTop - node.clientHeight < 96
+        }}>
           {messages.length === 0 && <div className="conversation-empty"><Sparkles size={24} /><h2>告诉 Agent 你的目标</h2><p>从明确的业务请求开始，或启用 Adaptive planning 观察自主规划链路。</p></div>}
           {messages.map((message, index) => <article className={`message ${message.role}`} key={`${message.runId}-${message.role}-${index}`}>
             <div className="message-role">{message.role === 'user' ? 'YOU' : 'LINGCART AGENT'}</div>
             <div className="message-copy">{message.content}</div>
             {message.result && <div className="message-meta"><StatusBadge status={message.result.status} /><span>{message.result.agent} · {message.result.run_id.slice(0, 10)} · {message.result.trace.length} tools</span></div>}
           </article>)}
-          {(send.isPending || running) && <article className="message assistant pending"><div className="message-role">LINGCART AGENT</div><div className="thinking-line"><i /><span>{send.isPending ? '正在提交可恢复任务' : '正在执行并持久化事件'}</span></div></article>}
+          {(send.isPending || pendingRun) && <article className="message assistant live-response" aria-live="polite" aria-busy={liveResponse.state !== 'completed'}>
+            <div className="message-role"><span>LINGCART AGENT</span>{streamConnection === 'reconnecting' && <em>连接恢复中</em>}</div>
+            <div className="agent-progress"><i /><span>{liveStatusLabel}</span></div>
+            {liveResponse.content && <div className="message-copy stream-copy">{liveResponse.content}{liveResponse.state === 'streaming' && <span className="stream-cursor" aria-hidden="true" />}</div>}
+            {!liveResponse.content && <div className="stream-placeholder">执行进度会持续同步，回答生成后将在这里逐步显示。</div>}
+            {liveResponse.state === 'failed' && <div className="stream-warning">回答生成中断，已输出内容和运行证据仍然保留。</div>}
+          </article>}
           {send.isError && <div className="inline-error">{send.error.message}<button onClick={retryOperation} disabled={!operation || Boolean(operation.runId)}>使用同一请求编号重试</button></div>}
         </div>
 

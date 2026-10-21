@@ -54,7 +54,9 @@ def model_public_status(purpose: str) -> tuple[str, str]:
 
 
 def terminal_public_status(status: str, pending_action=None) -> tuple[str, str]:
-    if pending_action:
+    if status == "WAITING_HUMAN":
+        return "WAITING_USER", "正在等待人工协助"
+    if pending_action or status.startswith("WAITING"):
         code = "WAITING_USER"
     elif status == "SUCCEEDED":
         code = "COMPLETED"
