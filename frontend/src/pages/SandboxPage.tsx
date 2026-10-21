@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { api, ApiError, streamRunEvents } from '../api/client'
+import { CatalogResultViews } from '../components/CatalogResultView'
 import { ExecutionSpine, PageHeader, StatusBadge } from '../components/SystemUI'
 import { getPreferenceProfileId, getSessionId, resetSessionId } from '../state/localSession'
 import { clearRunOperation, loadRunOperation, saveRunOperation } from '../state/runOperation'
@@ -85,7 +86,7 @@ export function SandboxPage() {
         role: item.role,
         content: item.content,
         runId: item.run_id,
-        result: item.role === 'assistant' ? results.get(item.run_id) : undefined,
+        result: item.role === 'assistant' ? item.result ?? results.get(item.run_id) : undefined,
       }))
     })
     if (saved.active_run_id) {
@@ -229,9 +230,10 @@ export function SandboxPage() {
         </div>
         <div className="message-list">
           {messages.length === 0 && <div className="conversation-empty"><Sparkles size={24} /><h2>告诉 Agent 你的目标</h2><p>从明确的业务请求开始，或启用 Adaptive planning 观察自主规划链路。</p></div>}
-          {messages.map((message, index) => <article className={`message ${message.role}`} key={`${message.runId}-${message.role}-${index}`}>
+          {messages.map((message, index) => <article className={`message ${message.role}${message.result?.artifacts?.some((artifact) => artifact.artifact_type === 'catalog_query_result') ? ' has-catalog' : ''}`} key={`${message.runId}-${message.role}-${index}`}>
             <div className="message-role">{message.role === 'user' ? 'YOU' : 'LINGCART AGENT'}</div>
             <div className="message-copy">{message.content}</div>
+            {message.result && <CatalogResultViews artifacts={message.result.artifacts} />}
             {message.result && <div className="message-meta"><StatusBadge status={message.result.status} /><span>{message.result.agent} · {message.result.run_id.slice(0, 10)} · {message.result.trace.length} tools</span></div>}
           </article>)}
           {(send.isPending || running) && <article className="message assistant pending"><div className="message-role">LINGCART AGENT</div><div className="thinking-line"><i /><span>{send.isPending ? '正在提交可恢复任务' : '正在执行并持久化事件'}</span></div></article>}

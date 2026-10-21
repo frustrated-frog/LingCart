@@ -164,6 +164,7 @@ export interface RunResult {
   budget?: Record<string, unknown>
   usage?: Record<string, number | null>
   pending_action?: PendingAction | null
+  artifacts?: ResultArtifact[]
   [key: string]: unknown
 }
 
@@ -212,6 +213,50 @@ export interface Product {
   data_source: string
 }
 
+export interface CatalogFieldRef {
+  core?: 'product_id' | 'name' | 'category' | 'price' | 'stock' | 'summary' | null
+  concept_id?: string | null
+}
+
+export interface CatalogResultProduct extends Product {
+  values: Record<string, unknown>
+}
+
+export interface CatalogResultArtifact {
+  artifact_type: 'catalog_query_result'
+  version: string
+  result_set_id: string
+  source_result_set_id?: string | null
+  catalog_snapshot: { version?: string; fingerprint?: string; source?: string; [key: string]: unknown }
+  query_spec: {
+    partition?: { field: CatalogFieldRef } | null
+    ordering: Array<{ field: CatalogFieldRef; direction: 'ASC' | 'DESC' }>
+    selector: { mode: 'ALL' | 'TOP_K' | 'PAGE' | 'ARGMIN' | 'ARGMAX' }
+    projection: { fields: CatalogFieldRef[] }
+    [key: string]: unknown
+  }
+  matched_count: number
+  delivered_count: number
+  member_ids: string[]
+  products: CatalogResultProduct[]
+  groups: Array<{ key: string; product_ids: string[]; count: number }>
+  metrics: Record<string, unknown>
+  delivery: {
+    mode: string
+    requested_complete: boolean
+    complete: boolean
+    matched_count: number
+    delivered_count: number
+  }
+  verification?: {
+    goal?: { verdict?: string; checked_requirements?: string[] }
+    delivery?: { verdict?: string; complete?: boolean }
+  }
+  data_source: string
+}
+
+export type ResultArtifact = CatalogResultArtifact | { artifact_type: string; [key: string]: unknown }
+
 export interface Order {
   order_id: number
   item: string
@@ -252,7 +297,7 @@ export interface ChatResponse extends ExecutionResult {
 
 export interface Conversation {
   state: { pending_action?: PendingAction | null; [key: string]: unknown }
-  messages: Array<{ role: 'user' | 'assistant'; content: string; run_id: string }>
+  messages: Array<{ role: 'user' | 'assistant'; content: string; run_id: string; result?: ExecutionResult | null }>
   active_run_id: string | null
 }
 

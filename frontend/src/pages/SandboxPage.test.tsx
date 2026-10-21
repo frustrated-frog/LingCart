@@ -27,6 +27,44 @@ beforeEach(() => {
 })
 
 describe('SandboxPage durable session behavior', () => {
+  it('restores and renders a complete grouped catalog artifact', async () => {
+    const products = [
+      { product_id: 'P1', name: '基础耳机', category: '耳机', price: 99, currency: 'CNY', summary: '有线 · 轻量', specs: {}, stock: 3, data_source: 'DEMO_CATALOG', values: {} },
+      { product_id: 'P2', name: '静音键盘', category: '键盘', price: 199, currency: 'CNY', summary: '静音轴 · 三模', specs: {}, stock: 5, data_source: 'DEMO_CATALOG', values: {} },
+    ]
+    vi.spyOn(api, 'conversation').mockResolvedValue({
+      active_run_id: null,
+      state: {},
+      messages: [
+        { role: 'user', content: '把商品按类目展示', run_id: 'catalog-run' },
+        { role: 'assistant', content: '已完成结构化目录查询。', run_id: 'catalog-run', result: {
+          run_id: 'catalog-run', reply: '已完成结构化目录查询。', agent: 'shopping', route: 'DIRECT', status: 'SUCCEEDED',
+          terminal_reason: 'COMPLETED', events: [], trace: [{ tool: 'query_catalog' }], pending_action: null,
+          usage: { input_tokens: 10, output_tokens: 5, total_tokens: 15 },
+          artifacts: [{
+            artifact_type: 'catalog_query_result', version: 'catalog-query/v1', result_set_id: 'crs_test',
+            source_result_set_id: null, catalog_snapshot: { version: 'snapshot-v1' },
+            query_spec: { partition: { field: { core: 'category' } }, ordering: [{ field: { core: 'price' }, direction: 'ASC' }], selector: { mode: 'ALL' }, projection: { fields: [{ core: 'name' }] } },
+            matched_count: 2, delivered_count: 2, member_ids: ['P1', 'P2'], products,
+            groups: [{ key: '耳机', product_ids: ['P1'], count: 1 }, { key: '键盘', product_ids: ['P2'], count: 1 }],
+            metrics: {}, delivery: { mode: 'ALL', requested_complete: true, complete: true, matched_count: 2, delivered_count: 2 },
+            verification: { goal: { verdict: 'SATISFIED' }, delivery: { verdict: 'SATISFIED', complete: true } }, data_source: 'DEMO_CATALOG',
+          }],
+        } },
+      ],
+    })
+
+    renderPage()
+
+    expect(await screen.findByLabelText('结构化商品目录结果')).toBeInTheDocument()
+    expect(screen.getByText('目标与交付已核验')).toBeInTheDocument()
+    expect(screen.getByText('耳机')).toBeInTheDocument()
+    expect(screen.getByText('键盘')).toBeInTheDocument()
+    expect(screen.getByText('基础耳机')).toBeInTheDocument()
+    expect(screen.getByText('静音键盘')).toBeInTheDocument()
+    expect(screen.getByText('价格升序')).toBeInTheDocument()
+  })
+
   it('restores a pending approval from persisted conversation state', async () => {
     vi.spyOn(api, 'conversation').mockResolvedValue({
       active_run_id: null,

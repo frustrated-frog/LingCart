@@ -462,6 +462,7 @@ def _projection_rows(products: list[dict], projection: CatalogProjection) -> lis
             "summary": product["summary"],
             "stock": product["stock"],
             "specs": product.get("specs") or {},
+            "data_source": product.get("data_source", "DEMO_CATALOG"),
             "values": values,
         })
     return rows

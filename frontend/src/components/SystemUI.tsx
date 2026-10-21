@@ -50,6 +50,7 @@ export const TOOL_LABELS: Record<string, string> = {
   get_payment_status: '查询支付状态', prepare_payment: '准备支付方案', process_payment: '处理支付',
   answer_faq: '查询服务规则', escalate_to_human: '转交人工客服', get_catalog_facets: '读取目录分类',
   search_products: '搜索商品目录', discover_products: '发现商品候选', compare_products: '对比商品参数',
+  query_catalog: '执行结构化目录查询',
   select_product: '核验并选择商品', read_clock: '读取当前时间', calculate: '执行计算',
   __model_answer__: '生成知识回答',
 }
@@ -113,6 +114,8 @@ const EVENT_LABELS: Record<string, [string, string]> = {
   constraint_binding_unresolved: ['约束', '等待兼容证据'], constraint_binding_rejected: ['审查', '拒绝映射提案'],
   constraint_bindings_refined: ['约束', '提交约束映射'], decision_action_surface: ['预算', '收敛决策动作面'],
   dialogue_protocol_retry: ['理解', '重试对话协议'], unknown_capability_downgraded: ['能力', '降级未知能力'],
+  compilation_coverage: ['编译', '核验目标编译覆盖'], catalog_goal_verified: ['核验', '目录目标核验通过'],
+  catalog_delivery_verified: ['交付', '目录结果交付核验通过'],
   hook_applied: ['扩展', '应用扩展'], hook_failed: ['扩展', '扩展执行失败'],
   knowledge_result: ['知识', '生成知识结果'], error: ['错误', '执行错误'], terminal: ['结束', '运行结束'],
 }
