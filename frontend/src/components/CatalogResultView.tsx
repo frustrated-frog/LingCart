@@ -1,5 +1,5 @@
-import { AlertTriangle, CheckCircle2, Clock3, Database, Layers3 } from 'lucide-react'
-import type { CatalogResultArtifact, CatalogResultProduct, ResultArtifact } from '../types'
+import { AlertTriangle, Boxes, CheckCircle2, Clock3, Database, GitMerge, Layers3, SearchCheck } from 'lucide-react'
+import type { CatalogResultArtifact, CatalogResultProduct, ConstraintPlanResultArtifact, ResultArtifact } from '../types'
 
 function isCatalogArtifact(artifact: ResultArtifact): artifact is CatalogResultArtifact {
   return artifact.artifact_type === 'catalog_query_result'
@@ -7,6 +7,13 @@ function isCatalogArtifact(artifact: ResultArtifact): artifact is CatalogResultA
     && Array.isArray(artifact.groups)
     && Array.isArray(artifact.member_ids)
     && typeof artifact.delivery === 'object'
+}
+
+function isConstraintArtifact(artifact: ResultArtifact): artifact is ConstraintPlanResultArtifact {
+  return artifact.artifact_type === 'constraint_plan_result'
+    && Array.isArray(artifact.domains)
+    && Array.isArray(artifact.solutions)
+    && typeof artifact.search === 'object'
 }
 
 function price(value: number, currency: string): string {
@@ -118,4 +125,91 @@ export function CatalogResultViews({ artifacts = [] }: { artifacts?: ResultArtif
   const catalogArtifacts = artifacts.filter(isCatalogArtifact)
   if (catalogArtifacts.length === 0) return null
   return <>{catalogArtifacts.map((artifact) => <CatalogArtifactView artifact={artifact} key={artifact.result_set_id} />)}</>
+}
+
+function constraintValue(value: unknown): string {
+  if (typeof value === 'number') return new Intl.NumberFormat('zh-CN', { maximumFractionDigits: 2 }).format(value)
+  if (Array.isArray(value)) return value.join('、')
+  return value == null ? '未解析' : String(value)
+}
+
+function constraintCheckLabel(check: ConstraintPlanResultArtifact['solutions'][number]['constraint_checks'][number]) {
+  const operators: Record<string, string> = {
+    EQ: '=', NE: '≠', LT: '<', LTE: '≤', GT: '>', GTE: '≥',
+  }
+  const operator = operators[check.operator ?? ''] ?? check.operator ?? '—'
+  if (check.kind === 'COMPARISON') {
+    return `${constraintValue(check.left)} ${operator} ${constraintValue(check.right)}`
+  }
+  if (check.kind === 'ALL_DIFFERENT') return `属性 ${check.attribute ?? 'candidate_id'} 均不相同`
+  return `${constraintValue(check.observed)} ${operator} ${constraintValue(check.expected)}`
+}
+
+function ConstraintArtifactView({ artifact }: { artifact: ConstraintPlanResultArtifact }) {
+  const verified = artifact.verification?.status === 'VERIFIED'
+  if (!verified) {
+    const label = artifact.verification?.status === 'REJECTED' ? '约束结果未通过核验' : '约束结果尚未核验'
+    return <section className="catalog-result catalog-result-rejected" aria-label={label}>
+      <header className="catalog-result-head">
+        <div><span>CONSTRAINT EVIDENCE</span><h3>{label}</h3></div>
+        <div className="catalog-result-proof"><AlertTriangle size={14} /><span>{artifact.verification?.status ?? 'PENDING'}</span></div>
+      </header>
+      <div className="catalog-verification-warning" role="alert"><AlertTriangle size={16} /><div>
+        <strong>未将候选组合作为可信方案交付</strong>
+        <p>{artifact.verification?.error?.message ?? '全局目标核验尚未完成，候选数据只保留为运行诊断证据。'}</p>
+        {artifact.verification?.error?.code && <code>{artifact.verification.error.code}</code>}
+      </div></div>
+      <footer><code>{artifact.solution_set_id}</code><span>诊断证据</span></footer>
+    </section>
+  }
+
+  const infeasible = artifact.feasibility === 'INFEASIBLE'
+  const goalLabels = new Map(artifact.plan_spec.goals.map((goal) => [goal.goal_id, goal.source_quote]))
+  return <section className="catalog-result constraint-result" aria-label="已核验约束方案">
+    <header className="catalog-result-head">
+      <div><span>GLOBAL GOAL PROOF</span><h3>{infeasible ? '当前约束下没有可行方案' : '全局约束方案'}</h3></div>
+      <div className="catalog-result-proof"><CheckCircle2 size={14} /><span>{infeasible ? '无解结论已核验' : '全部硬约束已核验'}</span></div>
+    </header>
+    <div className="catalog-result-summary">
+      <div><GitMerge size={15} /><span>目标节点</span><strong>{artifact.plan_spec.goals.length}</strong><small>{artifact.domains.map((domain) => domain.provider).join(' · ')}</small></div>
+      <div><Boxes size={15} /><span>交付方案</span><strong>{artifact.solutions.length}</strong><small>{artifact.search.feasible_count_exact ? `共 ${artifact.search.feasible_count} 组可行` : `至少 ${artifact.search.feasible_count} 组可行`}</small></div>
+      <div><SearchCheck size={15} /><span>求解边界</span><strong>{artifact.search.complete ? '完整' : '有界'}</strong><small>检查 {artifact.search.nodes_examined} 个完整赋值</small></div>
+    </div>
+    <div className="constraint-domain-rail" aria-label="候选数据域">
+      {artifact.domains.map((domain) => <div key={domain.goal_id}>
+        <span>{goalLabels.get(domain.goal_id) ?? domain.goal_id}</span><strong>{domain.candidate_count}</strong><small>个已核验候选 · {domain.provider}</small>
+      </div>)}
+    </div>
+    {infeasible ? <div className="constraint-empty">
+      <SearchCheck size={22} /><div><strong>搜索已完成，没有同时满足全部硬约束的组合</strong>
+        <p>系统没有放宽预算、删除目标或把单项结果伪装成完整方案。</p></div>
+    </div> : <div className="constraint-solutions">{artifact.solutions.map((solution, solutionIndex) =>
+      <article className="constraint-solution" key={solution.solution_id}>
+        <div className="constraint-solution-index"><span>SOLUTION</span><strong>{String(solutionIndex + 1).padStart(2, '0')}</strong><code>{solution.solution_id.slice(-8)}</code></div>
+        <div className="constraint-goal-lanes">{solution.selections.map((selection) => <section key={selection.goal_id}>
+          <div><span>{selection.goal_id}</span><small>{selection.source_quote} · {selection.quantity} 件</small></div>
+          {selection.candidates.map((candidate, index) => <div className="constraint-candidate" key={`${candidate.candidate_id}-${index}`}>
+            <div><strong>{candidate.label}</strong><code>{candidate.candidate_id}</code></div>
+            {typeof candidate.attributes.price === 'number'
+              ? <b>{price(candidate.attributes.price, String(candidate.evidence.currency ?? 'CNY'))}</b>
+              : <b>{constraintValue(candidate.attributes.price)}</b>}
+            <p>{String(candidate.evidence.summary ?? '已由数据域提供身份与属性证据')}</p>
+          </div>)}
+        </section>)}</div>
+        <div className="constraint-proof-list">{solution.constraint_checks.map((check) => <div key={check.requirement_id}>
+          <CheckCircle2 size={13} /><span>{check.requirement_id}</span><strong>{constraintCheckLabel(check)}</strong>
+        </div>)}</div>
+      </article>)}</div>}
+    <footer><code>{artifact.solution_set_id}</code><span>{artifact.selection_policy === 'EXPLICIT_OPTIMIZATION' ? '按用户优化目标排序' : '确定性差异覆盖 · 非个人偏好排序'}</span></footer>
+  </section>
+}
+
+export function ResultArtifactViews({ artifacts = [] }: { artifacts?: ResultArtifact[] }) {
+  const catalogArtifacts = artifacts.filter(isCatalogArtifact)
+  const constraintArtifacts = artifacts.filter(isConstraintArtifact)
+  if (catalogArtifacts.length === 0 && constraintArtifacts.length === 0) return null
+  return <>
+    {constraintArtifacts.map((artifact) => <ConstraintArtifactView artifact={artifact} key={artifact.solution_set_id} />)}
+    {catalogArtifacts.map((artifact) => <CatalogArtifactView artifact={artifact} key={artifact.result_set_id} />)}
+  </>
 }

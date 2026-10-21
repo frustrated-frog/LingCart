@@ -1,6 +1,6 @@
 from copy import deepcopy
-import hashlib
 import json
+import uuid
 
 import pytest
 from langchain_core.messages import AIMessage
@@ -22,6 +22,8 @@ from src.constraint_planning import (
     verify_constraint_plan_result,
 )
 from src.errors import AgentError
+from src.durable import run_conversation
+from src.persistence import RunStore
 
 
 class ScriptedModel:
@@ -248,7 +250,8 @@ def test_shared_budget_request_runs_through_registered_capability(monkeypatch):
     model = ScriptedModel(dialogue, approved_audit(spec, message))
     monkeypatch.setattr(orchestrator, "get_llm", lambda **_kwargs: model)
 
-    result = orchestrator.run_orchestrator(message)
+    session_id = f"constraint-{uuid.uuid4().hex}"
+    result = run_conversation(message, session_id, request_id=f"request-{uuid.uuid4().hex}", store=RunStore())
 
     assert result["status"] == "SUCCEEDED"
     assert result["terminal_reason"] == "COMPLETED"
@@ -257,4 +260,8 @@ def test_shared_budget_request_runs_through_registered_capability(monkeypatch):
     assert result["artifacts"][0]["verification"]["status"] == "VERIFIED"
     assert result["plan"]["verification"]["all_goals_satisfied"] is True
     assert any(event["type"] == "global_goal_verified" for event in result["events"])
+    state = RunStore().conversation(session_id)["state"]
+    assert state["constraint_solution_set"]["solution_set_id"] == result["artifacts"][0]["solution_set_id"]
+    assert state["constraint_solution_set"]["source_run_id"] == result["run_id"]
+    assert state["constraint_solution_set"]["verification"]["global_goal"] is True
     assert model.index == 2

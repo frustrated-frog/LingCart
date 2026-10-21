@@ -215,6 +215,30 @@ def execute_claim(claim, *, store=None, runner=None):
                     "matched_count": artifact["matched_count"],
                     "delivered_count": artifact["delivered_count"],
                 }
+            constraint_artifacts = [
+                artifact for artifact in result.get("artifacts", [])
+                if isinstance(artifact, dict) and artifact.get("artifact_type") == "constraint_plan_result"
+                and (artifact.get("verification") or {}).get("status") == "VERIFIED"
+            ]
+            if constraint_artifacts:
+                artifact = constraint_artifacts[-1]
+                state["constraint_solution_set"] = {
+                    "solution_set_id": artifact["solution_set_id"],
+                    "source_run_id": result["run_id"],
+                    "version": artifact["version"],
+                    "plan_spec": artifact["plan_spec"],
+                    "provider_registry_version": artifact["provider_registry_version"],
+                    "domains": [{
+                        "goal_id": domain["goal_id"],
+                        "provider": domain["provider"],
+                        "provider_fingerprint": domain["provider_fingerprint"],
+                        "candidate_count": domain["candidate_count"],
+                    } for domain in artifact["domains"]],
+                    "feasibility": artifact["feasibility"],
+                    "solution_ids": [solution["solution_id"] for solution in artifact["solutions"]],
+                    "search": artifact["search"],
+                    "verification": artifact["verification"],
+                }
             return store.finish(claim["run_id"], claim["token"], result, state)
     except BaseException:
         # Simulated/process interruptions retain the saved prefix for explicit resume.

@@ -330,6 +330,39 @@ details summary { padding: 10px 0; color: var(--blue); font-size: 10px; cursor: 
 .catalog-result-table td:first-child code { margin-top: 3px; color: var(--muted); font-size: 8px; }
 .catalog-price { color: var(--blue); font: 10px/1.5 var(--mono) !important; white-space: nowrap; }
 .catalog-result footer { display: flex; justify-content: space-between; gap: 12px; padding: 10px 14px; border-top: 1px solid var(--line); color: var(--muted); font: 8px/1 var(--mono); }
+.constraint-result { --constraint-ink: #263f68; --constraint-soft: #eef4ff; }
+.constraint-result .catalog-result-head > div:first-child span { color: var(--constraint-ink); }
+.constraint-domain-rail { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); border-bottom: 1px solid var(--line); background: var(--constraint-soft); }
+.constraint-domain-rail > div { display: grid; grid-template-columns: 1fr auto; gap: 5px 12px; padding: 11px 14px; border-right: 1px solid var(--line); }
+.constraint-domain-rail > div:last-child { border-right: 0; }
+.constraint-domain-rail span, .constraint-domain-rail small { color: var(--muted); font: 8px/1.2 var(--mono); }
+.constraint-domain-rail strong { grid-row: 1 / 3; grid-column: 2; font: 18px/1 var(--mono); color: var(--constraint-ink); }
+.constraint-solutions { padding: 0 14px; }
+.constraint-solution { display: grid; grid-template-columns: 80px minmax(0, 1fr) 220px; border-bottom: 1px solid var(--line); }
+.constraint-solution:last-child { border-bottom: 0; }
+.constraint-solution-index { padding: 17px 12px 17px 0; border-right: 1px solid var(--line); }
+.constraint-solution-index span, .constraint-solution-index code { display: block; color: var(--muted); font: 8px/1 var(--mono); }
+.constraint-solution-index strong { display: block; margin: 8px 0; color: var(--constraint-ink); font: 28px/.9 var(--mono); }
+.constraint-goal-lanes { min-width: 0; padding: 14px; }
+.constraint-goal-lanes > section + section { margin-top: 12px; padding-top: 12px; border-top: 1px dashed var(--line-strong); }
+.constraint-goal-lanes > section > div:first-child { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 7px; }
+.constraint-goal-lanes > section > div:first-child span { color: var(--blue); font: 8px/1 var(--mono); letter-spacing: .07em; text-transform: uppercase; }
+.constraint-goal-lanes > section > div:first-child small { color: var(--muted); font-size: 8px; }
+.constraint-candidate { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 7px 14px; padding: 9px 10px; background: #fbfcff; border-left: 2px solid #9db7e4; }
+.constraint-candidate > div strong, .constraint-candidate > div code { display: block; }
+.constraint-candidate > div strong { font-size: 10px; }
+.constraint-candidate > div code { margin-top: 4px; color: var(--muted); font-size: 8px; }
+.constraint-candidate > b { color: var(--constraint-ink); font: 11px/1 var(--mono); text-align: right; }
+.constraint-candidate > p { grid-column: 1 / -1; margin: 0; color: var(--muted); font-size: 9px; line-height: 1.45; }
+.constraint-proof-list { padding: 14px 0 14px 14px; border-left: 1px solid var(--line); }
+.constraint-proof-list > div { display: grid; grid-template-columns: 16px 1fr; gap: 3px 5px; padding: 8px 10px; background: #f2f8f5; color: #166b5d; }
+.constraint-proof-list > div + div { margin-top: 6px; }
+.constraint-proof-list span { font: 8px/1 var(--mono); }
+.constraint-proof-list strong { grid-column: 2; font: 9px/1.4 var(--mono); }
+.constraint-empty { display: flex; align-items: flex-start; gap: 12px; padding: 22px 16px; background: #fffaf2; }
+.constraint-empty svg { color: #9a6519; }
+.constraint-empty strong { font-size: 11px; }
+.constraint-empty p { margin: 6px 0 0; color: var(--muted); font-size: 9px; }
 .thinking-line { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 10px; }
 .thinking-line i, .loading-state i { width: 10px; height: 10px; border: 2px solid var(--line-strong); border-top-color: var(--blue); border-radius: 50%; animation: spin .8s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }

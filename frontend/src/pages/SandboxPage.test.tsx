@@ -98,6 +98,68 @@ describe('SandboxPage durable session behavior', () => {
     expect(screen.queryByText('未核验耳机')).not.toBeInTheDocument()
   })
 
+  it('renders verified global constraint evidence without implying preference knowledge', async () => {
+    vi.spyOn(api, 'conversation').mockResolvedValue({
+      active_run_id: null,
+      state: {},
+      messages: [
+        { role: 'user', content: '400 元买一个耳机和一个键盘', run_id: 'constraint-run' },
+        { role: 'assistant', content: '已找到可行方案。', run_id: 'constraint-run', result: {
+          run_id: 'constraint-run', reply: '已找到可行方案。', agent: 'planning', route: 'DIRECT', status: 'SUCCEEDED',
+          terminal_reason: 'COMPLETED', events: [], trace: [{ tool: 'solve_constraint_plan' }], pending_action: null,
+          usage: { input_tokens: 10, output_tokens: 5, total_tokens: 15 },
+          artifacts: [{
+            artifact_type: 'constraint_plan_result', version: 'constraint-plan/v1', solution_set_id: 'cpr_verified',
+            plan_spec: {
+              goals: [
+                { goal_id: 'headphones', source_quote: '一个耳机', quantity: 1 },
+                { goal_id: 'keyboard', source_quote: '一个键盘', quantity: 1 },
+              ],
+              constraints: [{ requirement_id: 'shared_budget', source_quote: '400 元', kind: 'AGGREGATE' }],
+              optimization: null,
+            },
+            compilation_coverage: [{ requirement_id: 'constraint:shared_budget', source_quote: '400 元', status: 'COMPILED' }],
+            provider_registry_version: 'providers-v1',
+            domains: [
+              { goal_id: 'headphones', provider: 'CATALOG', provider_fingerprint: 'headphones-fp', candidate_count: 20, evidence: {} },
+              { goal_id: 'keyboard', provider: 'CATALOG', provider_fingerprint: 'keyboard-fp', candidate_count: 20, evidence: {} },
+            ],
+            feasibility: 'FEASIBLE',
+            solutions: [{
+              solution_id: 'cps_one', optimization_value: null,
+              selections: [
+                { goal_id: 'headphones', source_quote: '一个耳机', quantity: 1, candidates: [{
+                  candidate_id: 'P1', label: '基础耳机', attributes: { price: 99 },
+                  evidence: { product_id: 'P1', name: '基础耳机', price: 99, currency: 'CNY', summary: '轻量有线耳机' },
+                }] },
+                { goal_id: 'keyboard', source_quote: '一个键盘', quantity: 1, candidates: [{
+                  candidate_id: 'P2', label: '静音键盘', attributes: { price: 199 },
+                  evidence: { product_id: 'P2', name: '静音键盘', price: 199, currency: 'CNY', summary: '静音轴键盘' },
+                }] },
+              ],
+              constraint_checks: [{ requirement_id: 'shared_budget', kind: 'AGGREGATE', observed: 298,
+                operator: 'LTE', expected: 400, satisfied: true }],
+            }],
+            search: { complete: true, nodes_examined: 400, feasible_count: 22, feasible_count_exact: true,
+              stored_solution_limit_reached: false, max_search_nodes: 100000 },
+            selection_policy: 'STABLE_FARTHEST_FIRST',
+            verification: { status: 'VERIFIED', verdict: 'SATISFIED', global_goal: true,
+              checked_requirements: ['constraint:shared_budget'] },
+          }],
+        } },
+      ],
+    })
+
+    renderPage()
+
+    expect(await screen.findByLabelText('已核验约束方案')).toBeInTheDocument()
+    expect(screen.getByText('全部硬约束已核验')).toBeInTheDocument()
+    expect(screen.getByText('基础耳机')).toBeInTheDocument()
+    expect(screen.getByText('静音键盘')).toBeInTheDocument()
+    expect(screen.getByText('298 ≤ 400')).toBeInTheDocument()
+    expect(screen.getByText('确定性差异覆盖 · 非个人偏好排序')).toBeInTheDocument()
+  })
+
   it('restores a pending approval from persisted conversation state', async () => {
     vi.spyOn(api, 'conversation').mockResolvedValue({
       active_run_id: null,

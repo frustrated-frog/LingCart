@@ -279,7 +279,79 @@ export interface CatalogResultArtifact {
   data_source: string
 }
 
-export type ResultArtifact = CatalogResultArtifact | { artifact_type: string; [key: string]: unknown }
+export interface ConstraintCandidate {
+  candidate_id: string
+  label: string
+  attributes: Record<string, unknown>
+  evidence: Partial<Product> & Record<string, unknown>
+}
+
+export interface ConstraintSelection {
+  goal_id: string
+  source_quote: string
+  quantity: number
+  candidates: ConstraintCandidate[]
+}
+
+export interface ConstraintCheck {
+  requirement_id: string
+  kind: 'AGGREGATE' | 'COMPARISON' | 'ALL_DIFFERENT'
+  observed?: unknown
+  operator?: string
+  expected?: unknown
+  left?: unknown
+  right?: unknown
+  attribute?: string
+  satisfied: boolean
+}
+
+export interface ConstraintSolution {
+  solution_id: string
+  selections: ConstraintSelection[]
+  constraint_checks: ConstraintCheck[]
+  optimization_value?: unknown
+}
+
+export interface ConstraintPlanResultArtifact {
+  artifact_type: 'constraint_plan_result'
+  version: 'constraint-plan/v1' | string
+  solution_set_id: string
+  plan_spec: {
+    goals: Array<{ goal_id: string; source_quote: string; quantity: number }>
+    constraints: Array<{ requirement_id: string; source_quote: string; kind: string; [key: string]: unknown }>
+    optimization?: { requirement_id: string; direction: 'MIN' | 'MAX'; [key: string]: unknown } | null
+    [key: string]: unknown
+  }
+  compilation_coverage: Array<{ requirement_id: string; source_quote: string; status: string }>
+  provider_registry_version: string
+  domains: Array<{
+    goal_id: string
+    provider: string
+    provider_fingerprint: string
+    candidate_count: number
+    evidence: Record<string, unknown>
+  }>
+  feasibility: 'FEASIBLE' | 'INFEASIBLE'
+  solutions: ConstraintSolution[]
+  search: {
+    complete: boolean
+    nodes_examined: number
+    feasible_count: number
+    feasible_count_exact: boolean
+    stored_solution_limit_reached: boolean
+    max_search_nodes: number
+  }
+  selection_policy: 'EXPLICIT_OPTIMIZATION' | 'STABLE_FARTHEST_FIRST' | string
+  verification?: {
+    status?: 'PENDING' | 'VERIFIED' | 'REJECTED'
+    verdict?: 'SATISFIED' | 'PROVEN_INFEASIBLE' | string
+    checked_requirements?: string[]
+    global_goal?: boolean
+    error?: { code?: string; message?: string; retryable?: boolean }
+  }
+}
+
+export type ResultArtifact = CatalogResultArtifact | ConstraintPlanResultArtifact | { artifact_type: string; [key: string]: unknown }
 
 export interface Order {
   order_id: number
