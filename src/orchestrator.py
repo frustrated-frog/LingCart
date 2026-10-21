@@ -112,7 +112,10 @@ def _execute_understanding(user_message, history, pending_action, intake, run_id
             pending_action,
             model=understanding_model,
         )
-        if any(objective.catalog_query is not None for objective in understanding.objectives):
+        if any(
+            objective.catalog_query is not None or objective.constraint_plan is not None
+            for objective in understanding.objectives
+        ):
             from src.catalog_request_audit import review_catalog_request
 
             audit = review_catalog_request(
@@ -326,19 +329,13 @@ def _run_orchestrator(user_message: str, history: list | None = None, pending_ac
             terminal_reason="MISSING_ORDER_ID" if "order_id" in intake.missing_slots else "AMBIGUOUS_ORDER_GOALS",
         )
     elif intake.execution_mode == UNSUPPORTED:
-        shared_budget = "MULTI_ITEM_SHARED_CONSTRAINT" in intake.semantic_hazards
-        code = "UNSUPPORTED_SHARED_BUDGET" if shared_budget else "UNSUPPORTED_INTENT"
+        code = "UNSUPPORTED_INTENT"
         result = _simple_result(
             intake,
             run_id,
-            reply=(
-                "我识别到这是多个商品共享总预算的组合选购请求。当前运行时还不能可靠求解并核验组合总价，"
-                "因此没有用单品推荐替代，也没有把任务标记为完成。"
-                if shared_budget else
-                "这个请求超出了当前消费服务助手的能力范围。我目前可以处理订单、物流、退款、支付状态和服务规则。"
-            ),
+            reply="这个请求超出了当前已注册能力范围；系统没有用相似但不等价的任务替代它。",
             agent="intake",
-            route=code if shared_budget else "UNSUPPORTED",
+            route="UNSUPPORTED",
             status="FAILED",
             terminal_reason=code,
             error={"code": code, "message": intake.reason, "retryable": False},

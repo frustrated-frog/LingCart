@@ -343,13 +343,9 @@ def analyze_request(user_message: str, *, _check_clause_coverage: bool = True) -
         return TaskIntake(
             request=request,
             entities=entities,
-            execution_mode=UNSUPPORTED if shared_catalog_budget else LLM_REQUIRED,
+            execution_mode=LLM_REQUIRED,
             confidence=0.0,
-            reason=(
-                "当前运行时尚未注册可验证的多商品共享预算求解能力"
-                if shared_catalog_budget
-                else "多个商品目标不能由单类目确定性快路径完整表达"
-            ),
+            reason="多个商品目标或跨商品约束需要由结构化理解与能力注册表决定执行路径",
             route_hints=tuple(dict.fromkeys(intents)),
             semantic_hazards=(hazard,),
         )

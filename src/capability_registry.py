@@ -54,6 +54,7 @@ class CompiledOperation:
 Compiler = Callable[[Mapping[str, object], str], tuple[CompiledOperation, ...]]
 Normalizer = Callable[[dict, tuple[str, ...]], tuple[dict, dict[str, dict]]]
 ResultValidator = Callable[[object, Mapping[str, object]], bool]
+ResultVerifier = Callable[[object, Mapping[str, object]], object]
 ResultRenderer = Callable[[object, Mapping[str, object]], str]
 OutcomeMapper = Callable[[object, Mapping[str, object]], str]
 
@@ -65,6 +66,7 @@ class OperationContract:
     handler: object
     required_result_fields: tuple[str, ...] = ()
     result_validator: ResultValidator | None = None
+    result_verifier: ResultVerifier | None = None
     renderer: ResultRenderer | None = None
     outcome_mapper: OutcomeMapper | None = None
 
@@ -76,6 +78,12 @@ class OperationContract:
             return self.result_validator is None or bool(self.result_validator(result, arguments))
         except Exception:
             return False
+
+    def verify_result(self, result: object, arguments: Mapping[str, object]) -> None:
+        if not self.validate_result(result, arguments):
+            raise AgentError("INVALID_TOOL_RESULT", "工具结果不符合注册能力的输出契约", retryable=False)
+        if self.result_verifier is not None:
+            self.result_verifier(result, arguments)
 
     def render_result(self, result: object, arguments: Mapping[str, object]) -> str:
         try:
@@ -380,6 +388,7 @@ class CapabilityRegistry:
                         "handler": identity(contract.handler),
                         "required_result_fields": list(contract.required_result_fields),
                         "result_validator": identity(contract.result_validator),
+                        "result_verifier": identity(contract.result_verifier),
                         "renderer": identity(contract.renderer),
                         "outcome_mapper": identity(contract.outcome_mapper),
                     }
@@ -459,6 +468,13 @@ def _catalog_query(objective: Mapping[str, object], _request: str) -> tuple[Comp
     return (CompiledOperation("catalog-result", "shopping", CATALOG_QUERY_OPERATION, arguments),)
 
 
+def _constraint_plan(objective: Mapping[str, object], _request: str) -> tuple[CompiledOperation, ...]:
+    from src.constraint_planning import CONSTRAINT_PLAN_OPERATION, compile_constraint_plan
+
+    arguments = compile_constraint_plan(objective.get("constraint_plan"))
+    return (CompiledOperation("constraint-result", "planning", CONSTRAINT_PLAN_OPERATION, arguments),)
+
+
 def _general_answer(objective: Mapping[str, object], _request: str) -> tuple[CompiledOperation, ...]:
     return (CompiledOperation("answer", "knowledge", MODEL_ANSWER_OPERATION, {
         "question": objective["question"],
@@ -520,6 +536,15 @@ def _spec(kind: str, capability_id: str, description: str, target: str, evidence
 
 def _builtin_registrations() -> tuple[CapabilityRegistration, ...]:
     from src.entity_resolution import normalize_clock_objective
+    from src.constraint_planning import (
+        CONSTRAINT_PLAN,
+        CONSTRAINT_PLAN_OPERATION,
+        constraint_plan_outcome,
+        render_constraint_plan_result,
+        solve_constraint_plan,
+        verify_constraint_plan_result,
+    )
+    from src.catalog_query import render_catalog_result, verify_catalog_result
 
     order_fields = ("order_id",)
     order_question = "请提供要处理的订单号，例如“查询订单 1004 的状态和物流”。"
@@ -590,7 +615,25 @@ def _builtin_registrations() -> tuple[CapabilityRegistration, ...]:
               required=("catalog_query",), accepted=("catalog_query",),
               metadata_dependencies=(CATALOG_FACETS_DEPENDENCY,),
               missing_question="请说明要查询的商品范围、条件或期望的结果形式。",
-              handlers={CATALOG_QUERY_OPERATION: query_catalog}),
+              operations={CATALOG_QUERY_OPERATION: OperationContract(
+                  handler=query_catalog,
+                  required_result_fields=("artifact", "products", "total", "data_source"),
+                  result_verifier=verify_catalog_result,
+                  renderer=lambda result, _arguments: render_catalog_result(result),
+              )}),
+        _spec(CONSTRAINT_PLAN, "planning.constraint.solve",
+              "把多个有限候选目标、跨目标硬约束和显式优化目标编译为通用约束图并进行确定性求解与全局核验",
+              "constraint_solution", "VERIFIED_CONSTRAINT_SOLUTION", _constraint_plan,
+              required=("constraint_plan",), accepted=("constraint_plan",),
+              metadata_dependencies=(CATALOG_FACETS_DEPENDENCY,),
+              missing_question="请说明需要同时满足的目标、数量和共享约束。",
+              operations={CONSTRAINT_PLAN_OPERATION: OperationContract(
+                  handler=solve_constraint_plan,
+                  required_result_fields=("artifact", "feasibility", "solutions"),
+                  result_verifier=verify_constraint_plan_result,
+                  renderer=render_constraint_plan_result,
+                  outcome_mapper=constraint_plan_outcome,
+              )}),
         _spec(GENERAL_ANSWER, "knowledge.answer", "回答无需业务工具的稳定知识、解释、写作和一般咨询；需要实时外部证据时明确能力边界",
               "knowledge", "MODEL_KNOWLEDGE", _general_answer, required=("question",),
               accepted=("question",), under_specified=True,

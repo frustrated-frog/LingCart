@@ -105,6 +105,22 @@ class CatalogFilter(Requirement):
             raise ValueError("IN requires an array value")
         if self.operator != "IN" and isinstance(self.value, list):
             raise ValueError("Only IN accepts an array value")
+        values = self.value if isinstance(self.value, list) else [self.value]
+        string_fields = {"product_id", "name", "category", "summary"}
+        numeric_fields = {"price", "stock"}
+        field_name = self.field.core
+        if field_name in string_fields:
+            if self.operator not in {"EQ", "NE", "CONTAINS", "NOT_CONTAINS", "IN"}:
+                raise ValueError(f"{field_name} only supports string operators")
+            if any(not isinstance(item, str) for item in values):
+                raise ValueError(f"{field_name} requires string values")
+        if field_name in numeric_fields:
+            if self.operator in {"CONTAINS", "NOT_CONTAINS"}:
+                raise ValueError(f"{field_name} does not support string containment")
+            if any(type(item) not in {int, float} for item in values):
+                raise ValueError(f"{field_name} requires numeric values")
+            if field_name == "stock" and any(not isinstance(item, int) for item in values):
+                raise ValueError("stock requires integer values")
         return self
 
 
@@ -328,11 +344,25 @@ def _compare(actual: object, operator: str, expected: object) -> PredicateTruth:
     if actual is None:
         return PredicateTruth.UNKNOWN
     if operator in {"CONTAINS", "NOT_CONTAINS"}:
-        found = str(expected).casefold() in str(actual).casefold()
+        if not isinstance(actual, str) or not isinstance(expected, str):
+            return PredicateTruth.UNKNOWN
+        found = expected.casefold() in actual.casefold()
         matched = found if operator == "CONTAINS" else not found
         return PredicateTruth.TRUE if matched else PredicateTruth.FALSE
     if operator == "IN":
-        return PredicateTruth.TRUE if actual in expected else PredicateTruth.FALSE
+        if not isinstance(expected, list) or not expected:
+            return PredicateTruth.UNKNOWN
+        truths = [_compare(actual, "EQ", item) for item in expected]
+        if PredicateTruth.TRUE in truths:
+            return PredicateTruth.TRUE
+        return PredicateTruth.UNKNOWN if PredicateTruth.UNKNOWN in truths else PredicateTruth.FALSE
+    actual_numeric = type(actual) in {int, float}
+    expected_numeric = type(expected) in {int, float}
+    compatible = (actual_numeric and expected_numeric) or (
+        isinstance(actual, str) and isinstance(expected, str)
+    )
+    if not compatible:
+        return PredicateTruth.UNKNOWN
     try:
         if operator == "EQ":
             matched = actual == expected

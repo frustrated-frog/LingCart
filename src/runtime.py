@@ -421,6 +421,7 @@ _PRODUCTION_TOOL_POLICIES = {
     },
     "src.agents.faq_agent": {"answer_faq": {}},
     "src.catalog_query": {"query_catalog": {}},
+    "src.constraint_planning": {"solve_constraint_plan": {}},
 }
 
 

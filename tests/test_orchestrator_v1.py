@@ -173,20 +173,26 @@ def test_unsupported_request_is_not_escalated(monkeypatch):
     assert result["route"] == "UNSUPPORTED"
 
 
-def test_shared_budget_fast_path_fails_closed_without_model_or_tool_calls(monkeypatch):
-    def unexpected_model(**_kwargs):
-        raise AssertionError("共享预算门禁不应调用模型")
+def test_shared_budget_bypasses_single_item_fast_path_and_enters_semantic_layer(monkeypatch):
+    response = AIMessage(content=json.dumps({
+        "reason": "需要保留多个目标和共享约束",
+        "commands": [{"kind": "CLARIFY", "source_quote": "有什么推荐吗", "message": "请确认是否各买一件。"}],
+        "objectives": [],
+    }, ensure_ascii=False))
 
-    monkeypatch.setattr(orchestrator, "get_llm", unexpected_model)
+    class Model:
+        def invoke(self, _prompt):
+            return response
+
+    monkeypatch.setattr(orchestrator, "get_llm", lambda **_kwargs: Model())
 
     result = orchestrator.run_orchestrator("我有400元预算，想买一个耳机一个键盘，有什么推荐吗")
 
-    assert result["status"] == "FAILED"
-    assert result["terminal_reason"] == "UNSUPPORTED_SHARED_BUDGET"
-    assert result["route"] == "UNSUPPORTED_SHARED_BUDGET"
+    assert result["status"] == "WAITING_CLARIFICATION"
+    assert result["terminal_reason"] == "MODEL_CLARIFICATION"
+    assert result["route"] == "CLARIFY"
     assert result["trace"] == []
-    assert result["usage"]["total_tokens"] == 0
-    assert "没有用单品推荐替代" in result["reply"]
+    assert result["budget"]["consumed"]["model_calls"] == 1
 
 
 def test_every_event_is_ordered_and_linked_to_run():

@@ -273,6 +273,8 @@ def test_missing_attribute_is_unknown_and_cannot_satisfy_negative_filters():
     assert _compare(None, "NE", "静音轴") is PredicateTruth.UNKNOWN
     assert _compare(None, "NOT_CONTAINS", "主动") is PredicateTruth.UNKNOWN
     assert _compare("红轴", "NE", "静音轴") is PredicateTruth.TRUE
+    assert _compare(199.0, "NE", "199") is PredicateTruth.UNKNOWN
+    assert _compare(199.0, "CONTAINS", "19") is PredicateTruth.UNKNOWN
 
     message = "不是静音轴的商品"
     spec = grouped_catalog_spec()
