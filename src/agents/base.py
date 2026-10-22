@@ -101,7 +101,8 @@ def _run_loop(agent_name, system_prompt, agent_tools, user_message, history, max
         try:
             response = context.model_call(final_model if final_round else bound_model, messages,
                                           purpose="final_response" if final_round else "agent_decision", agent=agent_name,
-                                          allow_tools=not final_round, schemas=[] if final_round else schemas)
+                                          allow_tools=not final_round, schemas=[] if final_round else schemas,
+                                          stream_response=final_round)
         except AgentError as error:
             reason = error.code if "BUDGET" in error.code or not trace else "MODEL_FAILED_AFTER_TOOL_RESULT"
             errors.append({"code": error.code, "message": str(error), "retryable": error.retryable})

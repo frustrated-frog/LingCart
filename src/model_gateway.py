@@ -371,6 +371,41 @@ class RotatingChatModel:
         self._state.update(index=index, last_call=call, last_success=call, last_error=None)
         return result
 
+    def stream_once(self, messages):
+        """Stream exactly one selected provider; the runtime owns failover attempts."""
+        index, candidate = self._select_candidate()
+        started = time.monotonic()
+        descriptor = {"provider": candidate.config.provider, "model": candidate.config.model,
+                      "slot": candidate.config.slot}
+        try:
+            stream = getattr(candidate.client, "stream", None)
+            if stream is None:
+                yield candidate.client.invoke(messages)
+            else:
+                yield from stream(messages)
+        except Exception as exc:
+            failure_kind = _failure_kind(exc)
+            health = self._health(candidate)
+            if _can_failover(exc):
+                health["failure_count"] = health.get("failure_count", 0) + 1
+                health["last_failure_kind"] = failure_kind
+                if health["failure_count"] >= self.circuit_failure_threshold:
+                    health["open_until"] = time.time() + self.circuit_cooldown_seconds
+            call = {**descriptor, "status": "FAILED", "failure_kind": failure_kind,
+                    "duration_ms": round((time.monotonic() - started) * 1000, 2)}
+            if health.get("open_until", 0.0) > time.time():
+                call["circuit_status"] = "OPEN"
+            self._state["last_call"] = call
+            self._state["last_error"] = call
+            if _can_failover(exc):
+                self._state["index"] = (index + 1) % len(self._candidates)
+            raise
+        health = self._health(candidate)
+        health.update(failure_count=0, open_until=0.0, last_failure_kind=None)
+        call = {**descriptor, "status": "SUCCEEDED",
+                "duration_ms": round((time.monotonic() - started) * 1000, 2)}
+        self._state.update(index=index, last_call=call, last_success=call, last_error=None)
+
     def invoke(self, messages):
         last_error: Exception | None = None
         for _ in range(self.max_attempts):

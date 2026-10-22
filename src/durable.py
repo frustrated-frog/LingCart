@@ -95,6 +95,7 @@ def execute_claim(claim, *, store=None, runner=None):
         with runtime_scope(context):
             if harness_runner:
                 harness_runner.bind(context)
+            context.set_agent_status("UNDERSTANDING", "正在理解你的需求")
             from src.recovery import recover_evidence
             recover_evidence(context)
             kwargs = {"history": history}
@@ -164,11 +165,18 @@ def execute_claim(claim, *, store=None, runner=None):
             result["run_id"] = claim["run_id"]
             result.setdefault("status", "SUCCEEDED")
             result.setdefault("terminal_reason", "COMPLETED")
+            context.set_agent_status("VERIFYING", "正在核验结果")
             try:
                 context.hooks.emit(context, 'verify', {'result': result})
             except AgentError as error:
                 result.update(status='PARTIAL' if result.get('trace') else 'FAILED', terminal_reason=error.code,
                               error={'code': error.code, 'message': str(error), 'retryable': False})
+            context.publish_response(result.get("reply", ""), source="assembled")
+            from src.response_stream import terminal_public_status
+            public_status, public_label = terminal_public_status(
+                result.get("status", "FAILED"), result.get("pending_action")
+            )
+            context.set_agent_status(public_status, public_label)
             context.defer_terminal = False
             # 终态事件与最终结果由 finish 在同一事务写入。
             result["events"] = list(context.events)

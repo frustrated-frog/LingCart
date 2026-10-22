@@ -292,7 +292,18 @@ details summary { padding: 10px 0; color: var(--blue); font-size: 10px; cursor: 
 .message-meta > span:last-child { color: var(--muted); font: 8px/1 var(--mono); }
 .thinking-line { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 10px; }
 .thinking-line i, .loading-state i { width: 10px; height: 10px; border: 2px solid var(--line-strong); border-top-color: var(--blue); border-radius: 50%; animation: spin .8s linear infinite; }
+.message.live-response { min-width: 360px; border-color: #bfcef5; border-left: 3px solid var(--blue); background: linear-gradient(135deg, #fbfcff 0%, #f6f8ff 100%); box-shadow: 0 8px 24px rgba(38,73,157,.06); }
+.live-response .message-role { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.live-response .message-role em { color: #9b5c12; font-style: normal; }
+.agent-progress { display: flex; align-items: center; gap: 9px; color: #345089; font-size: 10px; }
+.agent-progress i { width: 7px; height: 7px; flex: 0 0 auto; border-radius: 50%; background: var(--blue); box-shadow: 0 0 0 0 rgba(52,91,190,.26); animation: status-pulse 1.5s ease-out infinite; }
+.stream-copy { margin-top: 12px; padding-top: 12px; border-top: 1px solid rgba(105,117,138,.16); color: var(--ink); }
+.stream-cursor { display: inline-block; width: 2px; height: 1em; margin-left: 3px; vertical-align: -.12em; background: var(--blue); animation: caret-blink .85s steps(1, end) infinite; }
+.stream-placeholder { margin-top: 10px; color: var(--muted); font-size: 9px; line-height: 1.6; }
+.stream-warning { margin-top: 10px; padding: 8px 10px; color: #8b4a14; border: 1px solid #ecd0a5; background: var(--amber-soft); font-size: 9px; }
 @keyframes spin { to { transform: rotate(360deg); } }
+@keyframes status-pulse { 70%, 100% { box-shadow: 0 0 0 7px rgba(52,91,190,0); } }
+@keyframes caret-blink { 50% { opacity: 0; } }
 .composer { display: grid; grid-template-columns: 1fr 38px; align-items: end; gap: 10px; margin: 0 16px 16px; padding: 10px; border: 1px solid var(--line-strong); background: var(--surface); box-shadow: 0 5px 18px rgba(23,32,51,.04); }
 .composer textarea { min-height: 64px; border: 0; box-shadow: none; }
 .composer button { width: 38px; height: 38px; display: grid; place-items: center; border: 0; border-radius: 3px; background: var(--blue); color: #fff; cursor: pointer; }

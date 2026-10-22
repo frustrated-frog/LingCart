@@ -1,10 +1,11 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import * as clientModule from '../api/client'
 import { api, ApiError } from '../api/client'
 import { saveRunOperation } from '../state/runOperation'
+import type { RunEvent } from '../types'
 import { SandboxPage } from './SandboxPage'
 
 vi.mock('../api/client', async () => {
@@ -27,6 +28,18 @@ beforeEach(() => {
 })
 
 describe('SandboxPage durable session behavior', () => {
+  it('shows an execution acknowledgement before the server accepts the run', async () => {
+    vi.spyOn(api, 'conversation').mockResolvedValue({ active_run_id: null, messages: [], state: {} })
+    vi.spyOn(api, 'startRun').mockImplementation(() => new Promise(() => undefined))
+    renderPage()
+
+    fireEvent.change(await screen.findByLabelText('消费需求'), { target: { value: '帮我查询订单' } })
+    fireEvent.click(screen.getByLabelText('发送需求'))
+
+    expect(await screen.findByText('正在提交可恢复任务')).toBeInTheDocument()
+    expect(screen.getByText(/执行进度会持续同步/)).toBeInTheDocument()
+  })
+
   it('restores a pending approval from persisted conversation state', async () => {
     vi.spyOn(api, 'conversation').mockResolvedValue({
       active_run_id: null,
@@ -84,5 +97,34 @@ describe('SandboxPage durable session behavior', () => {
     expect(control.mock.calls[0][1]).toBe('steer')
     expect(control.mock.calls[0][2]).toMatchObject({ message: '预算改为 300 元', expected_revision: 3 })
     expect(clientModule.streamRunEvents).toHaveBeenCalled()
+  })
+
+  it('renders persisted response deltas and the latest public agent status', async () => {
+    saveRunOperation(sessionId, {
+      requestId: 'request-stream', message: '推荐耳机', harnessProfile: 'adaptive-v1',
+      executionMode: 'adaptive', runId: 'stream-run',
+    })
+    vi.spyOn(api, 'conversation').mockResolvedValue({ active_run_id: 'stream-run', messages: [], state: {} })
+    vi.spyOn(api, 'productRun').mockResolvedValue({
+      run_id: 'stream-run', session_id: sessionId, request: '推荐耳机', status: 'RUNNING',
+      created_at: new Date().toISOString(), result: null, checkpoint: {}, events: [],
+    })
+    vi.spyOn(api, 'runCommands').mockResolvedValue({ revision: 0, commands: [] })
+    let emit: ((event: RunEvent) => void) | undefined
+    vi.mocked(clientModule.streamRunEvents).mockImplementation((_runId, _sessionId, onEvent) => {
+      emit = onEvent
+      return new AbortController()
+    })
+    renderPage()
+    await waitFor(() => expect(emit).toBeDefined())
+
+    act(() => {
+      emit?.({ type: 'agent_status_changed', sequence: 1, status: 'RESPONDING', label: '正在组织回答' })
+      emit?.({ type: 'response_started', sequence: 2, message_id: 'answer-1' })
+      emit?.({ type: 'response_delta', sequence: 3, message_id: 'answer-1', chunk_index: 0, delta: '正在为你比较候选' })
+    })
+
+    expect((await screen.findAllByText('正在组织回答')).length).toBeGreaterThan(0)
+    expect(screen.getByText('正在为你比较候选')).toBeInTheDocument()
   })
 })

@@ -21,6 +21,15 @@ from langchain_core.messages import AIMessage
 from pydantic import ConfigDict, ValidationError, create_model
 
 from src.errors import AgentError, ErrorCode, classify_exception
+from src.response_stream import (
+    AGENT_STATUS_LABELS,
+    content_sha256,
+    model_public_status,
+    response_stream_id,
+    response_text,
+    split_response,
+    tool_status_label,
+)
 from src.runtime_state import restore_runtime_snapshot
 
 
@@ -100,6 +109,52 @@ def bounded_call(fn, timeout, source):
     return result
 
 
+def bounded_stream_call(fn, timeout, source, on_item):
+    """Consume a provider stream behind the same hard deadline as normal calls."""
+    started = time.monotonic()
+    if not _workers.acquire(timeout=max(0, timeout)):
+        raise AgentError(f"{source.upper()}_TIMEOUT", "执行队列已满", retryable=True)
+    result_queue = queue.Queue()
+
+    def work():
+        try:
+            for item in fn():
+                result_queue.put(("item", item))
+            result_queue.put(("done", None))
+        except BaseException as exc:
+            result_queue.put(("error", exc))
+        finally:
+            _workers.release()
+
+    threading.Thread(target=work, daemon=True).start()
+    while True:
+        remaining = timeout - (time.monotonic() - started)
+        if remaining <= 0:
+            raise AgentError(f"{source.upper()}_TIMEOUT", "调用超过执行时限", retryable=True)
+        try:
+            kind, value = result_queue.get(timeout=max(.001, remaining))
+        except queue.Empty:
+            raise AgentError(f"{source.upper()}_TIMEOUT", "调用超过执行时限", retryable=True) from None
+        if kind == "item":
+            on_item(value)
+        elif kind == "error":
+            raise value
+        else:
+            return
+
+
+def _content_text(content):
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return "".join(
+            block.get("text", "") if isinstance(block, dict) and block.get("type") == "text"
+            else block if isinstance(block, str) else ""
+            for block in content
+        )
+    return "" if content is None else str(content)
+
+
 class RunRuntime:
     def __init__(self, run_id, limits=None, *, store=None, token=None, snapshot=None, events=None, approval=None):
         self.run_id = run_id
@@ -176,7 +231,45 @@ class RunRuntime:
             self.store.save_checkpoint(self.run_id, self.token, self.snapshot, event)
         return event
 
-    def model_call(self, model, messages, *, purpose, agent=None, allow_tools=True, schemas=None):
+    def set_agent_status(self, status, label=None, **data):
+        """Persist a coarse public phase, never a hidden reasoning trace."""
+        label = label or AGENT_STATUS_LABELS.get(status, "任务正在执行")
+        payload = {"status": status, "label": label, **data}
+        current = next((event for event in reversed(self.events)
+                        if event.get("type") == "agent_status_changed"), None)
+        if current and all(current.get(key) == value for key, value in payload.items()):
+            return current
+        return self.record("agent_status_changed", **payload)
+
+    def _completed_response(self, content):
+        expected = content_sha256(content)
+        for event in reversed(self.events):
+            if event.get("type") != "response_completed":
+                continue
+            if event.get("content_sha256") == expected:
+                message_id = event.get("message_id")
+                if message_id and response_text(self.events, message_id) == content:
+                    return message_id
+        return None
+
+    def publish_response(self, content, *, source="assembled"):
+        """Persist a replayable final response for deterministic/non-streaming paths."""
+        content = _content_text(content)
+        completed = self._completed_response(content)
+        if completed:
+            return completed
+        self.set_agent_status("RESPONDING", AGENT_STATUS_LABELS["RESPONDING"])
+        message_id = response_stream_id(self.run_id, f"final:{content_sha256(content)}")
+        self.record("response_started", message_id=message_id, source=source)
+        for index, delta in enumerate(split_response(content)):
+            self.record("response_delta", message_id=message_id, chunk_index=index, delta=delta, source=source)
+        self.record("response_completed", message_id=message_id, source=source,
+                    chunk_count=len(split_response(content)), char_count=len(content),
+                    content_sha256=content_sha256(content))
+        return message_id
+
+    def model_call(self, model, messages, *, purpose, agent=None, allow_tools=True, schemas=None,
+                   stream_response=False):
         from src.session_control import apply_controls
         apply_controls(self)
         self.hooks.emit(self, 'before_model', {'purpose': purpose, 'agent': agent})
@@ -214,6 +307,8 @@ class RunRuntime:
         self.counters["model_calls"] += 1
         self.counters["prompt_tokens"] += estimate
         self.phase = "MODEL_CALL"
+        public_status, public_label = model_public_status(purpose)
+        self.set_agent_status(public_status, public_label)
         self.record("model_started", purpose=purpose, agent=agent, prompt_budget_reserved=estimate)
         completion_limit = self.limits.max_completion_tokens - self.counters["completion_tokens"]
         if hasattr(model, "bind"):
@@ -222,22 +317,77 @@ class RunRuntime:
         max_attempts = getattr(model, "max_attempts", 2)
         for attempt in range(max_attempts):
             apply_controls(self)
+            message_id = response_stream_id(self.run_id, f"model:{key}:{attempt + 1}")
+            emitted_chunks = 0
+            streamed_content = []
+            buffered = []
+            last_chunk = None
+
+            def emit_delta(delta):
+                nonlocal emitted_chunks
+                if not delta:
+                    return
+                self.record("response_delta", message_id=message_id, chunk_index=emitted_chunks,
+                            delta=delta, source="model")
+                streamed_content.append(delta)
+                emitted_chunks += 1
+
+            def flush_buffer():
+                if buffered:
+                    emit_delta("".join(buffered))
+                    buffered.clear()
+
+            def accept_chunk(chunk):
+                nonlocal last_chunk
+                last_chunk = chunk
+                text = _content_text(getattr(chunk, "content", chunk))
+                if not text:
+                    return
+                if emitted_chunks == 0:
+                    emit_delta(text)
+                    return
+                buffered.append(text)
+                joined = "".join(buffered)
+                if len(joined) >= 48 or joined.endswith(("。", "！", "？", "\n", ". ", "! ", "? ")):
+                    flush_buffer()
             try:
-                invoke = getattr(model, "invoke_once", model.invoke)
-                response = bounded_call(
-                    lambda: invoke(effective_messages),
-                    min(self.limits.call_timeout, self.remaining_seconds),
-                    "model",
-                )
+                timeout = min(self.limits.call_timeout, self.remaining_seconds)
+                stream = getattr(model, "stream_once", None) or getattr(model, "stream", None)
+                if stream_response and stream:
+                    self.record("response_started", message_id=message_id, source="model",
+                                purpose=purpose, agent=agent)
+                    bounded_stream_call(lambda: stream(effective_messages), timeout, "model", accept_chunk)
+                    flush_buffer()
+                    content = "".join(streamed_content)
+                    response = AIMessage(
+                        content=content,
+                        tool_calls=getattr(last_chunk, "tool_calls", []) if last_chunk else [],
+                        usage_metadata=getattr(last_chunk, "usage_metadata", None) if last_chunk else None,
+                    )
+                    self.record("response_completed", message_id=message_id, source="model",
+                                purpose=purpose, agent=agent, chunk_count=emitted_chunks,
+                                char_count=len(content), content_sha256=content_sha256(content))
+                else:
+                    invoke = getattr(model, "invoke_once", model.invoke)
+                    response = bounded_call(lambda: invoke(effective_messages), timeout, "model")
                 break
             except Exception as exc:
                 error = classify_exception(exc, source="model")
+                if stream_response and (emitted_chunks or any(
+                        event.get("type") == "response_started" and event.get("message_id") == message_id
+                        for event in self.events)):
+                    flush_buffer()
+                    self.record("response_failed", message_id=message_id, source="model",
+                                purpose=purpose, agent=agent, code=error.code, retryable=error.retryable,
+                                partial=emitted_chunks > 0, chunk_count=emitted_chunks)
                 provider = getattr(model, "last_call", {})
                 self.record("error", source="model", purpose=purpose, agent=agent, code=error.code,
                             message=str(error), retryable=error.retryable,
                             provider=provider.get("provider"), model=provider.get("model"),
                             provider_failure=provider.get("failure_kind"))
-                if not error.retryable or attempt + 1 == max_attempts:
+                # Once text reached the client, switching providers would splice two
+                # independent answers together. Preserve the prefix and fail clearly.
+                if emitted_chunks or not error.retryable or attempt + 1 == max_attempts:
                     raise error from exc
                 self.require("model", estimate)
                 self.counters["model_calls"] += 1
@@ -268,6 +418,8 @@ class TraceRecorder:
     def record(self, event_type, **data):
         context = current_runtime()
         if context and context.run_id == self.run_id:
+            if event_type in {"verification", "verification_failed", "request_audited"}:
+                context.set_agent_status("VERIFYING", AGENT_STATUS_LABELS["VERIFYING"])
             event = context.record(event_type, **data)
         else:
             event = {"run_id": self.run_id, "sequence": len(self.events) + 1,
@@ -519,6 +671,8 @@ class ToolExecutor:
                                  action_fingerprint=self.fingerprint(name, args))
             raise ApprovalRequired(pending)
         fingerprint = self.fingerprint(name, args)
+        if context:
+            context.set_agent_status("USING_TOOL", tool_status_label(name), tool=name)
         scope = self.observation_scope if spec.effect == ToolEffect.READ and spec.replay_policy == ReplayPolicy.REPLAY_SAFE else None
         scope_sha256 = self.fingerprint("observation_scope", {"value": scope}) if scope is not None else None
         scope_evidence = {"observation_scope_sha256": scope_sha256} if scope_sha256 else {}

@@ -33,6 +33,27 @@ def test_request_retry_returns_same_run_and_one_answer(database):
         run_conversation("另一个请求", "session", request_id="same")
 
 
+def test_final_answer_stream_and_public_statuses_are_durable(database):
+    from src.response_stream import response_text
+    from src.trace_projector import project_trace
+
+    result = run_conversation("查询订单 1002 的状态", "stream-events", request_id="stream-once")
+    events = result["events"]
+    completed = next(event for event in events if event["type"] == "response_completed")
+    types = [event["type"] for event in events]
+    statuses = [event["status"] for event in events if event["type"] == "agent_status_changed"]
+
+    assert response_text(events, completed["message_id"]) == result["reply"]
+    assert types.index("response_started") < types.index("response_completed") < types.index("terminal")
+    assert statuses[0] == "UNDERSTANDING"
+    assert "USING_TOOL" in statuses
+    assert "VERIFYING" in statuses
+    assert statuses[-2:] == ["RESPONDING", "COMPLETED"]
+    projected = project_trace(events)
+    assert projected["integrity"]["response_stream"] is True
+    assert projected["integrity"]["complete"] is True
+
+
 def test_request_id_cannot_rebind_to_another_harness_profile(database):
     from src.harness import get_runner
 
