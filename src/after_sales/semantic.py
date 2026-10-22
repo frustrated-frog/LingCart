@@ -326,7 +326,8 @@ def current_assessment(session, case, policy, evidence, as_of):
         AfterSalesSemanticAssessment.policy_checksum == policy.checksum,
         AfterSalesSemanticAssessment.basis_hash == basis,
         AfterSalesSemanticAssessment.created_at <= as_of,
-    ).order_by(AfterSalesSemanticAssessment.created_at.desc(), AfterSalesSemanticAssessment.assessment_id.desc()).limit(1))
+    ).order_by(AfterSalesSemanticAssessment.case_revision.desc(),
+               AfterSalesSemanticAssessment.created_at.desc(), AfterSalesSemanticAssessment.assessment_id.desc()).limit(1))
     if assessment is None:
         return None
     inputs = assessment.payload['input']

@@ -207,3 +207,23 @@ def test_semantic_commit_failure_rolls_back_material_assessment_and_approval(dat
         assert len(session.scalars(select(AfterSalesEvidence)).all()) == 2
         assert len(session.scalars(select(AfterSalesSemanticAssessment)).all()) == 2
         assert session.get(PendingAction, first['pending_action']['action_id']).status == 'OPEN'
+
+
+def test_reassessment_with_same_timestamp_uses_case_revision_not_random_id(database, monkeypatch):
+    from src.after_sales.policy import AfterSalesPolicyEngine
+    case_id = start_case(monkeypatch)
+    run_conversation(DETAIL, 'evidence-session', request_id='sufficient')
+    monkeypatch.setattr(llm, 'get_llm', lambda **_: SemanticModel('UNKNOWN'))
+    result = run_conversation('请重新核验材料', 'evidence-session', request_id='reassess')
+    assert result.get('pending_action') is None
+    with tools._session() as session:
+        rows = session.scalars(select(AfterSalesSemanticAssessment).where(
+            AfterSalesSemanticAssessment.case_id == case_id).order_by(AfterSalesSemanticAssessment.case_revision)).all()
+        assert rows[-1].basis_hash == rows[-2].basis_hash
+        rows[-1].created_at = rows[-2].created_at
+        rows[-2].assessment_id = 'z-older'
+        rows[-1].assessment_id = 'a-newer'
+        session.flush()
+        evaluation = AfterSalesPolicyEngine(session).evaluate(case_id)
+        assert evaluation.outcome == 'NEEDS_EVIDENCE'
+        assert evaluation.facts['evidence_requirements'][0]['semantic_assessment']['status'] == 'UNKNOWN'
