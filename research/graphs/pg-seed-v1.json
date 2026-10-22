@@ -1,0 +1,123 @@
+{
+  "schema_version": 1,
+  "graph_id": "lingcart-pg",
+  "version": 0,
+  "parent_sha256": null,
+  "training_sha256": null,
+  "nodes": [
+    {
+      "id": "Start",
+      "kind": "STATE",
+      "description": "开始理解当前任务"
+    },
+    {
+      "id": "set_goal",
+      "kind": "ACTION",
+      "description": "明确目标与约束"
+    },
+    {
+      "id": "search_products",
+      "kind": "ACTION",
+      "description": "检索候选商品"
+    },
+    {
+      "id": "inspect",
+      "kind": "ACTION",
+      "description": "读取完整证据"
+    },
+    {
+      "id": "recommend",
+      "kind": "ACTION",
+      "description": "选择符合约束的候选"
+    },
+    {
+      "id": "complete",
+      "kind": "ACTION",
+      "description": "提交逐项完成证据"
+    },
+    {
+      "id": "clarify",
+      "kind": "ACTION",
+      "description": "请求缺失信息"
+    },
+    {
+      "id": "End",
+      "kind": "STATE",
+      "description": "结束本次执行"
+    }
+  ],
+  "edges": [
+    {
+      "id": "start-goal",
+      "source": "Start",
+      "target": "set_goal",
+      "relation": "LEADS_TO",
+      "condition": "尚未明确目标",
+      "guidance": "先明确用户目标与约束",
+      "pitfalls": "不要猜测关键参数"
+    },
+    {
+      "id": "goal-search",
+      "source": "set_goal",
+      "target": "search_products",
+      "relation": "LEADS_TO",
+      "condition": "需要挑选商品",
+      "guidance": "按目标检索候选",
+      "pitfalls": "局部检索结果不是全目录"
+    },
+    {
+      "id": "search-inspect",
+      "source": "search_products",
+      "target": "inspect",
+      "relation": "LEADS_TO",
+      "condition": "候选证据被归档",
+      "guidance": "读取完整证据后再选择",
+      "pitfalls": "索引不能替代原始记录"
+    },
+    {
+      "id": "inspect-recommend",
+      "source": "inspect",
+      "target": "recommend",
+      "relation": "LEADS_TO",
+      "condition": "已有完整候选证据",
+      "guidance": "结合目标约束选择候选",
+      "pitfalls": "不能仅依据经验认定合格"
+    },
+    {
+      "id": "recommend-complete",
+      "source": "recommend",
+      "target": "complete",
+      "relation": "LEADS_TO",
+      "condition": "各目标已有证据",
+      "guidance": "提交目标完成证据",
+      "pitfalls": "不要遗漏复合目标"
+    },
+    {
+      "id": "complete-end",
+      "source": "complete",
+      "target": "End",
+      "relation": "LEADS_TO",
+      "condition": "独立审查通过",
+      "guidance": "结束当前任务",
+      "pitfalls": "审查未通过则继续补证"
+    },
+    {
+      "id": "goal-clarify",
+      "source": "set_goal",
+      "target": "clarify",
+      "relation": "LEADS_TO",
+      "condition": "关键信息缺失且无法查证",
+      "guidance": "询问最小缺失信息",
+      "pitfalls": "不要猜测用户授权"
+    },
+    {
+      "id": "clarify-end",
+      "source": "clarify",
+      "target": "End",
+      "relation": "LEADS_TO",
+      "condition": "已提出追问",
+      "guidance": "等待用户补充",
+      "pitfalls": "不要自行代答"
+    }
+  ]
+}

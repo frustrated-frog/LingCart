@@ -199,6 +199,7 @@ def built_in_mechanisms() -> tuple[HarnessMechanism, ...]:
     """Return exact implementations referenced by built-in Profiles."""
 
     from src.liveplan import LivePlanSteeringMechanism
+    from src.pg_context import PGContextMechanism
 
     return (
         EmbeddedMechanism("planning", "structured-dialogue-understanding", "1", ("orchestrator",),
@@ -228,5 +229,6 @@ def built_in_mechanisms() -> tuple[HarnessMechanism, ...]:
         EmbeddedMechanism("tool_protocol", "native-strict-tools", "1", ("adaptive",),
                           ("src/native_protocol.py", "src/runtime.py")),
         LivePlanSteeringMechanism(),
+        PGContextMechanism(),
     )
 

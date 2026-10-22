@@ -1,0 +1,59 @@
+{
+  "schema_version": 1,
+  "profile_id": "adaptive-pg-context-v1",
+  "version": "1.0.0",
+  "display_name": "PG 程序图候选",
+  "description": "局部程序图经独立指导模型生成下一步建议；离线验证选择新版本，运行中图保持冻结。",
+  "engine": {
+    "id": "adaptive",
+    "version": "1"
+  },
+  "mechanisms": [
+    {
+      "slot": "planning",
+      "id": "bounded-model-loop",
+      "version": "1"
+    },
+    {
+      "slot": "context",
+      "id": "procedural-graph-context",
+      "version": "1",
+      "configuration": {
+        "graph_path": "research/graphs/pg-seed-v1.json",
+        "hops": 2,
+        "max_graph_chars": 10000
+      }
+    },
+    {
+      "slot": "memory",
+      "id": "objective-ledger",
+      "version": "1"
+    },
+    {
+      "slot": "verification",
+      "id": "independent-request-audit",
+      "version": "2"
+    },
+    {
+      "slot": "tool_protocol",
+      "id": "native-strict-tools",
+      "version": "1"
+    }
+  ],
+  "capabilities": [
+    "model_directed_planning",
+    "bounded_replanning",
+    "evidence_retrieval",
+    "goal_verification",
+    "durable_resume",
+    "runtime_steering",
+    "procedural_graph_guidance",
+    "offline_graph_evolution"
+  ],
+  "research": {
+    "status": "candidate",
+    "source_type": "hybrid",
+    "paper_id": "arXiv:2609.09153v1",
+    "hypothesis": "从 dev 成败轨迹演化的程序图，在相同预算和独立核验下改善未来行动选择；需要分别对照无 PG 和固定种子图。"
+  }
+}
