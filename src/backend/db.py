@@ -234,6 +234,23 @@ class AfterSalesCaseEvent(Base):
     occurred_at: Mapped[datetime] = mapped_column(DateTime, index=True)
 
 
+class AfterSalesCaseRefund(Base):
+    """Immutable link proving which approved case produced a refund request."""
+
+    __tablename__ = "after_sales_case_refunds"
+    __table_args__ = (
+        UniqueConstraint("case_id", name="uq_after_sales_case_refund_case"),
+        UniqueConstraint("refund_id", name="uq_after_sales_case_refund_refund"),
+    )
+
+    link_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    case_id: Mapped[str] = mapped_column(ForeignKey("after_sales_cases.case_id"), index=True)
+    refund_id: Mapped[int] = mapped_column(ForeignKey("refunds.refund_id"), index=True)
+    policy_decision_id: Mapped[str] = mapped_column(ForeignKey("policy_decisions.decision_id"), index=True)
+    submitted_run_id: Mapped[str | None] = mapped_column(ForeignKey("agent_runs.run_id"), nullable=True, index=True)
+    linked_at: Mapped[datetime] = mapped_column(DateTime)
+
+
 class WorkspaceRun(Base):
     """Completed run snapshots for the local demo workspace, not checkpoints."""
 

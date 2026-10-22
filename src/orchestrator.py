@@ -454,10 +454,18 @@ def run_orchestrator(user_message: str, history: list | None = None, pending_act
                       result=event.get("result"), status=event.get("status"), duration_ms=event.get("duration_ms"))
                  for event in context.events if event["type"] == "tool_result"]
         status = "PARTIAL" if trace else "FAILED"
+        # A confirmation is a single-use authorization.  Once the action is
+        # stale or does not match the approved parameters, retaining it would
+        # present an unusable button and a later run would hit APPROVAL_ALREADY_USED.
+        pending_after_error = (
+            None
+            if error.code in {"APPROVAL_STALE", "INVALID_APPROVAL", "APPROVAL_ALREADY_USED"}
+            else pending_action
+        )
         context.record("terminal", status=status, reason=error.code)
         result = dict(run_id=context.run_id, reply="运行已停止，已保留此前获得的结果。" if trace else str(error),
                       trace=trace, agent="runtime", route="RUNTIME", status=status, terminal_reason=error.code,
-                      error={"code": error.code, "message": str(error), "retryable": error.retryable}, pending_action=pending_action,
+                      error={"code": error.code, "message": str(error), "retryable": error.retryable}, pending_action=pending_after_error,
                       intake={}, usage={"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}, cached=False)
     result["events"] = context.events
     model_events = [e for e in context.events if e["type"] == "model_call"]

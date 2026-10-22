@@ -2,12 +2,17 @@
 
 from src.after_sales.contracts import (
     ActorType,
+    CaseDetail,
     CaseCreateCommand,
+    CaseListItem,
+    CaseRefundReference,
+    CaseRunReference,
     CaseStatus,
     CaseType,
     EvidenceCommand,
     PolicyEvaluation,
     PolicyOutcome,
+    PolicyVersionProjection,
     RequestedResolution,
 )
 from src.after_sales.policy import AfterSalesPolicyEngine
@@ -19,10 +24,15 @@ __all__ = [
     "AfterSalesDomainError",
     "AfterSalesPolicyEngine",
     "CaseCreateCommand",
+    "CaseDetail",
+    "CaseListItem",
+    "CaseRefundReference",
+    "CaseRunReference",
     "CaseStatus",
     "CaseType",
     "EvidenceCommand",
     "PolicyEvaluation",
     "PolicyOutcome",
+    "PolicyVersionProjection",
     "RequestedResolution",
 ]

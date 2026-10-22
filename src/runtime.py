@@ -456,6 +456,7 @@ class ReplayPolicy(StrEnum):
     REPLAY_SAFE = "REPLAY_SAFE"
     AT_MOST_ONCE = "AT_MOST_ONCE"
     REQUIRES_APPROVAL = "REQUIRES_APPROVAL"
+    IDEMPOTENT_WRITE = "IDEMPOTENT_WRITE"
 
 
 class ConcurrencyPolicy(StrEnum):
@@ -495,7 +496,14 @@ class ToolSpec:
             raise AgentError("INVALID_TOOL_POLICY", "工具策略包含未知标识", retryable=False) from exc
         invalid = (
             (self.side_effect and self.effect != ToolEffect.WRITE)
-            or (self.transactional and (self.effect != ToolEffect.WRITE or self.replay_policy != ReplayPolicy.REQUIRES_APPROVAL))
+            or (
+                self.transactional
+                and (
+                    self.effect != ToolEffect.WRITE
+                    or self.replay_policy not in {ReplayPolicy.REQUIRES_APPROVAL, ReplayPolicy.IDEMPOTENT_WRITE}
+                )
+            )
+            or (self.replay_policy == ReplayPolicy.IDEMPOTENT_WRITE and not self.transactional)
             or (self.effect == ToolEffect.WRITE and (
                 self.risk_level == ToolRiskLevel.READ_ONLY
                 or self.replay_policy == ReplayPolicy.REPLAY_SAFE
@@ -556,8 +564,20 @@ _PRODUCTION_TOOL_POLICIES = {
         "get_order_status": {}, "get_order_details": {}, "track_shipment": {},
         "get_payment_status": {}, "check_refund_eligibility": {}, "answer_faq": {},
         "search_products": {}, "get_catalog_facets": {}, "discover_products": {}, "compare_products": {},
+        "prepare_after_sales_case": {
+            "transactional": True,
+            "effect": ToolEffect.WRITE,
+            "risk_level": ToolRiskLevel.GUARDED,
+            "replay_policy": ReplayPolicy.IDEMPOTENT_WRITE,
+            "concurrency_policy": ConcurrencyPolicy.SERIAL_PER_RUN,
+        },
         "process_payment": {"side_effect": True, "transactional": True, "approval_action": "PROCESS_PAYMENT"},
         "initiate_refund": {"side_effect": True, "transactional": True, "approval_action": "INITIATE_REFUND"},
+        "submit_after_sales_case": {
+            "side_effect": True,
+            "transactional": True,
+            "approval_action": "SUBMIT_AFTER_SALES_CASE",
+        },
         "escalate_to_human": {"effect": ToolEffect.WRITE, "risk_level": ToolRiskLevel.GUARDED,
                               "replay_policy": ReplayPolicy.AT_MOST_ONCE,
                               "concurrency_policy": ConcurrencyPolicy.SERIAL_PER_RUN},
@@ -686,7 +706,8 @@ class ToolExecutor:
         scope_sha256 = self.fingerprint("observation_scope", {"value": scope}) if scope is not None else None
         scope_evidence = {"observation_scope_sha256": scope_sha256} if scope_sha256 else {}
         observation_key = fingerprint if scope is None else self.fingerprint(name, {'args': args, 'observation_scope': scope})
-        key = context.store.ledger_key(context.run_id, name, args, approval if spec.effect == ToolEffect.WRITE else None) if context and context.store else None
+        approval_scope = approval if spec.replay_policy == ReplayPolicy.REQUIRES_APPROVAL else None
+        key = context.store.ledger_key(context.run_id, name, args, approval_scope) if context and context.store else None
         if key and scope is not None:
             key = hashlib.sha256(f'{key}:{scope}'.encode()).hexdigest()
         transactional = bool(key and spec.transactional)
@@ -734,7 +755,11 @@ class ToolExecutor:
                     context.hooks.emit(context, 'after_tool', {'tool': name, 'args': args, 'result': cached, 'status': event['status']})
                 return cached, event
             outcomes[observation_key] = "RUNNING"
-        attempts = context.limits.read_attempts if context and spec.replay_policy == ReplayPolicy.REPLAY_SAFE else 1
+        attempts = (
+            context.limits.read_attempts
+            if context and spec.replay_policy in {ReplayPolicy.REPLAY_SAFE, ReplayPolicy.IDEMPOTENT_WRITE}
+            else 1
+        )
         for attempt in range(attempts):
             if context:
                 apply_controls(context)
@@ -767,7 +792,17 @@ class ToolExecutor:
                     if deadline and time.monotonic() >= deadline:
                         raise AgentError("TOOL_TIMEOUT", "工具执行时限已到，未开始业务操作", retryable=False)
                     if transactional:
-                        return context.store.execute_write(context.run_id, context.token, key, name, args, approval, lambda: spec.function(**args))
+                        return context.store.execute_write(
+                            context.run_id,
+                            context.token,
+                            key,
+                            name,
+                            args,
+                            approval,
+                            lambda: spec.function(**args),
+                            requires_approval=spec.replay_policy == ReplayPolicy.REQUIRES_APPROVAL,
+                            approval_action=spec.approval_action,
+                        )
                     return spec.function(**args)
                 finally:
                     if acquired:
@@ -790,7 +825,12 @@ class ToolExecutor:
                 self.recorder.record("error", tool=name, args=args, code=error.code, message=str(error), retryable=error.retryable,
                                      duration_ms=round((time.monotonic() - started) * 1000, 2), policy=policy,
                                      action_fingerprint=fingerprint, execution_id=execution_id, **scope_evidence)
-                if spec.replay_policy == ReplayPolicy.REPLAY_SAFE and error.retryable and attempt + 1 < attempts and self.call_count < self.max_calls:
+                if (
+                    spec.replay_policy in {ReplayPolicy.REPLAY_SAFE, ReplayPolicy.IDEMPOTENT_WRITE}
+                    and error.retryable
+                    and attempt + 1 < attempts
+                    and self.call_count < self.max_calls
+                ):
                     self.recorder.record("tool_retry", tool=name, attempt=attempt + 2)
                     continue
                 raise error from exc

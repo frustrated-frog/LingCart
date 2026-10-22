@@ -17,7 +17,18 @@ from pydantic import Field
 from sqlalchemy import select, text
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from src.backend.db import Order, Payment, Product, Refund, ShipmentEvent, get_engine, get_session_factory, init_db
+from src.backend.db import (
+    AfterSalesCaseRefund,
+    AgentRun,
+    Order,
+    Payment,
+    Product,
+    Refund,
+    ShipmentEvent,
+    get_engine,
+    get_session_factory,
+    init_db,
+)
 from src.backend.seed import seed as _seed_data
 from src.catalog_metadata import CatalogMetadataProvider
 
@@ -415,6 +426,217 @@ def initiate_refund(order_id: int, reason: str) -> dict:
             refund.reason = reason
         _commit(s)
         return {"success": True, "order_id": order_id, "refund_id": refund.refund_id, "status": "requested"}
+
+
+def prepare_after_sales_case(
+    order_id: int,
+    reason_text: Annotated[str, Field(min_length=1, max_length=2000)],
+    order_item_id: str | None = None,
+) -> dict:
+    """Open and deterministically assess a refund case without submitting a refund.
+
+    This writes only the internal case ledger. The actual refund remains behind
+    the separate ``submit_after_sales_case`` approval boundary.
+    """
+    from datetime import UTC
+
+    from src.after_sales import (
+        ActorType,
+        AfterSalesCaseService,
+        AfterSalesDomainError,
+        AfterSalesPolicyEngine,
+        CaseCreateCommand,
+        CaseType,
+        EvidenceCommand,
+        RequestedResolution,
+    )
+    from src.errors import AgentError
+    from src.runtime import current_runtime
+
+    runtime = current_runtime()
+    now = datetime.now(UTC).replace(tzinfo=None)
+    run_id = runtime.run_id if runtime else uuid.uuid4().hex
+    try:
+        with _session() as session:
+            run = session.get(AgentRun, run_id) if runtime else None
+            session_id = run.session_id if run else None
+            request_identity = run.request_id if run else run_id
+            request_key = f"after-sales:{session_id or 'anonymous'}:{request_identity}:refund:{order_id}"
+            service = AfterSalesCaseService(session)
+            case = service.find_active_case(
+                order_id=order_id,
+                order_item_id=order_item_id,
+                origin_session_id=session_id,
+                case_type=CaseType.REFUND,
+                requested_resolution=RequestedResolution.REFUND,
+                reason_text=reason_text,
+            )
+            is_new_case = case is None
+            if case is None:
+                case = service.open_case(
+                    CaseCreateCommand(
+                        request_key=request_key,
+                        case_type=CaseType.REFUND,
+                        order_id=order_id,
+                        order_item_id=order_item_id,
+                        requested_resolution=RequestedResolution.REFUND,
+                        reason_text=reason_text,
+                        origin_session_id=session_id,
+                        context={"source": "AGENT_RUNTIME", "source_run_id": run_id},
+                    ),
+                    actor_type=ActorType.CUSTOMER,
+                    actor_id=session_id,
+                    now=now,
+                )
+            if run is not None:
+                case = service.attach_run(
+                    case.case_id,
+                    run_id,
+                    session_id=run.session_id,
+                    role="INTAKE" if is_new_case else "REASSESSMENT",
+                    idempotency_key=f"run:{run_id}",
+                    expected_revision=case.revision,
+                    now=now,
+                )
+            if case.status.value == "SUBMITTED":
+                _commit(session)
+                return {
+                    "case_id": case.case_id,
+                    "order_id": case.order_id,
+                    "case_status": case.status.value,
+                    "revision": case.revision,
+                    "policy_decision": case.latest_decision,
+                    "requires_confirmation": False,
+                    "case": case.model_dump(mode="json"),
+                    "data_source": "AFTER_SALES_CASE_LEDGER",
+                }
+            case = service.add_evidence(
+                case.case_id,
+                EvidenceCommand(
+                    evidence_type="ISSUE_DESCRIPTION",
+                    source_type="CUSTOMER_STATEMENT",
+                    source_ref=f"agent_runs:{run_id}:request",
+                    payload={"statement": reason_text},
+                    observed_at=now,
+                ),
+                idempotency_key=f"reason:{run_id}",
+                expected_revision=case.revision,
+                actor_type=ActorType.CUSTOMER,
+                actor_id=session_id,
+                now=now,
+            )
+            evaluation = AfterSalesPolicyEngine(session).evaluate(case.case_id, as_of=now)
+            case = service.record_policy_decision(
+                case.case_id,
+                evaluation,
+                idempotency_key=f"policy:{evaluation.input_hash}",
+                expected_revision=case.revision,
+            )
+            _commit(session)
+            return {
+                "case_id": case.case_id,
+                "order_id": case.order_id,
+                "case_status": case.status.value,
+                "revision": case.revision,
+                "policy_decision": case.latest_decision,
+                "requires_confirmation": evaluation.outcome.value == "ELIGIBLE",
+                "case": case.model_dump(mode="json"),
+                "data_source": "AFTER_SALES_CASE_LEDGER",
+            }
+    except AfterSalesDomainError as exc:
+        raise AgentError(exc.code, str(exc), retryable=exc.retryable) from exc
+
+
+def submit_after_sales_case(
+    case_id: str,
+    expected_revision: int,
+    decision_id: str,
+) -> dict:
+    """Submit an eligible refund case. MODIFIES STATE and requires approval."""
+    from datetime import UTC
+
+    from src.after_sales import ActorType, AfterSalesCaseService, AfterSalesDomainError, AfterSalesPolicyEngine, CaseStatus
+    from src.errors import AgentError
+    from src.runtime import current_runtime
+
+    runtime = current_runtime()
+    now = datetime.now(UTC).replace(tzinfo=None)
+    try:
+        with _session() as session:
+            service = AfterSalesCaseService(session)
+            case = service.get_case(case_id)
+            latest = case.latest_decision or {}
+            if (
+                case.revision != expected_revision
+                or case.status != CaseStatus.AWAITING_CONFIRMATION
+                or latest.get("decision_id") != decision_id
+                or latest.get("outcome") != "ELIGIBLE"
+            ):
+                raise AgentError("APPROVAL_STALE", "案件或政策裁决已经变化，请重新核验后确认", retryable=False)
+            refreshed = AfterSalesPolicyEngine(session).evaluate(case_id, as_of=now)
+            if refreshed.input_hash != latest.get("input_hash") or refreshed.outcome.value != "ELIGIBLE":
+                raise AgentError("APPROVAL_STALE", "订单事实或适用政策已经变化，请重新核验后确认", retryable=False)
+            submission_run = session.get(AgentRun, runtime.run_id) if runtime else None
+            if submission_run is not None:
+                case = service.attach_run(
+                    case_id,
+                    submission_run.run_id,
+                    session_id=submission_run.session_id,
+                    role="SUBMISSION",
+                    idempotency_key=f"run:{submission_run.run_id}",
+                    expected_revision=case.revision,
+                    now=now,
+                )
+            refund = initiate_refund(case.order_id, case.reason_text)
+            if refund.get("error") or not refund.get("success"):
+                raise AgentError(
+                    "BUSINESS_RULE_REJECTED",
+                    refund.get("error") or refund.get("reason") or "当前状态不允许提交退款",
+                    retryable=False,
+                )
+            link = session.scalar(
+                select(AfterSalesCaseRefund).where(AfterSalesCaseRefund.case_id == case_id)
+            )
+            if link is not None and (
+                link.refund_id != refund["refund_id"] or link.policy_decision_id != decision_id
+            ):
+                raise AgentError("CASE_REFUND_LINK_CONFLICT", "案件已经绑定其他退款结果", retryable=False)
+            if link is None:
+                session.add(
+                    AfterSalesCaseRefund(
+                        link_id=uuid.uuid4().hex,
+                        case_id=case_id,
+                        refund_id=refund["refund_id"],
+                        policy_decision_id=decision_id,
+                        submitted_run_id=runtime.run_id if runtime and session.get(AgentRun, runtime.run_id) else None,
+                        linked_at=now,
+                    )
+                )
+                session.flush()
+            changed = service.transition(
+                case_id,
+                CaseStatus.SUBMITTED,
+                event_type="CASE_SUBMITTED",
+                idempotency_key=f"submit:{decision_id}",
+                expected_revision=case.revision,
+                actor_type=ActorType.CUSTOMER,
+                actor_id=case.origin_session_id,
+                payload={"refund_id": refund["refund_id"], "policy_decision_id": decision_id},
+                now=now,
+            )
+            _commit(session)
+            return {
+                "success": True,
+                "case_id": case_id,
+                "order_id": changed.order_id,
+                "refund_id": refund["refund_id"],
+                "refund_status": refund["status"],
+                "case_status": changed.status.value,
+                "revision": changed.revision,
+                "data_source": "AFTER_SALES_CASE_LEDGER",
+            }
+    except AfterSalesDomainError as exc:
+        raise AgentError(exc.code, str(exc), retryable=exc.retryable) from exc
 
 
 def get_payment_status(order_id: int) -> dict:

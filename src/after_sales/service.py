@@ -125,6 +125,45 @@ class AfterSalesCaseService:
     def __init__(self, session: Session):
         self.session = session
 
+    def find_active_case(
+        self,
+        *,
+        order_id: int,
+        origin_session_id: str | None,
+        case_type: CaseType,
+        requested_resolution: RequestedResolution,
+        reason_text: str,
+        order_item_id: str | None = None,
+    ) -> CaseProjection | None:
+        """Find one exact, non-terminal business case for a later Agent run.
+
+        A conversation identifier is mandatory.  Reusing all anonymous cases
+        would cross customer boundaries, while choosing among several matches
+        would hide a domain conflict.
+        """
+
+        if origin_session_id is None:
+            return None
+        statement = select(AfterSalesCase).where(
+            AfterSalesCase.order_id == order_id,
+            AfterSalesCase.origin_session_id == origin_session_id,
+            AfterSalesCase.case_type == case_type.value,
+            AfterSalesCase.requested_resolution == requested_resolution.value,
+            AfterSalesCase.reason_text == reason_text,
+            AfterSalesCase.status.not_in([status.value for status in _TERMINAL_STATUSES]),
+        )
+        if order_item_id is not None:
+            statement = statement.where(AfterSalesCase.order_item_id == order_item_id)
+        matches = self.session.scalars(
+            statement.order_by(AfterSalesCase.updated_at.desc(), AfterSalesCase.case_id).limit(2)
+        ).all()
+        if len(matches) > 1:
+            raise AfterSalesDomainError(
+                "CASE_CONTEXT_AMBIGUOUS",
+                "当前会话存在多个相同诉求的进行中案件，请明确案件编号",
+            )
+        return self.get_case(matches[0].case_id) if matches else None
+
     def open_case(
         self,
         command: CaseCreateCommand,

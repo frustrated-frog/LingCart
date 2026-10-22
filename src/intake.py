@@ -176,7 +176,10 @@ def parse_approval_response(user_message: str, pending_action: dict | None = Non
     if compact in confirmed or re.fullmatch(r"确认(?:使用)?(?:card|paypal|银行卡|信用卡)支付", compact) or re.fullmatch(r"(?:yes(?: (?:please|proceed))?|confirm|proceed|confirm (?:payment|refund))", english):
         if pending_action:
             kind = pending_action.get("type")
-            if ("退款" in normalized or "refund" in normalized) and kind != "INITIATE_REFUND":
+            if ("退款" in normalized or "refund" in normalized) and kind not in {
+                "INITIATE_REFUND",
+                "SUBMIT_AFTER_SALES_CASE",
+            }:
                 return APPROVAL_UNKNOWN
             if ("支付" in normalized or "payment" in normalized) and kind != "PROCESS_PAYMENT":
                 return APPROVAL_UNKNOWN

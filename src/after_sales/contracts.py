@@ -114,3 +114,66 @@ class CaseProjection(BaseModel):
     latest_decision: dict[str, Any] | None = None
     evidence: tuple[dict[str, Any], ...] = ()
     events: tuple[dict[str, Any], ...] = ()
+
+
+class CaseRunReference(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    run_id: str
+    session_id: str
+    role: str
+    linked_at: datetime
+
+
+class CaseRefundReference(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    refund_id: int
+    status: str
+    reason: str | None
+    policy_decision_id: str
+    submitted_run_id: str | None
+    linked_at: datetime
+
+
+class PolicyVersionProjection(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    policy_version_id: str
+    policy_id: str
+    version: str
+    status: str
+    effective_from: datetime
+    effective_until: datetime | None
+    rules: dict[str, Any]
+    source_ref: str
+    checksum: str
+
+
+class CaseListItem(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    case_id: str
+    case_type: CaseType
+    order_id: int
+    order_item_id: str | None
+    requested_resolution: RequestedResolution
+    reason_text: str
+    status: CaseStatus
+    revision: int
+    origin_session_id: str | None
+    opened_at: datetime
+    updated_at: datetime
+    policy_outcome: PolicyOutcome | None
+    policy_reason_codes: tuple[str, ...] = ()
+    policy_version_id: str | None = None
+    refund_id: int | None = None
+
+
+class CaseDetail(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    case: CaseProjection
+    runs: tuple[CaseRunReference, ...] = ()
+    refund: CaseRefundReference | None = None
+    policy: PolicyVersionProjection | None = None
