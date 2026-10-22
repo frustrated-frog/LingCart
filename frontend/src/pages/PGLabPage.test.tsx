@@ -1,0 +1,88 @@
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { MemoryRouter } from 'react-router-dom'
+import { beforeEach, expect, it, vi } from 'vitest'
+import { api } from '../api/client'
+import type { PGCatalog, PGJob, PGPlan } from '../types'
+import { PGLabPage } from './PGLabPage'
+
+const plan: PGPlan = { preset: 'smoke', spec: { repeats: 1, iterations: 1, max_model_calls_per_run: 16 },
+  groups: { train: ['PG01'], validation: ['PG07'], test: ['PG13'] }, max_samples: 36, max_model_attempts: 578,
+  dataset_sha256: 'dataset-frozen-sha', seed_sha256: 'seed-frozen-sha' }
+const graph: PGCatalog['seed_graph'] = { graph_id: 'test-graph', version: 0, parent_sha256: null,
+  nodes: [{ id: 'Start', kind: 'STATE', description: '开始' }, { id: 'End', kind: 'STATE', description: '结束' }],
+  edges: [{ id: 'start-end', source: 'Start', target: 'End', relation: 'LEADS_TO', condition: '核验通过', guidance: '只有已核验才能结束', pitfalls: '不能提前结束' }] }
+const catalog: PGCatalog = { model_configured: true, plans: { smoke: plan, full: { ...plan, preset: 'full', max_samples: 180, max_model_attempts: 2886 } },
+  seed_graph: graph, current_identity: {}, dataset: { cases: [{ id: 'PG13', learning_partition: 'test', scenario_family: 'empty-policy', category: '空结果恢复', description: '查找键盘并说明政策' }] } }
+const job: PGJob = { job_id: 'pg-test-job', created_at: '2026-10-23T01:00:00Z', preset: 'smoke', status: 'COMPLETED', stage: 'completed', completed_samples: 30,
+  frozen: plan, stage_completed: 6, stage_total: 6, cancel_requested: false, stale: false, identity: {}, execution_source: 'live_provider',
+  history: [{ iteration: 1, status: 'REJECTED', reason: 'VALIDATION_REGRESSION', parent_sha256: 'seed', retained_sha256: 'seed',
+    incumbent_metrics: { score: .8, model_attempts: 6 }, candidate_metrics: { score: .6, model_attempts: 8 },
+    patch: { reason: '尝试空结果恢复', source_cases: ['PG01'], add_nodes: [], delete_nodes: [], add_edges: [{ ...graph.edges[0], id: 'retry', guidance: '空结果改换条件' }], delete_edges: [] } }],
+  arms: {}, error: null, seed_graph: graph, retained_graph: graph, cases: catalog.dataset.cases,
+  learning_cost: { rollout_model_attempts: 30, refiner_model_attempts: 1, rollout_tokens: null },
+  comparison: { conclusion: 'SMOKE_ONLY', evidence_valid: false, failures: [], gates: { evolved: { passed: false, failures: ['没有保留新的图结构'] } } } }
+
+function page() {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
+  return render(<QueryClientProvider client={client}><MemoryRouter><PGLabPage /></MemoryRouter></QueryClientProvider>)
+}
+beforeEach(() => {
+  vi.restoreAllMocks()
+  vi.spyOn(api, 'pgCatalog').mockResolvedValue(catalog)
+  vi.spyOn(api, 'pgJobs').mockResolvedValue({ jobs: [] })
+  vi.spyOn(api, 'pgJob').mockResolvedValue(job)
+  vi.spyOn(api, 'pgSamples').mockResolvedValue({ samples: [] })
+})
+it('shows real empty state and bounded paid launch without invented metrics', async () => {
+  page()
+  expect(await screen.findByText('尚无实验结果')).toBeInTheDocument()
+  expect(screen.getByText('578')).toBeInTheDocument()
+  expect(screen.queryByText('0.0%')).not.toBeInTheDocument()
+  expect(screen.getByText('只有已核验才能结束')).toBeInTheDocument()
+  expect(screen.getByText('查找键盘并说明政策')).toBeInTheDocument()
+})
+it('keeps idempotency key when retrying a failed launch', async () => {
+  vi.mocked(api.pgJob).mockResolvedValue({ ...job, status: 'QUEUED' })
+  const start = vi.spyOn(api, 'pgStart').mockRejectedValueOnce(new Error('网络中断')).mockResolvedValue({ ...job, status: 'QUEUED' })
+  page()
+  fireEvent.click(await screen.findByRole('button', { name: '启动真实实验' }))
+  await screen.findByText('网络中断')
+  fireEvent.click(screen.getByRole('button', { name: '启动真实实验' }))
+  await waitFor(() => expect(start).toHaveBeenCalledTimes(2))
+  expect(start.mock.calls[0][0].request_id).toBe(start.mock.calls[1][0].request_id)
+  expect(await screen.findByRole('button', { name: '实验执行中' })).toBeDisabled()
+})
+it('preserves rejected modifications and shows no gain for smoke or stale evidence', async () => {
+  vi.mocked(api.pgJobs).mockResolvedValue({ jobs: [job] })
+  vi.mocked(api.pgJob).mockResolvedValue({ ...job, stale: true })
+  page()
+  expect(await screen.findByText('冒烟已完成，尚不能判断收益')).toBeInTheDocument()
+  expect(screen.getByText('验证成功率退化')).toBeInTheDocument()
+  expect(screen.getByText(/空结果改换条件/, { selector: 'p' })).toBeInTheDocument()
+  expect(screen.getByText(/当前源码、数据或模型配置已变化/)).toBeInTheDocument()
+  fireEvent.click(screen.getByText('检查对照门禁与失败原因'))
+  expect(screen.getByText('没有保留新的图结构')).toBeInTheDocument()
+})
+it('shows cooperative stop and preserves partial sample evidence', async () => {
+  const running = { ...job, status: 'RUNNING', comparison: null, stage: 'iteration-01-training' }
+  vi.mocked(api.pgJobs).mockResolvedValue({ jobs: [running] })
+  vi.mocked(api.pgJob).mockResolvedValue(running)
+  const stop = vi.spyOn(api, 'pgCancel').mockResolvedValue({ ...running, cancel_requested: true })
+  vi.mocked(api.pgSamples).mockResolvedValue({ samples: [{ stage: 'seed-validation', case_id: 'PG07', repetition: 1, passed: false, failures: ['目标未完成'] }] })
+  vi.spyOn(api, 'pgSample').mockResolvedValue({ events: [{ type: 'model_call', purpose: 'pg_guidance' }] })
+  page()
+  fireEvent.click(await screen.findByRole('button', { name: '停止实验' }))
+  expect(await screen.findByRole('button', { name: '等待当前样本结束' })).toBeDisabled()
+  expect(stop).toHaveBeenCalledWith(job.job_id)
+  fireEvent.click(await screen.findByRole('button', { name: '查看 PG07 证据' }))
+  expect(await screen.findByText(/pg_guidance/)).toBeInTheDocument()
+})
+it('shows unconfigured gateway and read errors without enabling calls', async () => {
+  vi.mocked(api.pgCatalog).mockResolvedValue({ ...catalog, model_configured: false })
+  vi.mocked(api.pgJobs).mockRejectedValue(new Error('读取失败'))
+  page()
+  expect(await screen.findByRole('button', { name: '启动真实实验' })).toBeDisabled()
+  expect(await screen.findByRole('alert')).toHaveTextContent('部分状态读取失败')
+  expect(screen.getByText('Model Gateway 尚未配置')).toBeInTheDocument()
+})
