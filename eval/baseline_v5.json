@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
   "name": "baseline-v5",
-  "description": "保持统一结构化对话理解的60项行为门禁，并将目录schema读取与探索推荐纳入物理工具观测；V4未观测这些真实只读调用。",
-  "dataset_sha256": "da93ffe9dbec8f976fa9240e02c79f71dd5ca5e6ddd2387233e25a87e089de45",
+  "description": "保持统一结构化对话理解的 60 项行为门禁；商品自由文本用例使用离线脚本模型验证语义完整性路由，目录 schema 读取与探索推荐继续纳入物理工具观测。",
+  "dataset_sha256": "0a5a8e60d5bef28a979f851bb2285ddb1e12c65270b38af44b14afd641c669b2",
   "expected": {
     "cases_passed": 60,
     "cases_total": 60,
@@ -10,7 +10,7 @@
     "turns_total": 71
   },
   "maximums": {
-    "model_invocations": 12,
+    "model_invocations": 19,
     "tool_calls": 73,
     "physical_tool_calls": 223
   }
