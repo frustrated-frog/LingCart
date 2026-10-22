@@ -1,5 +1,9 @@
+import json
+
 import pytest
-from src import tools
+from langchain_core.messages import AIMessage
+
+from src import orchestrator, tools
 from src.backend.db import get_engine, get_session_factory
 from src.backend.seed import seed
 from src.context_engine import ContextEngine, LifecycleHooks, HookDecision
@@ -7,6 +11,17 @@ from src.durable import run_conversation
 from src.errors import AgentError
 from src.preferences import PreferenceStore
 from src.runtime import RunRuntime, ToolExecutor, TraceRecorder, runtime_scope
+
+
+class ScriptedModel:
+    def __init__(self, *payloads):
+        self.payloads = iter(payloads)
+
+    def json_mode(self):
+        return self
+
+    def invoke(self, _messages):
+        return AIMessage(content=json.dumps(next(self.payloads), ensure_ascii=False))
 
 
 @pytest.fixture
@@ -39,13 +54,35 @@ def test_explicit_memory_update_forget_and_cross_session_scope(database):
         store.bind('one', other)
 
 
-def test_saved_budget_fills_only_missing_current_constraint(database):
+def test_saved_budget_fills_only_missing_current_constraint(database, monkeypatch):
+    responses = iter((
+        {
+            "reason": "当前请求指定耳机品类，其余为探索偏好",
+            "commands": [],
+            "objectives": [{
+                "id": "headphones", "kind": "PRODUCT_DISCOVERY", "source_quote": "推荐耳机",
+                "category": "耳机",
+            }],
+        },
+        {
+            "reason": "当前请求明确指定了五百元预算",
+            "commands": [],
+            "objectives": [{
+                "id": "headphones", "kind": "PRODUCT_SEARCH", "source_quote": "推荐耳机，预算 500 元以内",
+                "category": "耳机", "max_price": 500,
+            }],
+        },
+    ))
+
+    model = ScriptedModel(*responses)
+    monkeypatch.setattr(orchestrator, "get_llm", lambda **_kwargs: model)
     store = PreferenceStore()
     profile = store.create()
     store.remember(profile, 'max_price', 300, confirmed=True)
     store.bind('one', profile)
     result = run_conversation('推荐耳机', 'one')
     assert result['trace'][0]['args']['max_price'] == 300
+    assert any(event['type'] == 'preference_default_applied' for event in result['events'])
     explicit = run_conversation('推荐耳机，预算 500 元以内', 'one')
     assert explicit['trace'][0]['args']['max_price'] == 500
     assert all(t['tool'] != 'process_payment' for t in result['trace'])
@@ -60,6 +97,12 @@ def test_preference_is_not_order_evidence_and_context_does_not_mutate():
     messages = engine.model_messages('当前完整请求')
     assert messages[-1].content == '当前完整请求'
     assert '不能作为价格、库存或订单状态证据' in messages[0].content
+
+
+def test_effective_request_never_rewrites_shopping_goal_with_preferences():
+    engine = ContextEngine('推荐耳机', preferences=[{'key': 'max_price', 'value': {'value': 300}}])
+
+    assert engine.effective_request() == '推荐耳机'
 
 
 def test_hook_cannot_change_args_or_grant_approval(database):
@@ -90,12 +133,22 @@ def test_after_hook_failure_retains_actual_result_and_stops_next_step(database):
         assert len([e for e in context.events if e['type'] == 'tool_call']) == 1
 
 
-def test_explicit_unlimited_budget_overrides_saved_preference(database):
+def test_explicit_unlimited_budget_overrides_saved_preference(database, monkeypatch):
+    message = '推荐耳机，这次不限制预算'
+    model = ScriptedModel({
+        "reason": "当前请求明确要求不限预算",
+        "commands": [],
+        "objectives": [{
+            "id": "headphones", "kind": "PRODUCT_DISCOVERY", "source_quote": message,
+            "category": "耳机",
+        }],
+    })
+    monkeypatch.setattr(orchestrator, "get_llm", lambda **_kwargs: model)
     store = PreferenceStore()
     profile = store.create()
     store.remember(profile, 'max_price', 300, confirmed=True)
     store.bind('unlimited', profile)
-    result = run_conversation('推荐耳机，这次不限制预算', 'unlimited')
+    result = run_conversation(message, 'unlimited')
     assert result['trace'][0]['args'].get('max_price') is None
     with pytest.raises(AgentError):
         store.remember(profile, 'features', ['订单1002已支付', 'P1001价格99元，库存20件'], confirmed=True)
@@ -124,5 +177,5 @@ def test_after_hook_failure_is_persisted_across_resume(database):
 
 
 def test_context_evidence_does_not_duplicate_normal_business_trace(database):
-    result = run_conversation('推荐耳机', 'no-duplicate')
+    result = run_conversation('推荐商品', 'no-duplicate')
     assert len(result['trace']) == sum(e['type'] == 'tool_result' for e in result['events']) == 1

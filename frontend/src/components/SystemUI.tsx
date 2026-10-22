@@ -24,10 +24,13 @@ export const TERMINAL_REASON_LABELS: Record<string, string> = {
   APPROVAL_REQUIRED: '需要用户确认', NO_PENDING_ACTION: '没有待确认操作',
   MODEL_CLARIFICATION: '模型请求补充信息', MISSING_ORDER_ID: '缺少订单号',
   MISSING_REQUIRED_INFORMATION: '缺少必要信息', UNSUPPORTED_INTENT: '请求超出能力范围',
+  UNSUPPORTED_SHARED_BUDGET: '暂不支持多商品共享预算求解',
   USER_CANCELLED_ACTION: '用户取消操作', USER_CANCELLED_RUN: '用户取消运行',
   AMBIGUOUS_ORDER_GOALS: '订单目标存在歧义',
   MULTIPLE_ACTIONS_REQUIRE_SEPARATE_APPROVAL: '多个操作需要分别确认',
   MODEL_ERROR: '模型调用失败', MODEL_TIMEOUT: '模型调用超时', TOOL_ERROR: '工具执行失败',
+  CATALOG_AUDIT_FORMAT_ERROR: '目录需求审查协议无效',
+  INCOMPLETE_REQUEST_COVERAGE: '目录需求覆盖不完整',
   BUDGET_EXHAUSTED: '运行预算已用尽', LOOP_GUARD: '循环保护终止',
 }
 
@@ -50,6 +53,7 @@ export const TOOL_LABELS: Record<string, string> = {
   get_payment_status: '查询支付状态', prepare_payment: '准备支付方案', process_payment: '处理支付',
   answer_faq: '查询服务规则', escalate_to_human: '转交人工客服', get_catalog_facets: '读取目录分类',
   search_products: '搜索商品目录', discover_products: '发现商品候选', compare_products: '对比商品参数',
+  query_catalog: '执行结构化目录查询',
   select_product: '核验并选择商品', read_clock: '读取当前时间', calculate: '执行计算',
   __model_answer__: '生成知识回答',
 }
@@ -114,6 +118,7 @@ const EVENT_LABELS: Record<string, [string, string]> = {
   tool_protocol: ['协议', '工具协议'], native_submission: ['提交', '提交原生工具调用'],
   native_batch_cancelled: ['取消', '取消原生工具批次'], verification: ['核验', '完成核验'],
   verification_failed: ['核验', '核验未通过'], request_audited: ['审查', '独立审查'],
+  catalog_request_audited: ['审查', '目录原始需求双向审查'],
   audit_protocol_retry: ['审查', '重试审查协议'], audit_invalidated: ['审查', '审查结果失效'],
   control_applied: ['控制', '运行时调整'], plan_replanned: ['重规划', '完成重规划'],
   replan_requested: ['重规划', '请求重规划'], adaptive_decision: ['决策', '自主决策'],
@@ -126,6 +131,8 @@ const EVENT_LABELS: Record<string, [string, string]> = {
   corrective_advice_generated: ['纠偏', '生成纠偏建议'], corrective_advice_failed: ['降级', '纠偏建议安全降级'],
   intervention_applied: ['干预', '应用受限干预'],
   dialogue_protocol_retry: ['理解', '重试对话协议'], unknown_capability_downgraded: ['能力', '降级未知能力'],
+  compilation_coverage: ['编译', '核验目标编译覆盖'], catalog_goal_verified: ['核验', '目录目标核验通过'],
+  catalog_delivery_verified: ['交付', '目录结果交付核验通过'],
   hook_applied: ['扩展', '应用扩展'], hook_failed: ['扩展', '扩展执行失败'],
   knowledge_result: ['知识', '生成知识结果'], error: ['错误', '执行错误'], terminal: ['结束', '运行结束'],
 }

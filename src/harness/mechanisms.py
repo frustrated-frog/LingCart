@@ -193,11 +193,14 @@ def built_in_mechanisms() -> tuple[HarnessMechanism, ...]:
 
     return (
         EmbeddedMechanism("planning", "structured-dialogue-understanding", "1", ("orchestrator",),
-                          ("src/orchestrator.py", "src/dialogue_understanding.py", "src/intake.py")),
+                          ("src/orchestrator.py", "src/dialogue_understanding.py",
+                           "src/catalog_request_audit.py", "src/catalog_query.py",
+                           "src/capability_registry.py", "src/catalog_concepts.py",
+                           "src/catalog_metadata.py", "src/intake.py")),
         EmbeddedMechanism("tool_protocol", "runtime-tool-ledger", "2", ("orchestrator",),
                           ("src/runtime.py", "src/persistence.py")),
         EmbeddedMechanism("verification", "deterministic-business-gates", "1", ("orchestrator",),
-                          ("src/direct_executor.py", "src/task_plan.py")),
+                          ("src/direct_executor.py", "src/task_plan.py", "src/catalog_query.py")),
         EmbeddedMechanism("planning", "bounded-model-loop", "1", ("adaptive",),
                           ("src/adaptive.py", "src/adaptive_decision.py")),
         ContextMechanism("context", "evidence-reference-context", "1", ("adaptive",),

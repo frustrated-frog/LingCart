@@ -4,7 +4,8 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { api, ApiError, streamRunEvents } from '../api/client'
-import { ExecutionSpine, PageHeader, StatusBadge } from '../components/SystemUI'
+import { ResultArtifactViews } from '../components/CatalogResultView'
+import { ExecutionSpine, PageHeader, StatusBadge, TERMINAL_REASON_LABELS } from '../components/SystemUI'
 import { getPreferenceProfileId, getSessionId, resetSessionId } from '../state/localSession'
 import { clearRunOperation, loadRunOperation, saveRunOperation } from '../state/runOperation'
 import type { RunOperation } from '../state/runOperation'
@@ -33,6 +34,10 @@ function mergeEvents(current: RunEvent[], incoming: RunEvent[]): RunEvent[] {
   const keyed = new Map(current.map((event, index) => [event.sequence ?? index + 1, event]))
   incoming.forEach((event, index) => keyed.set(event.sequence ?? current.length + index + 1, event))
   return [...keyed.entries()].sort(([left], [right]) => left - right).map(([, event]) => event)
+}
+
+function conciseFailure(message: string): string {
+  return message.split('\n', 1)[0].slice(0, 240)
 }
 
 export function SandboxPage() {
@@ -91,7 +96,7 @@ export function SandboxPage() {
         role: item.role,
         content: item.content,
         runId: item.run_id,
-        result: item.role === 'assistant' ? results.get(item.run_id) : undefined,
+        result: item.role === 'assistant' ? item.result ?? results.get(item.run_id) : undefined,
       }))
     })
     if (saved.active_run_id) {
@@ -261,9 +266,15 @@ export function SandboxPage() {
           followOutputRef.current = node.scrollHeight - node.scrollTop - node.clientHeight < 96
         }}>
           {messages.length === 0 && <div className="conversation-empty"><Sparkles size={24} /><h2>告诉 Agent 你的目标</h2><p>从明确的业务请求开始，或启用 Adaptive planning 观察自主规划链路。</p></div>}
-          {messages.map((message, index) => <article className={`message ${message.role}`} key={`${message.runId}-${message.role}-${index}`}>
+          {messages.map((message, index) => <article className={`message ${message.role}${message.result?.artifacts?.some((artifact) => ['catalog_query_result', 'constraint_plan_result'].includes(artifact.artifact_type)) ? ' has-catalog' : ''}`} key={`${message.runId}-${message.role}-${index}`}>
             <div className="message-role">{message.role === 'user' ? 'YOU' : 'LINGCART AGENT'}</div>
             <div className="message-copy">{message.content}</div>
+            {message.result && <ResultArtifactViews artifacts={message.result.artifacts} />}
+            {message.result?.error && <div className="message-error-evidence" role="alert" aria-label="运行失败详情">
+              <div><strong>{TERMINAL_REASON_LABELS[message.result.error.code] ?? '运行协议拒绝'}</strong><code>{message.result.error.code}</code></div>
+              <p>{conciseFailure(message.result.error.message)}</p>
+              <small>{message.result.error.retryable ? '该错误允许使用同一请求编号重试' : '该错误需要修正协议或输入后再执行'}</small>
+            </div>}
             {message.result && <div className="message-meta"><StatusBadge status={message.result.status} /><span>{message.result.agent} · {message.result.run_id.slice(0, 10)} · {message.result.trace.length} tools</span></div>}
           </article>)}
           {(send.isPending || pendingRun) && <article className="message assistant live-response" aria-live="polite" aria-busy={liveResponse.state !== 'completed'}>

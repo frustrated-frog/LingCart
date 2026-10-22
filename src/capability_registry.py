@@ -16,9 +16,12 @@ from typing import Callable, Mapping
 
 from src import tools
 from src.catalog_metadata import CATALOG_FACETS_DEPENDENCY, CatalogMetadataProvider, CatalogMetadataSnapshot
+from src.catalog_query import CATALOG_QUERY_OPERATION, compile_catalog_query, query_catalog
 from src.errors import AgentError
+from src.grounding import number_is_grounded
 from src.intake import (
     FAQ,
+    CATALOG_QUERY,
     ORDER_DETAILS,
     ORDER_STATUS,
     PAYMENT_PROCESS,
@@ -52,6 +55,7 @@ class CompiledOperation:
 Compiler = Callable[[Mapping[str, object], str], tuple[CompiledOperation, ...]]
 Normalizer = Callable[[dict, tuple[str, ...]], tuple[dict, dict[str, dict]]]
 ResultValidator = Callable[[object, Mapping[str, object]], bool]
+ResultVerifier = Callable[[object, Mapping[str, object]], object]
 ResultRenderer = Callable[[object, Mapping[str, object]], str]
 OutcomeMapper = Callable[[object, Mapping[str, object]], str]
 
@@ -63,6 +67,7 @@ class OperationContract:
     handler: object
     required_result_fields: tuple[str, ...] = ()
     result_validator: ResultValidator | None = None
+    result_verifier: ResultVerifier | None = None
     renderer: ResultRenderer | None = None
     outcome_mapper: OutcomeMapper | None = None
 
@@ -74,6 +79,12 @@ class OperationContract:
             return self.result_validator is None or bool(self.result_validator(result, arguments))
         except Exception:
             return False
+
+    def verify_result(self, result: object, arguments: Mapping[str, object]) -> None:
+        if not self.validate_result(result, arguments):
+            raise AgentError("INVALID_TOOL_RESULT", "工具结果不符合注册能力的输出契约", retryable=False)
+        if self.result_verifier is not None:
+            self.result_verifier(result, arguments)
 
     def render_result(self, result: object, arguments: Mapping[str, object]) -> str:
         try:
@@ -217,29 +228,33 @@ class CapabilityRegistry:
                        if parameters.get(name) in (None, "", []))
         return tuple(dict.fromkeys(missing))
 
-    def normalize_arguments(self, objective: Mapping[str, object], sources: tuple[str, ...]) -> tuple[dict, dict[str, dict]]:
+    def normalize_arguments(
+        self,
+        objective: Mapping[str, object],
+        sources: tuple[str, ...],
+        *,
+        trusted_provenance: Mapping[str, dict] | None = None,
+    ) -> tuple[dict, dict[str, dict]]:
         registration = self.registration(str(objective["kind"]))
         normalized = dict(objective)
-        provenance: dict[str, dict] = {}
+        provenance: dict[str, dict] = dict(trusted_provenance or {})
         if registration.normalizer is not None:
-            normalized, provenance = registration.normalizer(normalized, sources)
+            normalized, resolver_provenance = registration.normalizer(normalized, sources)
+            provenance.update(resolver_provenance)
         folded_sources = [source.casefold() for source in sources]
 
         def grounded(value: object) -> bool:
             if isinstance(value, str):
                 return bool(value) and any(value.casefold() in source for source in folded_sources)
             if isinstance(value, (int, float)) and not isinstance(value, bool):
-                variants = {str(value), f"{value:g}"}
-                return any(
-                    re.search(r"(?<![\d.])" + re.escape(candidate) + r"(?![\d.])", source)
-                    for source in folded_sources
-                    for candidate in variants
-                )
+                return number_is_grounded(value, sources)
             return False
 
         for field_name, safe_default in registration.spec.ungrounded_optional_defaults.items():
             value = normalized.get(field_name)
             if value in (None, "", [], {}):
+                continue
+            if field_name in provenance:
                 continue
             if isinstance(value, list):
                 kept = [item for item in value if grounded(item)]
@@ -378,6 +393,7 @@ class CapabilityRegistry:
                         "handler": identity(contract.handler),
                         "required_result_fields": list(contract.required_result_fields),
                         "result_validator": identity(contract.result_validator),
+                        "result_verifier": identity(contract.result_verifier),
                         "renderer": identity(contract.renderer),
                         "outcome_mapper": identity(contract.outcome_mapper),
                     }
@@ -390,6 +406,86 @@ class CapabilityRegistry:
 
 def _args(objective: Mapping[str, object], fields: tuple[str, ...]) -> dict:
     return {name: objective[name] for name in fields if objective.get(name) not in (None, "", [])}
+
+
+def normalize_catalog_objective(
+    objective: dict,
+    sources: tuple[str, ...],
+) -> tuple[dict, dict[str, dict]]:
+    """Normalize only aliases that are grounded in trusted catalog metadata and user text."""
+
+    normalized = dict(objective)
+    provenance: dict[str, dict] = {}
+    snapshot = get_capability_registry().metadata_snapshot(
+        str(objective["kind"]),
+        CATALOG_FACETS_DEPENDENCY,
+    )
+    facets = snapshot.facets
+    folded_sources = tuple(source.casefold() for source in sources)
+
+    def grounded(value: str) -> bool:
+        return bool(value) and any(value.casefold() in source for source in folded_sources)
+
+    raw_category = objective.get("category")
+    if isinstance(raw_category, str) and raw_category:
+        raw_folded = raw_category.casefold()
+        for canonical, aliases in facets.get("category_aliases", {}).items():
+            candidates = (str(canonical), *(str(alias) for alias in aliases))
+            if raw_folded not in {candidate.casefold() for candidate in candidates}:
+                continue
+            source_form = next((candidate for candidate in candidates if grounded(candidate)), None)
+            if source_form is None:
+                break
+            normalized["category"] = str(canonical)
+            if normalized["category"] != raw_category or not grounded(raw_category):
+                provenance["category"] = {
+                    "name": "category",
+                    "raw_text": raw_category,
+                    "normalized_value": normalized["category"],
+                    "normalized_terms": [str(canonical).casefold()],
+                    "resolver": "catalog_metadata_alias",
+                    "resolver_version": snapshot.version,
+                    "source_quote": str(objective.get("source_quote") or ""),
+                    "confidence": 1.0,
+                }
+            break
+
+    raw_query = objective.get("query")
+    if isinstance(raw_query, str) and raw_query:
+        normalized_query = raw_query
+        grounded_terms: set[str] = set()
+        aliases = {
+            str(alias): str(canonical)
+            for alias, canonical in facets.get("search_aliases", {}).items()
+        }
+        for alias, canonical in sorted(aliases.items(), key=lambda item: len(item[0]), reverse=True):
+            if alias.casefold() in normalized_query.casefold() and grounded(alias):
+                normalized_query = re.sub(
+                    re.escape(alias),
+                    canonical,
+                    normalized_query,
+                    flags=re.IGNORECASE,
+                )
+                grounded_terms.add(canonical.casefold())
+        for canonical in set(aliases.values()):
+            if canonical.casefold() not in normalized_query.casefold() or grounded(canonical):
+                continue
+            if any(grounded(alias) for alias, target in aliases.items() if target == canonical):
+                grounded_terms.add(canonical.casefold())
+        normalized_query = " ".join(normalized_query.split())
+        normalized["query"] = normalized_query
+        if normalized_query != raw_query or grounded_terms:
+            provenance["query"] = {
+                "name": "query",
+                "raw_text": raw_query,
+                "normalized_value": normalized_query,
+                "normalized_terms": sorted(grounded_terms),
+                "resolver": "catalog_metadata_alias",
+                "resolver_version": snapshot.version,
+                "source_quote": str(objective.get("source_quote") or ""),
+                "confidence": 1.0,
+            }
+    return normalized, provenance
 
 
 def _single(specialist: str, operation: str, fields: tuple[str, ...]) -> Compiler:
@@ -441,6 +537,27 @@ def _discover(objective: Mapping[str, object], request: str) -> tuple[CompiledOp
 def _compare(objective: Mapping[str, object], _request: str) -> tuple[CompiledOperation, ...]:
     return (CompiledOperation("comparison", "shopping", "compare_products",
                               {"product_ids": objective.get("product_ids", [])}),)
+
+
+def _catalog_query(objective: Mapping[str, object], _request: str) -> tuple[CompiledOperation, ...]:
+    arguments = compile_catalog_query(objective.get("catalog_query"))
+    from src.runtime import current_runtime
+    context = current_runtime()
+    if context:
+        context.record(
+            "compilation_coverage",
+            objective_id=objective.get("id"),
+            operation=CATALOG_QUERY_OPERATION,
+            coverage=arguments["compilation_coverage"],
+        )
+    return (CompiledOperation("catalog-result", "shopping", CATALOG_QUERY_OPERATION, arguments),)
+
+
+def _constraint_plan(objective: Mapping[str, object], _request: str) -> tuple[CompiledOperation, ...]:
+    from src.constraint_planning import CONSTRAINT_PLAN_OPERATION, compile_constraint_plan
+
+    arguments = compile_constraint_plan(objective.get("constraint_plan"))
+    return (CompiledOperation("constraint-result", "planning", CONSTRAINT_PLAN_OPERATION, arguments),)
 
 
 def _general_answer(objective: Mapping[str, object], _request: str) -> tuple[CompiledOperation, ...]:
@@ -504,6 +621,15 @@ def _spec(kind: str, capability_id: str, description: str, target: str, evidence
 
 def _builtin_registrations() -> tuple[CapabilityRegistration, ...]:
     from src.entity_resolution import normalize_clock_objective
+    from src.constraint_planning import (
+        CONSTRAINT_PLAN,
+        CONSTRAINT_PLAN_OPERATION,
+        constraint_plan_outcome,
+        render_constraint_plan_result,
+        solve_constraint_plan,
+        verify_constraint_plan_result,
+    )
+    from src.catalog_query import render_catalog_result, verify_catalog_result
 
     order_fields = ("order_id",)
     order_question = "请提供要处理的订单号，例如“查询订单 1004 的状态和物流”。"
@@ -553,6 +679,7 @@ def _builtin_registrations() -> tuple[CapabilityRegistration, ...]:
         _spec(PRODUCT_SEARCH, "catalog.search", "按用户明确条件搜索真实商品目录", "product",
               "CATALOG", _search, accepted=("query", "category", "max_price", "excluded_terms"),
               under_specified=True, metadata_dependencies=(CATALOG_FACETS_DEPENDENCY,),
+              normalizer=normalize_catalog_objective, normalizer_version="catalog_metadata_alias/v1",
               handlers={"search_products": tools.search_products}),
         _spec(PRODUCT_DISCOVERY, "catalog.discover", "在偏好不完整时生成真实、差异化的探索候选并继续偏好获取",
               "product", "CATALOG", _discover,
@@ -562,6 +689,7 @@ def _builtin_registrations() -> tuple[CapabilityRegistration, ...]:
                   "soft_preferences": [], "excluded_terms": [],
               },
               under_specified=True, metadata_dependencies=(CATALOG_FACETS_DEPENDENCY,),
+              normalizer=normalize_catalog_objective, normalizer_version="catalog_metadata_alias/v1",
               handlers={"discover_products": tools.discover_products}),
         _spec(PRODUCT_COMPARE, "catalog.compare", "比较用户明确指定的两到三款真实商品", "product",
               "CATALOG", _compare, required=("product_ids",), accepted=("product_ids",),
@@ -569,6 +697,30 @@ def _builtin_registrations() -> tuple[CapabilityRegistration, ...]:
               metadata_dependencies=(CATALOG_FACETS_DEPENDENCY,),
               missing_question="请提供要比较的两到三个商品编号。",
               handlers={"compare_products": tools.compare_products}),
+        _spec(CATALOG_QUERY, "catalog.query", "对真实商品目录执行受限的筛选、排序、分组、投影、聚合、分页或结果集追问",
+              "catalog_result", "CATALOG", _catalog_query,
+              required=("catalog_query",), accepted=("catalog_query",),
+              metadata_dependencies=(CATALOG_FACETS_DEPENDENCY,),
+              missing_question="请说明要查询的商品范围、条件或期望的结果形式。",
+              operations={CATALOG_QUERY_OPERATION: OperationContract(
+                  handler=query_catalog,
+                  required_result_fields=("artifact", "products", "total", "data_source"),
+                  result_verifier=verify_catalog_result,
+                  renderer=lambda result, _arguments: render_catalog_result(result),
+              )}),
+        _spec(CONSTRAINT_PLAN, "planning.constraint.solve",
+              "把多个有限候选目标、跨目标硬约束和显式优化目标编译为通用约束图并进行确定性求解与全局核验",
+              "constraint_solution", "VERIFIED_CONSTRAINT_SOLUTION", _constraint_plan,
+              required=("constraint_plan",), accepted=("constraint_plan",),
+              metadata_dependencies=(CATALOG_FACETS_DEPENDENCY,),
+              missing_question="请说明需要同时满足的目标、数量和共享约束。",
+              operations={CONSTRAINT_PLAN_OPERATION: OperationContract(
+                  handler=solve_constraint_plan,
+                  required_result_fields=("artifact", "feasibility", "solutions"),
+                  result_verifier=verify_constraint_plan_result,
+                  renderer=render_constraint_plan_result,
+                  outcome_mapper=constraint_plan_outcome,
+              )}),
         _spec(GENERAL_ANSWER, "knowledge.answer", "回答无需业务工具的稳定知识、解释、写作和一般咨询；需要实时外部证据时明确能力边界",
               "knowledge", "MODEL_KNOWLEDGE", _general_answer, required=("question",),
               accepted=("question",), under_specified=True,

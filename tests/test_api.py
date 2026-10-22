@@ -40,6 +40,14 @@ def test_health():
     assert response.json() == {"status": "ok"}
 
 
+def test_chat_response_contract_preserves_structured_artifacts():
+    artifact = {"artifact_type": "catalog_query_result", "result_set_id": "crs_test"}
+
+    response = api._response("artifact-session", {**FAKE_RESULT, "artifacts": [artifact]})
+
+    assert response.artifacts == [artifact]
+
+
 def test_production_build_and_client_routes_are_served_when_available():
     if not (Path(api.__file__).parent / 'frontend' / 'dist').is_dir():
         pytest.skip('React production build is not present')

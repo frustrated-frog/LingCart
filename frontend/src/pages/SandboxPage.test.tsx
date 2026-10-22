@@ -40,6 +40,150 @@ describe('SandboxPage durable session behavior', () => {
     expect(screen.getByText(/执行进度会持续同步/)).toBeInTheDocument()
   })
 
+  it('restores and renders a complete grouped catalog artifact', async () => {
+    const products = [
+      { product_id: 'P1', name: '基础耳机', category: '耳机', price: 99, currency: 'CNY', summary: '有线 · 轻量', specs: {}, stock: 3, data_source: 'DEMO_CATALOG', values: {} },
+      { product_id: 'P2', name: '静音键盘', category: '键盘', price: 199, currency: 'CNY', summary: '静音轴 · 三模', specs: {}, stock: 5, data_source: 'DEMO_CATALOG', values: {} },
+    ]
+    vi.spyOn(api, 'conversation').mockResolvedValue({
+      active_run_id: null,
+      state: {},
+      messages: [
+        { role: 'user', content: '把商品按类目展示', run_id: 'catalog-run' },
+        { role: 'assistant', content: '已完成结构化目录查询。', run_id: 'catalog-run', result: {
+          run_id: 'catalog-run', reply: '已完成结构化目录查询。', agent: 'shopping', route: 'DIRECT', status: 'SUCCEEDED',
+          terminal_reason: 'COMPLETED', events: [], trace: [{ tool: 'query_catalog' }], pending_action: null,
+          usage: { input_tokens: 10, output_tokens: 5, total_tokens: 15 },
+          artifacts: [{
+            artifact_type: 'catalog_query_result', version: 'catalog-query/v1', result_set_id: 'crs_test',
+            source_result_set_id: null, catalog_snapshot: { version: 'snapshot-v1' }, catalog_data_fingerprint: 'catalog-data-v1', result_data_fingerprint: 'result-data-v1',
+            query_spec: { partition: { field: { core: 'category' } }, ordering: [{ field: { core: 'price' }, direction: 'ASC' }], selector: { mode: 'ALL' }, projection: { fields: [{ core: 'name' }] } },
+            matched_count: 2, delivered_count: 2, population_ids: ['P1', 'P2'], member_ids: ['P1', 'P2'], products,
+            groups: [{ key: '耳机', product_ids: ['P1'], count: 1 }, { key: '键盘', product_ids: ['P2'], count: 1 }],
+            metrics: {}, delivery: { mode: 'ALL', requested_complete: true, complete: true, selection_complete: true, population_complete: true, has_more: false, page: null, page_size: null, next_page: null, matched_count: 2, delivered_count: 2 },
+            verification: { status: 'VERIFIED', goal: { verdict: 'SATISFIED' }, delivery: { verdict: 'SATISFIED', complete: true } }, data_source: 'DEMO_CATALOG',
+          }],
+        } },
+      ],
+    })
+
+    renderPage()
+
+    expect(await screen.findByLabelText('结构化商品目录结果')).toBeInTheDocument()
+    expect(screen.getByText('目标与交付已核验')).toBeInTheDocument()
+    expect(screen.getByText('耳机')).toBeInTheDocument()
+    expect(screen.getByText('键盘')).toBeInTheDocument()
+    expect(screen.getByText('基础耳机')).toBeInTheDocument()
+    expect(screen.getByText('静音键盘')).toBeInTheDocument()
+    expect(screen.getByText('价格升序')).toBeInTheDocument()
+  })
+
+  it('does not present a rejected catalog artifact as verified product output', async () => {
+    const product = { product_id: 'P1', name: '未核验耳机', category: '耳机', price: 99, currency: 'CNY', summary: '诊断行', specs: {}, stock: 3, data_source: 'DEMO_CATALOG', values: {} }
+    vi.spyOn(api, 'conversation').mockResolvedValue({
+      active_run_id: null,
+      state: {},
+      messages: [
+        { role: 'user', content: '给我目录结果', run_id: 'rejected-catalog-run' },
+        { role: 'assistant', content: '目录核验失败。', run_id: 'rejected-catalog-run', result: {
+          run_id: 'rejected-catalog-run', reply: '目录核验失败。', agent: 'shopping', route: 'DIRECT', status: 'FAILED',
+          terminal_reason: 'CATALOG_GOAL_NOT_SATISFIED', events: [], trace: [], pending_action: null,
+          usage: { input_tokens: 0, output_tokens: 0, total_tokens: 0 },
+          artifacts: [{
+            artifact_type: 'catalog_query_result', version: 'catalog-query/v1', result_set_id: 'crs_rejected',
+            catalog_snapshot: { version: 'snapshot-v1' }, catalog_data_fingerprint: 'source', result_data_fingerprint: 'result',
+            query_spec: { partition: null, ordering: [], selector: { mode: 'ALL' }, projection: { fields: [{ core: 'name' }] } },
+            matched_count: 1, delivered_count: 1, population_ids: ['P1'], member_ids: ['P1'], products: [product],
+            groups: [], metrics: {}, delivery: { mode: 'ALL', requested_complete: true, complete: false, matched_count: 1, delivered_count: 1 },
+            verification: { status: 'REJECTED', error: { code: 'CATALOG_GOAL_NOT_SATISFIED', message: '目录结果没有满足全部语义目标' } },
+            data_source: 'DEMO_CATALOG',
+          }],
+        } },
+      ],
+    })
+
+    renderPage()
+
+    expect(await screen.findByLabelText('目录结果未通过核验')).toBeInTheDocument()
+    expect(screen.getByText('REJECTED')).toBeInTheDocument()
+    expect(screen.getByText('CATALOG_GOAL_NOT_SATISFIED')).toBeInTheDocument()
+    expect(screen.queryByText('目标与交付已核验')).not.toBeInTheDocument()
+    expect(screen.queryByText('未核验耳机')).not.toBeInTheDocument()
+  })
+
+  it('renders verified global constraint evidence without implying preference knowledge', async () => {
+    vi.spyOn(api, 'conversation').mockResolvedValue({
+      active_run_id: null,
+      state: {},
+      messages: [
+        { role: 'user', content: '400 元买一个耳机和一个键盘', run_id: 'constraint-run' },
+        { role: 'assistant', content: '已找到可行方案。', run_id: 'constraint-run', result: {
+          run_id: 'constraint-run', reply: '已找到可行方案。', agent: 'planning', route: 'DIRECT', status: 'SUCCEEDED',
+          terminal_reason: 'COMPLETED', events: [], trace: [{ tool: 'solve_constraint_plan' }], pending_action: null,
+          usage: { input_tokens: 10, output_tokens: 5, total_tokens: 15 },
+          artifacts: [{
+            artifact_type: 'constraint_plan_result', version: 'constraint-plan/v1', solution_set_id: 'cpr_verified',
+            plan_spec: {
+              goals: [
+                { goal_id: 'headphones', source_quote: '一个耳机', quantity: 1 },
+                { goal_id: 'keyboard', source_quote: '一个键盘', quantity: 1 },
+              ],
+              constraints: [{ requirement_id: 'shared_budget', source_quote: '400 元', kind: 'AGGREGATE' }],
+              optimization: null,
+            },
+            compilation_coverage: [{ requirement_id: 'constraint:shared_budget', source_quote: '400 元', status: 'COMPILED' }],
+            provider_registry_version: 'providers-v1',
+            domains: [
+              { goal_id: 'headphones', provider: 'CATALOG', provider_fingerprint: 'headphones-fp', candidate_count: 20, evidence: {} },
+              { goal_id: 'keyboard', provider: 'CATALOG', provider_fingerprint: 'keyboard-fp', candidate_count: 20, evidence: {} },
+            ],
+            feasibility: 'FEASIBLE',
+            solutions: [{
+              solution_id: 'cps_one', optimization_value: null,
+              selections: [
+                { goal_id: 'headphones', source_quote: '一个耳机', quantity: 1, candidates: [{
+                  candidate_id: 'P1', label: '基础耳机', attributes: { price: 99 },
+                  evidence: { product_id: 'P1', name: '基础耳机', price: 99, currency: 'CNY', summary: '轻量有线耳机' },
+                  resource_claims: [{ resource_id: 'catalog.product:P1', capacity: 8, units: 1 }],
+                }] },
+                { goal_id: 'keyboard', source_quote: '一个键盘', quantity: 1, candidates: [{
+                  candidate_id: 'P2', label: '静音键盘', attributes: { price: 199 },
+                  evidence: { product_id: 'P2', name: '静音键盘', price: 199, currency: 'CNY', summary: '静音轴键盘' },
+                  resource_claims: [{ resource_id: 'catalog.product:P2', capacity: 4, units: 1 }],
+                }] },
+              ],
+              constraint_checks: [{ requirement_id: 'shared_budget', kind: 'AGGREGATE', observed: 298,
+                operator: 'LTE', expected: 400, satisfied: true }],
+              resource_checks: [
+                { resource_id: 'catalog.product:P1', capacity: 8, used: 1, remaining: 7, satisfied: true,
+                  consumers: [{ goal_id: 'headphones', candidate_id: 'P1', units: 1 }] },
+                { resource_id: 'catalog.product:P2', capacity: 4, used: 1, remaining: 3, satisfied: true,
+                  consumers: [{ goal_id: 'keyboard', candidate_id: 'P2', units: 1 }] },
+              ],
+            }],
+            search: { complete: true, nodes_examined: 400, feasible_count: 22, feasible_count_exact: true,
+              retained_feasible_count: 22, stored_solution_limit_reached: false, max_search_nodes: 100000 },
+            optimality: { status: 'NOT_REQUESTED', objective_value: null, proof: null },
+            selection_policy: 'STABLE_FARTHEST_FIRST',
+            verification: { status: 'VERIFIED', verdict: 'SATISFIED', global_goal: true,
+              checked_requirements: ['constraint:shared_budget'] },
+          }],
+        } },
+      ],
+    })
+
+    renderPage()
+
+    expect(await screen.findByLabelText('已核验约束方案')).toBeInTheDocument()
+    expect(screen.getByText('全部硬约束已核验')).toBeInTheDocument()
+    expect(screen.getByText('基础耳机')).toBeInTheDocument()
+    expect(screen.getByText('静音键盘')).toBeInTheDocument()
+    expect(screen.getByText('298 ≤ 400')).toBeInTheDocument()
+    expect(screen.getByText('占用 1 / 容量 8 · 剩余 7')).toBeInTheDocument()
+    expect(screen.getByText('未请求')).toBeInTheDocument()
+    expect(screen.getByText('确定性差异覆盖 · 非个人偏好排序')).toBeInTheDocument()
+  })
+
   it('restores a pending approval from persisted conversation state', async () => {
     vi.spyOn(api, 'conversation').mockResolvedValue({
       active_run_id: null,
@@ -54,6 +198,30 @@ describe('SandboxPage durable session behavior', () => {
 
     expect(await screen.findByText('确认订单 #1001 的退款操作')).toBeInTheDocument()
     expect(screen.getByText(/审批状态已持久化/)).toBeInTheDocument()
+  })
+
+  it('shows persisted machine-readable failure evidence', async () => {
+    vi.spyOn(api, 'conversation').mockResolvedValue({
+      active_run_id: null,
+      state: {},
+      messages: [
+        { role: 'user', content: '耳机里面最便宜的是哪款', run_id: 'failed-run' },
+        { role: 'assistant', content: '任务执行失败，系统已保留明确的错误原因，请稍后重试。', run_id: 'failed-run', result: {
+          run_id: 'failed-run', reply: '任务执行失败，系统已保留明确的错误原因，请稍后重试。', agent: 'runtime',
+          route: 'CATALOG_AUDIT_FORMAT_ERROR', status: 'FAILED', terminal_reason: 'CATALOG_AUDIT_FORMAT_ERROR',
+          events: [], trace: [], pending_action: null, usage: { input_tokens: 10, output_tokens: 5, total_tokens: 15 },
+          error: { code: 'CATALOG_AUDIT_FORMAT_ERROR', message: '目录需求独立审查响应无效：历史上下文未标记为不适用\n内部详情', retryable: false },
+        } },
+      ],
+    })
+
+    renderPage()
+
+    expect(await screen.findByLabelText('运行失败详情')).toBeInTheDocument()
+    expect(screen.getByText('目录需求审查协议无效')).toBeInTheDocument()
+    expect(screen.getByText('CATALOG_AUDIT_FORMAT_ERROR')).toBeInTheDocument()
+    expect(screen.getByText('目录需求独立审查响应无效：历史上下文未标记为不适用')).toBeInTheDocument()
+    expect(screen.queryByText('内部详情')).not.toBeInTheDocument()
   })
 
   it('reuses one request id when the user retries an unacknowledged start', async () => {

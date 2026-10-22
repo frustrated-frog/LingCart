@@ -124,11 +124,9 @@ def execute_claim(claim, *, store=None, runner=None):
                         context.context_engine = ContextEngine(effective, preferences=preferences,
                             observations=context.snapshot.get('context', {}).get('observations', []),
                             revision=context.snapshot.get('goal_revision', 0))
-                    from src.adaptive import run_adaptive
-                    # Autonomous mode receives the actual request plus separate
-                    # preference data. Rules must not inject a synthetic hard budget.
-                    adaptive_runner = runner is run_adaptive or getattr(runner, "execution_mode", None) == "adaptive"
-                    effective = context.context_engine.goal if adaptive_runner else context.context_engine.effective_request()
+                    # Every runtime receives the verbatim request. Confirmed preferences
+                    # remain a separate context channel and never masquerade as user text.
+                    effective = context.context_engine.goal
                     context.checkpoint(context=context.context_engine.payload())
                     if steering:
                         kwargs.pop("pending_action", None)
@@ -200,6 +198,53 @@ def execute_claim(claim, *, store=None, runner=None):
             memory.update_last_order_id(result["trace"])
             state.update(last_order_id=memory.last_order_id, pending_action=result["pending_action"])
             state["clarification"] = result.get("intake") if result.get("terminal_reason") == "MISSING_ORDER_ID" else None
+            catalog_artifacts = [
+                artifact for artifact in result.get("artifacts", [])
+                if isinstance(artifact, dict) and artifact.get("artifact_type") == "catalog_query_result"
+                and (artifact.get("verification") or {}).get("status") == "VERIFIED"
+            ]
+            if catalog_artifacts:
+                artifact = catalog_artifacts[-1]
+                state["catalog_result_set"] = {
+                    "result_set_id": artifact["result_set_id"],
+                    "source_run_id": result["run_id"],
+                    "source_result_set_id": artifact.get("source_result_set_id"),
+                    "catalog_snapshot": artifact["catalog_snapshot"],
+                    "catalog_data_fingerprint": artifact["catalog_data_fingerprint"],
+                    "population_data_fingerprint": artifact["population_data_fingerprint"],
+                    "result_data_fingerprint": artifact["result_data_fingerprint"],
+                    "query_spec": artifact["query_spec"],
+                    "population_ids": artifact["population_ids"],
+                    "selected_ids": artifact["selected_ids"],
+                    "delivered_ids": artifact["delivered_ids"],
+                    "member_ids": artifact["member_ids"],
+                    "matched_count": artifact["matched_count"],
+                    "delivered_count": artifact["delivered_count"],
+                }
+            constraint_artifacts = [
+                artifact for artifact in result.get("artifacts", [])
+                if isinstance(artifact, dict) and artifact.get("artifact_type") == "constraint_plan_result"
+                and (artifact.get("verification") or {}).get("status") == "VERIFIED"
+            ]
+            if constraint_artifacts:
+                artifact = constraint_artifacts[-1]
+                state["constraint_solution_set"] = {
+                    "solution_set_id": artifact["solution_set_id"],
+                    "source_run_id": result["run_id"],
+                    "version": artifact["version"],
+                    "plan_spec": artifact["plan_spec"],
+                    "provider_registry_version": artifact["provider_registry_version"],
+                    "domains": [{
+                        "goal_id": domain["goal_id"],
+                        "provider": domain["provider"],
+                        "provider_fingerprint": domain["provider_fingerprint"],
+                        "candidate_count": domain["candidate_count"],
+                    } for domain in artifact["domains"]],
+                    "feasibility": artifact["feasibility"],
+                    "solution_ids": [solution["solution_id"] for solution in artifact["solutions"]],
+                    "search": artifact["search"],
+                    "verification": artifact["verification"],
+                }
             return store.finish(claim["run_id"], claim["token"], result, state)
     except BaseException:
         # Simulated/process interruptions retain the saved prefix for explicit resume.

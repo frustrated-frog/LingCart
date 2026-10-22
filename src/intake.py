@@ -28,6 +28,7 @@ FAQ = "FAQ"
 PRODUCT_SEARCH = "PRODUCT_SEARCH"
 PRODUCT_DISCOVERY = "PRODUCT_DISCOVERY"
 PRODUCT_COMPARE = "PRODUCT_COMPARE"
+CATALOG_QUERY = "CATALOG_QUERY"
 
 APPROVAL_CONFIRMED = "CONFIRMED"
 APPROVAL_CANCELLED = "CANCELLED"
@@ -35,6 +36,19 @@ APPROVAL_UNKNOWN = "UNKNOWN"
 
 _ORDER_ID = re.compile(
     r"(?:订单|order)\s*(?:号|号码|id|number|no\.?|#)?\s*[:：#-]?\s*(\d{4,})",
+    re.IGNORECASE,
+)
+_GENERIC_CATALOG_SCOPE = re.compile(
+    r"(?:推荐|搜索|查找|找)(?:一下)?(?:商品|产品)"
+    r"|(?:recommend|search|find)(?:\s+(?:some|the))?\s+(?:products?|catalog)",
+    re.IGNORECASE,
+)
+_IDENTIFIER_CATALOG_SCOPE = re.compile(
+    r"(?:对比|比较)(?:商品|产品)?\s*p\d{4}s?"
+    r"(?:\s*(?:和|与|及|、|,)\s*(?:商品|产品)?\s*p\d{4}s?)+"
+    r"(?:的?(?:区别|差异))?"
+    r"|compare(?:\s+(?:products?))?\s+p\d{4}s?"
+    r"(?:\s*(?:and|,|versus|vs\.?)\s*p\d{4}s?)+",
     re.IGNORECASE,
 )
 
@@ -62,6 +76,14 @@ class TaskIntake:
 
 def _has_any(text: str, phrases: tuple[str, ...]) -> bool:
     return any(phrase in text for phrase in phrases)
+
+
+def _catalog_fast_path_scope_is_explicit(text: str, *, has_product_ids: bool) -> bool:
+    """Accept only catalog grammars whose complete target scope is deterministic."""
+
+    stripped = text.strip().strip("，,。.!！?？ ")
+    pattern = _IDENTIFIER_CATALOG_SCOPE if has_product_ids else _GENERIC_CATALOG_SCOPE
+    return pattern.fullmatch(stripped) is not None
 
 
 def _extract_order_id(text: str) -> int | None:
@@ -96,15 +118,23 @@ def handoff_is_negated(text: str) -> bool:
     ))
 
 
-def _catalog_terms(text: str, facets: dict) -> tuple[str | None, list[str]]:
+def _catalog_terms(text: str, facets: dict) -> tuple[list[str], list[str]]:
     """Resolve terms from an explicit metadata snapshot supplied by a capability."""
 
     folded = text.casefold()
-    categories = [str(value) for value in facets.get("categories", []) if str(value).casefold() in folded]
-    category = max(categories, key=len) if categories else None
-    if category is None:
-        category = next((name for name, aliases in facets.get("category_aliases", {}).items()
-                         if any(str(alias).casefold() in folded for alias in aliases)), None)
+    category_positions: dict[str, int] = {}
+    for raw in facets.get("categories", []):
+        category = str(raw)
+        position = folded.find(category.casefold())
+        if position >= 0:
+            category_positions[category] = position
+    for name, aliases in facets.get("category_aliases", {}).items():
+        positions = [folded.find(str(alias).casefold()) for alias in aliases]
+        positions = [position for position in positions if position >= 0]
+        if positions:
+            category_positions[str(name)] = min(category_positions.get(str(name), min(positions)), min(positions))
+    categories = sorted(category_positions, key=lambda value: (category_positions[value], -len(value), value))
+    category_terms = [category.casefold() for category in categories]
     matches: list[str] = []
     for raw in facets.get("searchable_values", []):
         value = str(raw).casefold()
@@ -121,16 +151,15 @@ def _catalog_terms(text: str, facets: dict) -> tuple[str | None, list[str]]:
                 None,
             )
             has_language = any(character.isalpha() or "\u4e00" <= character <= "\u9fff" for character in candidate or "")
-            category_folded = (category or "").casefold()
             if (candidate and has_language and candidate not in matches
-                    and candidate != category_folded and candidate not in category_folded):
+                    and not any(candidate == category or candidate in category for category in category_terms)):
                 matches.append(candidate)
                 break
     matches.sort(key=lambda value: (folded.find(value), -len(value), value))
     for alias, canonical in facets.get("search_aliases", {}).items():
         if str(alias).casefold() in folded and canonical not in matches:
             matches.append(str(canonical))
-    return category, matches
+    return categories, matches
 
 
 def parse_approval_response(user_message: str, pending_action: dict | None = None) -> str:
@@ -198,7 +227,7 @@ def analyze_request(user_message: str, *, _check_clause_coverage: bool = True) -
     shopping_action = recommendation_action or _has_any(
         shopping_text, ("找", "对比", "比较", "搜索", "预算", "search", "compare", "find")
     )
-    category, catalog_terms = None, []
+    categories, catalog_terms = [], []
     metadata_lookup_required = bool(
         product_ids
         or recommendation_action
@@ -213,28 +242,56 @@ def analyze_request(user_message: str, *, _check_clause_coverage: bool = True) -
                 PRODUCT_SEARCH,
                 CATALOG_FACETS_DEPENDENCY,
             )
-            category, catalog_terms = _catalog_terms(shopping_text, snapshot.facets)
+            categories, catalog_terms = _catalog_terms(shopping_text, snapshot.facets)
         except Exception:  # pragma: no cover - semantic fallback remains available
-            category, catalog_terms = None, []
-    if shopping_action and (category or product_ids or "商品" in shopping_text):
+            categories, catalog_terms = [], []
+    category = categories[0] if len(categories) == 1 else None
+    shared_catalog_budget = False
+    if shopping_action and (
+        categories
+        or product_ids
+        or _has_any(shopping_text, ("商品", "产品", "product", "catalog"))
+    ):
         budget_match = re.search(r"(?:预算\s*(?:为|是|不超过)?\s*[¥￥]?\s*)(-?\d+(?:\.\d+)?)", shopping_text)
         if not budget_match:
             budget_match = re.search(r"(\d+(?:\.\d+)?)\s*元?\s*(?:以内|以下|不超过)", shopping_text)
         if not budget_match:
+            budget_match = re.search(r"(-?\d+(?:\.\d+)?)\s*(?:元|块)?\s*(?:的)?预算", shopping_text)
+        if not budget_match:
             budget_match = re.search(r"(?:under|budget|max(?:imum)?)\s*(?:cny|rmb|[¥￥])?\s*(-?\d+(?:\.\d+)?)", shopping_text)
-        shopping_entities = {"category": category, "query": ""}
+        shopping_entities = {"query": ""}
+        if category is not None:
+            shopping_entities["category"] = category
+        if len(categories) > 1:
+            shopping_entities["categories"] = categories
         if budget_match:
-            shopping_entities["max_price"] = float(budget_match.group(1))
+            budget_value = float(budget_match.group(1))
+            if len(categories) > 1:
+                shopping_entities["shared_budget"] = budget_value
+                shared_catalog_budget = True
+            else:
+                shopping_entities["max_price"] = budget_value
         if product_ids:
             shopping_entities["product_ids"] = list(dict.fromkeys(value.upper() for value in product_ids))
         shopping_entities["query"] = " ".join(catalog_terms)
         entities.update(shopping_entities)
+        if budget_match and budget_value < 0:
+            entities.pop("order_id", None)
+            entities.pop("order_ids", None)
+            return TaskIntake(
+                request=request,
+                entities=entities,
+                execution_mode=CLARIFICATION_REQUIRED,
+                confidence=1.0,
+                reason="预算不能为负数，请提供大于或等于 0 的预算。",
+                semantic_hazards=("INVALID_NUMERIC_RANGE",),
+            )
         if product_ids and category and listing_action:
             intents.append(PRODUCT_SEARCH)
         elif not product_ids:
             if recommendation_action and not catalog_terms and "max_price" not in shopping_entities:
                 intents.append(PRODUCT_DISCOVERY)
-            elif category or "商品" in shopping_text:
+            elif categories or _has_any(shopping_text, ("商品", "产品", "product", "catalog")):
                 intents.append(PRODUCT_SEARCH)
         if product_ids:
             intents.append(PRODUCT_COMPARE)
@@ -318,6 +375,17 @@ def analyze_request(user_message: str, *, _check_clause_coverage: bool = True) -
                         reason="复合请求包含确定性规则无法完整覆盖的子句",
                         route_hints=tuple(intents),
                     )
+    if len(categories) > 1:
+        hazard = "MULTI_ITEM_SHARED_CONSTRAINT" if shared_catalog_budget else "MULTI_ITEM_CATALOG_SCOPE"
+        return TaskIntake(
+            request=request,
+            entities=entities,
+            execution_mode=LLM_REQUIRED,
+            confidence=0.0,
+            reason="多个商品目标或跨商品约束需要由结构化理解与能力注册表决定执行路径",
+            route_hints=tuple(dict.fromkeys(intents)),
+            semantic_hazards=(hazard,),
+        )
     if hazards:
         return TaskIntake(
             request=request,
@@ -327,6 +395,28 @@ def analyze_request(user_message: str, *, _check_clause_coverage: bool = True) -
             reason="请求包含否定、修正或例外作用域，禁止确定性快路径直接解释",
             route_hints=tuple(dict.fromkeys(intents)),
             semantic_hazards=hazards,
+        )
+    catalog_intents = {PRODUCT_SEARCH, PRODUCT_DISCOVERY, PRODUCT_COMPARE, CATALOG_QUERY}
+    has_catalog_intent = any(intent in catalog_intents for intent in intents)
+    explicit_catalog_scope = _catalog_fast_path_scope_is_explicit(
+        shopping_text,
+        has_product_ids=bool(product_ids),
+    )
+    if has_catalog_intent and not explicit_catalog_scope:
+        if not any(intent in {
+            ORDER_STATUS, ORDER_DETAILS, SHIPMENT_TRACKING, REFUND_ELIGIBILITY,
+            REFUND_REQUEST, PAYMENT_STATUS, PAYMENT_PROCESS,
+        } for intent in intents):
+            entities.pop("order_id", None)
+            entities.pop("order_ids", None)
+        return TaskIntake(
+            request=request,
+            entities=entities,
+            execution_mode=LLM_REQUIRED,
+            confidence=0.0,
+            reason="自然语言商品请求的目标范围无法由确定性层证明完整，交由结构化理解",
+            route_hints=tuple(dict.fromkeys(intents)),
+            semantic_hazards=("UNPROVEN_CATALOG_SCOPE",),
         )
     order_intents = {
         ORDER_STATUS,

@@ -2,6 +2,7 @@ import logging
 import re
 import time
 import uuid
+from dataclasses import replace
 from datetime import UTC, datetime
 
 from src.agents.base import as_text, sum_usage
@@ -99,18 +100,81 @@ def _explicit_escalation(intake: TaskIntake, run_id: str, user_message: str) -> 
     return result
 
 
-def _execute_understanding(user_message, history, pending_action, intake, run_id, *, understanding=None):
+def _execute_understanding(
+    user_message,
+    history,
+    pending_action,
+    intake,
+    run_id,
+    *,
+    understanding=None,
+    preference_defaults=None,
+):
     """Interpret an open-set turn, then hand only validated goals to executors."""
 
     from src.dialogue_understanding import command_kinds, render_direct_commands, to_task_plan, understand_turn
 
     if understanding is None:
+        understanding_model = get_llm(purpose="dialogue_understanding")
         understanding = understand_turn(
             user_message,
             history,
             pending_action,
-            model=get_llm(purpose="dialogue_understanding"),
+            model=understanding_model,
+            preference_defaults=preference_defaults,
         )
+        if any(
+            objective.catalog_query is not None or objective.constraint_plan is not None
+            for objective in understanding.objectives
+        ):
+            from src.catalog_request_audit import review_catalog_request
+
+            audit = review_catalog_request(
+                user_message,
+                history,
+                understanding.objectives,
+                model=get_llm(purpose="goal"),
+            )
+            audit_protocol_repair_used = audit.get("protocol_attempts", 1) > 1
+            if audit.get("verdict") == "REVISE":
+                understanding = understand_turn(
+                    user_message,
+                    history,
+                    pending_action,
+                    model=understanding_model,
+                    review_feedback={"issues": audit.get("issues"), "requirements": audit.get("requirements")},
+                    preference_defaults=preference_defaults,
+                )
+                audit = review_catalog_request(
+                    user_message,
+                    history,
+                    understanding.objectives,
+                    model=get_llm(purpose="goal"),
+                    allow_protocol_repair=not audit_protocol_repair_used,
+                )
+            if audit.get("verdict") == "CLARIFY":
+                result = _simple_result(
+                    intake,
+                    run_id,
+                    reply="；".join(audit.get("issues") or ["这个目录请求仍有需要确认的含义。"]),
+                    agent="intake",
+                    route="CLARIFY",
+                    status="WAITING_CLARIFICATION",
+                    terminal_reason="CATALOG_REQUEST_AMBIGUOUS",
+                )
+                result["understanding"] = understanding.model_dump()
+                result["catalog_request_audit"] = audit
+                return result
+            if audit.get("verdict") != "APPROVED":
+                raise AgentError(
+                    "INCOMPLETE_REQUEST_COVERAGE",
+                    "目录请求经过一次修正后仍未通过原始需求覆盖审查",
+                    retryable=False,
+                )
+        else:
+            audit = None
+    else:
+        audit = None
     kinds = command_kinds(understanding)
     payload = understanding.model_dump()
 
@@ -201,6 +265,8 @@ def _execute_understanding(user_message, history, pending_action, intake, run_id
             terminal_reason="COMPLETED",
         )
     result["understanding"] = payload
+    if audit:
+        result["catalog_request_audit"] = audit
     return result
 
 
@@ -242,6 +308,18 @@ def _run_orchestrator(user_message: str, history: list | None = None, pending_ac
     intake = (TaskIntake(user_message, execution_mode=LLM_REQUIRED, confidence=0.0,
                          reason="继续完成先前的结构化语义澄清")
               if semantic_followup else analyze_request(user_message))
+    context = current_runtime()
+    preference_defaults = (
+        context.context_engine.preference_defaults(intake)
+        if context and context.context_engine and hasattr(context.context_engine, "preference_defaults")
+        else {}
+    )
+    if intake.execution_mode == DIRECT and preference_defaults:
+        entities = dict(intake.entities)
+        for field, default in preference_defaults.items():
+            entities.setdefault(field, default["value"])
+        intake = replace(intake, entities=entities)
+        context.record("preference_default_applied", fields=sorted(preference_defaults), path="deterministic")
 
     approval_decision = parse_approval_response(user_message, pending_action) if pending_action else None
     active_execution_mode = (
@@ -275,21 +353,29 @@ def _run_orchestrator(user_message: str, history: list | None = None, pending_ac
             terminal_reason="MISSING_ORDER_ID" if "order_id" in intake.missing_slots else "AMBIGUOUS_ORDER_GOALS",
         )
     elif intake.execution_mode == UNSUPPORTED:
+        code = "UNSUPPORTED_INTENT"
         result = _simple_result(
             intake,
             run_id,
-            reply="这个请求超出了当前消费服务助手的能力范围。我目前可以处理订单、物流、退款、支付状态和服务规则。",
+            reply="这个请求超出了当前已注册能力范围；系统没有用相似但不等价的任务替代它。",
             agent="intake",
             route="UNSUPPORTED",
             status="FAILED",
-            terminal_reason="UNSUPPORTED_INTENT",
-            error={"code": "UNSUPPORTED_INTENT", "message": intake.reason, "retryable": False},
+            terminal_reason=code,
+            error={"code": code, "message": intake.reason, "retryable": False},
         )
     elif intake.execution_mode == ESCALATION_REQUESTED:
         result = _explicit_escalation(intake, run_id, user_message)
     elif intake.execution_mode == LLM_REQUIRED:
         try:
-            result = _execute_understanding(user_message, history, pending_action, intake, run_id)
+            result = _execute_understanding(
+                user_message,
+                history,
+                pending_action,
+                intake,
+                run_id,
+                preference_defaults=preference_defaults,
+            )
             result.setdefault("run_id", run_id)
             result.setdefault("status", "SUCCEEDED")
             result.setdefault("terminal_reason", "COMPLETED")

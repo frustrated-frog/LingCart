@@ -151,6 +151,12 @@ export interface RunEvent {
   [key: string]: unknown
 }
 
+export interface RunFailure {
+  code: string
+  message: string
+  retryable: boolean
+}
+
 export interface RunResult {
   run_id?: string
   reply?: string
@@ -164,6 +170,8 @@ export interface RunResult {
   budget?: Record<string, unknown>
   usage?: Record<string, number | null>
   pending_action?: PendingAction | null
+  artifacts?: ResultArtifact[]
+  error?: RunFailure | null
   [key: string]: unknown
 }
 
@@ -212,6 +220,154 @@ export interface Product {
   data_source: string
 }
 
+export interface CatalogFieldRef {
+  core?: 'product_id' | 'name' | 'category' | 'price' | 'stock' | 'summary' | null
+  concept_id?: string | null
+}
+
+export interface CatalogResultProduct extends Product {
+  values: Record<string, unknown>
+}
+
+export interface CatalogResultArtifact {
+  artifact_type: 'catalog_query_result'
+  version: string
+  result_set_id: string
+  source_result_set_id?: string | null
+  source_result_set_view?: 'DELIVERED' | 'POPULATION' | null
+  catalog_snapshot: { version?: string; fingerprint?: string; source?: string; [key: string]: unknown }
+  catalog_data_fingerprint: string
+  population_data_fingerprint?: string
+  result_data_fingerprint: string
+  query_spec: {
+    partition?: { field: CatalogFieldRef } | null
+    ordering: Array<{ field: CatalogFieldRef; direction: 'ASC' | 'DESC' }>
+    selector: { mode: 'ALL' | 'TOP_K' | 'PAGE' | 'ARGMIN' | 'ARGMAX' }
+    metrics?: Array<{ alias: string; function: 'COUNT' | 'MIN' | 'MAX' | 'AVG' | 'SUM'; field?: CatalogFieldRef | null }>
+    projection: { fields: CatalogFieldRef[] }
+    [key: string]: unknown
+  }
+  matched_count: number
+  delivered_count: number
+  population_ids: string[]
+  population_products?: Product[]
+  selected_ids?: string[]
+  delivered_ids?: string[]
+  member_ids: string[]
+  products: CatalogResultProduct[]
+  groups: Array<{ key: string; product_ids: string[]; count: number }>
+  metrics: Record<string, unknown>
+  delivery: {
+    mode: string
+    requested_complete: boolean
+    complete: boolean
+    selection_complete?: boolean
+    population_complete?: boolean
+    has_more?: boolean
+    page?: number | null
+    page_size?: number | null
+    next_page?: number | null
+    matched_count: number
+    delivered_count: number
+  }
+  verification?: {
+    status?: 'PENDING' | 'VERIFIED' | 'REJECTED' | 'PARTIAL'
+    goal?: { verdict?: string; checked_requirements?: string[] }
+    delivery?: { verdict?: string; complete?: boolean }
+    error?: { code?: string; message?: string; retryable?: boolean }
+  }
+  data_source: string
+}
+
+export interface ConstraintCandidate {
+  candidate_id: string
+  label: string
+  attributes: Record<string, unknown>
+  evidence: Partial<Product> & Record<string, unknown>
+  resource_claims?: Array<{ resource_id: string; capacity: number; units: number }>
+}
+
+export interface ConstraintSelection {
+  goal_id: string
+  source_quote: string
+  quantity: number
+  candidates: ConstraintCandidate[]
+}
+
+export interface ConstraintCheck {
+  requirement_id: string
+  kind: 'AGGREGATE' | 'COMPARISON' | 'ALL_DIFFERENT'
+  observed?: unknown
+  operator?: string
+  expected?: unknown
+  left?: unknown
+  right?: unknown
+  attribute?: string
+  satisfied: boolean
+}
+
+export interface ConstraintSolution {
+  solution_id: string
+  selections: ConstraintSelection[]
+  constraint_checks: ConstraintCheck[]
+  resource_checks: Array<{
+    resource_id: string
+    capacity: number
+    used: number
+    remaining: number
+    satisfied: boolean
+    consumers: Array<{ goal_id: string; candidate_id: string; units: number }>
+  }>
+  optimization_value?: unknown
+}
+
+export interface ConstraintPlanResultArtifact {
+  artifact_type: 'constraint_plan_result'
+  version: 'constraint-plan/v1' | string
+  solution_set_id: string
+  plan_spec: {
+    goals: Array<{ goal_id: string; source_quote: string; quantity: number }>
+    constraints: Array<{ requirement_id: string; source_quote: string; kind: string; [key: string]: unknown }>
+    optimization?: { requirement_id: string; direction: 'MIN' | 'MAX'; [key: string]: unknown } | null
+    [key: string]: unknown
+  }
+  compilation_coverage: Array<{ requirement_id: string; source_quote: string; status: string }>
+  provider_registry_version: string
+  domains: Array<{
+    goal_id: string
+    provider: string
+    provider_fingerprint: string
+    candidate_count: number
+    evidence: Record<string, unknown>
+  }>
+  feasibility: 'FEASIBLE' | 'INFEASIBLE'
+  solutions: ConstraintSolution[]
+  search: {
+    complete: boolean
+    nodes_examined: number
+    feasible_count: number
+    feasible_count_exact: boolean
+    retained_feasible_count: number
+    stored_solution_limit_reached: boolean
+    max_search_nodes: number
+  }
+  optimality: {
+    status: 'NOT_REQUESTED' | 'NO_FEASIBLE_SOLUTION' | 'BEST_KNOWN' | 'PROVEN_OPTIMAL'
+    objective_value: unknown
+    proof: 'EXHAUSTIVE_SEARCH' | 'BOUNDED_SEARCH' | null
+  }
+  selection_policy: 'EXPLICIT_OPTIMIZATION' | 'STABLE_FARTHEST_FIRST' | string
+  verification?: {
+    status?: 'PENDING' | 'VERIFIED' | 'REJECTED'
+    verdict?: 'SATISFIED' | 'PROVEN_INFEASIBLE' | string
+    checked_requirements?: string[]
+    global_goal?: boolean
+    error?: { code?: string; message?: string; retryable?: boolean }
+  }
+}
+
+export type ResultArtifact = CatalogResultArtifact | ConstraintPlanResultArtifact | { artifact_type: string; [key: string]: unknown }
+
 export interface Order {
   order_id: number
   item: string
@@ -252,7 +408,7 @@ export interface ChatResponse extends ExecutionResult {
 
 export interface Conversation {
   state: { pending_action?: PendingAction | null; [key: string]: unknown }
-  messages: Array<{ role: 'user' | 'assistant'; content: string; run_id: string }>
+  messages: Array<{ role: 'user' | 'assistant'; content: string; run_id: string; result?: ExecutionResult | null }>
   active_run_id: string | null
 }
 

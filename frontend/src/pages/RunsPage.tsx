@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query'
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { api } from '../api/client'
+import { ResultArtifactViews } from '../components/CatalogResultView'
 import type { RunDetail } from '../types'
 import {
   DefinitionGrid,
@@ -161,6 +162,7 @@ function ResultTab({ detail }: { detail: RunDetail }) {
   return <>
     <SectionHeading index="A" title="最终结果" />
     <div className="result-copy">{detail.result.reply ?? '该运行尚未生成最终回复。'}</div>
+    <ResultArtifactViews artifacts={detail.result.artifacts} />
     {steps.length > 0 ? <div className="table-wrap"><table><thead><tr><th>步骤</th><th>执行角色</th><th>操作</th><th>状态</th></tr></thead><tbody>
       {steps.map((step, index) => <tr key={String(step.step_id ?? index)}><td>{String(step.step_id ?? index + 1)}</td><td>{SPECIALIST_LABELS[String(step.specialist ?? '')] ?? String(step.specialist ?? '—')}</td><td>{TOOL_LABELS[String(step.tool ?? '')] ?? String(step.tool ?? '—')}</td><td>{STATUS_LABELS[String(step.status ?? '')] ?? String(step.status ?? '—')}</td></tr>)}
     </tbody></table></div> : <div className="empty-inline">该路径没有记录结构化计划</div>}

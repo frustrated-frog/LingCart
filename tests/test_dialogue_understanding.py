@@ -7,7 +7,7 @@ from src import orchestrator, tools
 from src.adaptive import run_adaptive
 from src.backend.db import Payment, get_engine, get_session_factory
 from src.backend.seed import seed
-from src.dialogue_understanding import TurnUnderstanding, to_task_plan
+from src.dialogue_understanding import TurnUnderstanding, to_task_plan, understand_turn
 from src.task_plan import execute_plan
 
 
@@ -30,6 +30,36 @@ def interpretation(*, commands=None, objectives=None, reason="test"):
     return {"reason": reason, "commands": commands or [], "objectives": objectives or []}
 
 
+def catalog_extreme_spec(message: str, *, scope: str, with_category: bool) -> dict:
+    return {
+        "version": "catalog-query/v1",
+        "scope": {"requirement_id": "scope", "source_quote": message, "kind": scope},
+        "availability": {"requirement_id": "availability", "source_quote": message, "scope": "ALL"},
+        "filters": ([{
+            "requirement_id": "category",
+            "source_quote": "耳机里面",
+            "field": {"core": "category"},
+            "operator": "EQ",
+            "value": "耳机",
+        }] if with_category else []),
+        "partition": None,
+        "ordering": [],
+        "selector": {
+            "requirement_id": "cheapest",
+            "source_quote": "最便宜的是哪款",
+            "mode": "ARGMIN",
+            "field": {"core": "price"},
+            "include_ties": False,
+        },
+        "metrics": [],
+        "projection": {
+            "requirement_id": "product",
+            "source_quote": "哪款",
+            "fields": [{"core": "product_id"}, {"core": "name"}, {"core": "price"}],
+        },
+    }
+
+
 @pytest.fixture(autouse=True)
 def database():
     engine = get_engine("sqlite:///:memory:")
@@ -37,6 +67,51 @@ def database():
     with get_session_factory(engine)() as session:
         seed(session)
     return engine
+
+
+def test_explicit_current_category_repairs_stale_previous_result_scope():
+    message = "耳机里面最便宜的是哪款"
+    previous = catalog_extreme_spec(message, scope="PREVIOUS_RESULT_SET", with_category=True)
+    current = catalog_extreme_spec(message, scope="CATALOG", with_category=True)
+    model = ScriptedModel(
+        interpretation(objectives=[{
+            "id": "cheapest", "kind": "CATALOG_QUERY", "source_quote": message,
+            "catalog_query": previous,
+        }]),
+        interpretation(objectives=[{
+            "id": "cheapest", "kind": "CATALOG_QUERY", "source_quote": message,
+            "catalog_query": current,
+        }]),
+    )
+
+    result = understand_turn(
+        message,
+        [HumanMessage(content="把所有商品按类目展示")],
+        None,
+        model=model,
+    )
+
+    assert result.objectives[0].catalog_query.scope.kind == "CATALOG"
+    assert model.index == 2
+
+
+def test_elliptical_extreme_followup_can_reuse_previous_result_scope():
+    message = "最便宜的是哪款"
+    spec = catalog_extreme_spec(message, scope="PREVIOUS_RESULT_SET", with_category=False)
+    model = ScriptedModel(interpretation(objectives=[{
+        "id": "cheapest", "kind": "CATALOG_QUERY", "source_quote": message,
+        "catalog_query": spec,
+    }]))
+
+    result = understand_turn(
+        message,
+        [HumanMessage(content="耳机都有哪些")],
+        None,
+        model=model,
+    )
+
+    assert result.objectives[0].catalog_query.scope.kind == "PREVIOUS_RESULT_SET"
+    assert model.index == 1
 
 
 @pytest.mark.parametrize(
@@ -231,6 +306,33 @@ def test_ungrounded_model_entity_never_reaches_a_tool(monkeypatch):
     assert result["status"] == "FAILED"
     assert result["terminal_reason"] == "UNGROUNDED_PLAN_ENTITY"
     assert result["trace"] == []
+
+
+def test_numeric_grounding_accepts_sentence_punctuation_but_not_decimal_prefix(monkeypatch):
+    message = "Find 耳机 under CNY 500."
+    grounded = ScriptedModel(interpretation(objectives=[{
+        "id": "headphones", "kind": "PRODUCT_SEARCH", "source_quote": message,
+        "category": "耳机", "max_price": 500,
+    }]))
+    monkeypatch.setattr(orchestrator, "get_llm", lambda **_kwargs: grounded)
+
+    result = orchestrator.run_orchestrator(message)
+
+    assert result["status"] == "SUCCEEDED"
+    assert result["trace"][0]["args"]["max_price"] == 500
+
+    decimal_message = "Find 耳机 under CNY 500.5."
+    ungrounded = ScriptedModel(interpretation(objectives=[{
+        "id": "headphones", "kind": "PRODUCT_SEARCH", "source_quote": decimal_message,
+        "category": "耳机", "max_price": 500,
+    }]))
+    monkeypatch.setattr(orchestrator, "get_llm", lambda **_kwargs: ungrounded)
+
+    rejected = orchestrator.run_orchestrator(decimal_message)
+
+    assert rejected["status"] == "FAILED"
+    assert rejected["terminal_reason"] == "UNGROUNDED_PLAN_ENTITY"
+    assert rejected["trace"] == []
 
 
 def test_pending_action_does_not_block_an_unrelated_semantic_turn(monkeypatch, database):

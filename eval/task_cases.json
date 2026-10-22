@@ -497,7 +497,6 @@
                 "name": "search_products",
                 "args": {
                   "category": "耳机",
-                  "query": "",
                   "max_price": 500
                 },
                 "products": {
@@ -513,10 +512,18 @@
               "escalate_to_human"
             ],
             "pending_present": false,
-            "max_model_invocations": 0
+            "max_model_invocations": 1
           }
         }
-      ]
+      ],
+      "model": {
+        "mode": "scripted",
+        "responses": [
+          {
+            "content": "{\"reason\":\"保留订单查询和商品预算两个独立目标\",\"commands\":[],\"objectives\":[{\"id\":\"order_status\",\"kind\":\"ORDER_STATUS\",\"source_quote\":\"查询订单 1002 的状态\",\"order_id\":1002},{\"id\":\"headphones\",\"kind\":\"PRODUCT_SEARCH\",\"source_quote\":\"推荐 500 元以内的耳机\",\"category\":\"耳机\",\"query\":\"\",\"max_price\":500}]}"
+          }
+        ]
+      }
     },
     {
       "id": "T13",
@@ -567,10 +574,18 @@
               "escalate_to_human"
             ],
             "pending_present": false,
-            "max_model_invocations": 0
+            "max_model_invocations": 1
           }
         }
-      ]
+      ],
+      "model": {
+        "mode": "scripted",
+        "responses": [
+          {
+            "content": "{\"reason\":\"保留搜索和指定商品对比两个独立目标\",\"commands\":[],\"objectives\":[{\"id\":\"headphone_search\",\"kind\":\"PRODUCT_SEARCH\",\"source_quote\":\"搜索预算 500 元的降噪耳机\",\"category\":\"耳机\",\"query\":\"降噪\",\"max_price\":500},{\"id\":\"comparison\",\"kind\":\"PRODUCT_COMPARE\",\"source_quote\":\"比较 P1102 和 P1103\",\"product_ids\":[\"P1102\",\"P1103\"]}]}"
+          }
+        ]
+      }
     },
     {
       "id": "T14",
@@ -2050,10 +2065,18 @@
               "escalate_to_human"
             ],
             "pending_present": false,
-            "max_model_invocations": 0
+            "max_model_invocations": 1
           }
         }
-      ]
+      ],
+      "model": {
+        "mode": "scripted",
+        "responses": [
+          {
+            "content": "{\"reason\":\"预算和降噪条件必须保留\",\"commands\":[],\"objectives\":[{\"id\":\"headphones\",\"kind\":\"PRODUCT_SEARCH\",\"source_quote\":\"推荐预算 500 元的降噪耳机\",\"category\":\"耳机\",\"query\":\"降噪\",\"max_price\":500}]}"
+          }
+        ]
+      }
     },
     {
       "id": "T44",
@@ -2088,10 +2111,18 @@
               "escalate_to_human"
             ],
             "pending_present": false,
-            "max_model_invocations": 0
+            "max_model_invocations": 1
           }
         }
-      ]
+      ],
+      "model": {
+        "mode": "scripted",
+        "responses": [
+          {
+            "content": "{\"reason\":\"预算和两个键盘特征必须保留\",\"commands\":[],\"objectives\":[{\"id\":\"keyboard\",\"kind\":\"PRODUCT_SEARCH\",\"source_quote\":\"帮我找预算 400 元的静音三模键盘\",\"category\":\"键盘\",\"query\":\"静音 三模\",\"max_price\":400}]}"
+          }
+        ]
+      }
     },
     {
       "id": "T45",
@@ -2110,7 +2141,7 @@
                 "name": "search_products",
                 "args": {
                   "category": "扩展坞",
-                  "query": "4k",
+                  "query": "4K",
                   "max_price": 250
                 },
                 "products": {
@@ -2126,10 +2157,18 @@
               "escalate_to_human"
             ],
             "pending_present": false,
-            "max_model_invocations": 0
+            "max_model_invocations": 1
           }
         }
-      ]
+      ],
+      "model": {
+        "mode": "scripted",
+        "responses": [
+          {
+            "content": "{\"reason\":\"预算和 4K 条件必须保留\",\"commands\":[],\"objectives\":[{\"id\":\"hub\",\"kind\":\"PRODUCT_SEARCH\",\"source_quote\":\"推荐 250 元以内的 4K 扩展坞\",\"category\":\"扩展坞\",\"query\":\"4K\",\"max_price\":250}]}"
+          }
+        ]
+      }
     },
     {
       "id": "T46",
@@ -2177,7 +2216,6 @@
                 "name": "search_products",
                 "args": {
                   "category": "耳机",
-                  "query": "",
                   "max_price": 1
                 },
                 "products": {
@@ -2194,7 +2232,7 @@
               "escalate_to_human"
             ],
             "pending_present": false,
-            "max_model_invocations": 0,
+            "max_model_invocations": 1,
             "terminal_reason": "NO_MATCHING_PRODUCTS",
             "reply_contains_any": [
               "没有",
@@ -2202,7 +2240,15 @@
             ]
           }
         }
-      ]
+      ],
+      "model": {
+        "mode": "scripted",
+        "responses": [
+          {
+            "content": "{\"reason\":\"保留一元预算并如实查询空结果\",\"commands\":[],\"objectives\":[{\"id\":\"headphones\",\"kind\":\"PRODUCT_SEARCH\",\"source_quote\":\"推荐预算 1 元的耳机\",\"category\":\"耳机\",\"query\":\"\",\"max_price\":1}]}"
+          }
+        ]
+      }
     },
     {
       "id": "T48",
@@ -2386,10 +2432,18 @@
               "escalate_to_human"
             ],
             "pending_present": false,
-            "max_model_invocations": 0
+            "max_model_invocations": 1
           }
         }
-      ]
+      ],
+      "model": {
+        "mode": "scripted",
+        "responses": [
+          {
+            "content": "{\"reason\":\"Preserve the category, feature and CNY budget.\",\"commands\":[],\"objectives\":[{\"id\":\"headphones\",\"kind\":\"PRODUCT_SEARCH\",\"source_quote\":\"Find noise cancelling headphones under CNY 500.\",\"category\":\"headphones\",\"query\":\"noise cancelling\",\"max_price\":500}]}"
+          }
+        ]
+      }
     },
     {
       "id": "T53",
@@ -2465,7 +2519,7 @@
               "escalate_to_human"
             ],
             "pending_present": false,
-            "max_model_invocations": 0
+            "max_model_invocations": 1
           },
           "history": [
             {
@@ -2478,7 +2532,15 @@
             }
           ]
         }
-      ]
+      ],
+      "model": {
+        "mode": "scripted",
+        "responses": [
+          {
+            "content": "{\"reason\":\"当前商品请求不受历史订单号影响\",\"commands\":[],\"objectives\":[{\"id\":\"headphones\",\"kind\":\"PRODUCT_SEARCH\",\"source_quote\":\"推荐 500 元以内的降噪耳机\",\"category\":\"耳机\",\"query\":\"降噪\",\"max_price\":500}]}"
+          }
+        ]
+      }
     },
     {
       "id": "T55",

@@ -3,6 +3,10 @@ from dataclasses import asdict, dataclass, field
 import math
 
 from src.capability_registry import MODEL_ANSWER_OPERATION, get_capability_registry
+from src.catalog_query import (
+    CATALOG_QUERY_OPERATION,
+)
+from src.constraint_planning import CONSTRAINT_PLAN_OPERATION
 from src.direct_executor import _READ_ONLY_TOOLS, _STATUS_ZH, _TRACKING_ZH, _finish, _trace_entry
 from src.errors import AgentError
 from src.intake import (FAQ, ORDER_DETAILS, ORDER_STATUS, PAYMENT_PROCESS, PAYMENT_STATUS, PRODUCT_COMPARE,
@@ -157,8 +161,7 @@ def verify_observation(step):
     result, name = step.result, step.tool
     contract = get_capability_registry().operation_contract(name)
     if contract is not None:
-        if not contract.validate_result(result, step.args):
-            raise AgentError("INVALID_TOOL_RESULT", "工具结果不符合注册能力的输出契约", retryable=False)
+        contract.verify_result(result, step.args)
         return
     required = {
         "read_clock": {"date", "time", "weekday", "timezone", "observed_at", "data_source"},
@@ -301,6 +304,28 @@ def execute_plan(intake, run_id, *, plan=None, source="deterministic", incomplet
                                 else "BUSINESS_DATA_NOT_FOUND")
                         raise AgentError(code, step.result["error"], retryable=False)
                     verify_observation(step)
+                    if step.tool == CATALOG_QUERY_OPERATION:
+                        verification = step.result["artifact"]["verification"]
+                        recorder.record(
+                            "catalog_goal_verified",
+                            step_id=step.step_id,
+                            result_set_id=step.result["artifact"]["result_set_id"],
+                            **verification["goal"],
+                        )
+                        recorder.record(
+                            "catalog_delivery_verified",
+                            step_id=step.step_id,
+                            result_set_id=step.result["artifact"]["result_set_id"],
+                            **verification["delivery"],
+                        )
+                    if step.tool == CONSTRAINT_PLAN_OPERATION:
+                        verification = step.result["artifact"]["verification"]
+                        recorder.record(
+                            "global_goal_verified",
+                            step_id=step.step_id,
+                            solution_set_id=step.result["artifact"]["solution_set_id"],
+                            **verification,
+                        )
                     contract = get_capability_registry().operation_contract(step.tool)
                     step.outcome = contract.outcome(step.result, step.args) if contract else "SATISFIED"
             except AgentError as error:
@@ -308,6 +333,18 @@ def execute_plan(intake, run_id, *, plan=None, source="deterministic", incomplet
                 step.outcome = "FAILED"
                 step.error = {"code": error.code, "message": str(error), "retryable": error.retryable}
                 errors.append(step.error)
+                artifact = step.result.get("artifact") if isinstance(step.result, dict) else None
+                if (
+                    step.tool in {CATALOG_QUERY_OPERATION, CONSTRAINT_PLAN_OPERATION}
+                    and isinstance(artifact, dict)
+                    and (artifact.get("verification") or {}).get("status") == "REJECTED"
+                ):
+                    recorder.record(
+                        "catalog_verification_rejected" if step.tool == CATALOG_QUERY_OPERATION else "global_goal_rejected",
+                        step_id=step.step_id,
+                        result_set_id=artifact.get("result_set_id") or artifact.get("solution_set_id"),
+                        error=step.error,
+                    )
                 if "BUDGET" in error.code or error.code in {"RUN_LEASE_LOST", "UNCERTAIN_TOOL_OUTCOME"}:
                     stop_error = step.error
             recorder.record("step_completed", step_id=step.step_id, specialist=step.specialist, status=step.status, error=step.error)
@@ -344,7 +381,14 @@ def execute_plan(intake, run_id, *, plan=None, source="deterministic", incomplet
     if not plan.steps:
         status = "FAILED"
         errors.append({"code": "EMPTY_TASK_PLAN", "message": "没有可验证的业务步骤", "retryable": False})
+    optimality_not_proven = any(
+        step.tool == CONSTRAINT_PLAN_OPERATION
+        and (step.result.get("artifact", {}).get("optimality") or {}).get("status") == "BEST_KNOWN"
+        for step in plan.steps
+        if isinstance(step.result, dict)
+    )
     reason = (errors[-1]["code"] if errors else "APPROVAL_REQUIRED" if pending else
+              "OPTIMALITY_NOT_PROVEN" if optimality_not_proven else
               "EVIDENCE_UNAVAILABLE" if unavailable else "BUSINESS_RULE_REJECTED"
               if any(s.status == "REJECTED" for s in plan.steps) else "COMPLETED")
     if not errors and not pending and any(s.tool == "prepare_payment" and s.status == "REJECTED" for s in plan.steps):
@@ -352,10 +396,21 @@ def execute_plan(intake, run_id, *, plan=None, source="deterministic", incomplet
     # An empty search is a verified outcome, not a claim that products exist.
     if not errors and not pending and len(plan.steps) == 1 and plan.steps[0].tool in {"search_products", "discover_products"} and not plan.steps[0].result.get("products"):
         reason = "NO_CANDIDATE_EVIDENCE" if plan.steps[0].tool == "discover_products" else "NO_MATCHING_PRODUCTS"
+    if (
+        not errors and not pending and len(plan.steps) == 1
+        and plan.steps[0].tool == CONSTRAINT_PLAN_OPERATION
+        and plan.steps[0].result.get("artifact", {}).get("feasibility") == "INFEASIBLE"
+    ):
+        reason = "NO_FEASIBLE_SOLUTION"
     if incomplete_reason and status == "SUCCEEDED":
         status, reason = "PARTIAL", incomplete_reason
     response = _finish(recorder, intake, run_id, agent, trace, reply="\n\n".join(_facts(s) for s in plan.steps) or "没有可执行的业务步骤。",
                        status=status, terminal_reason=reason, pending_action=pending, error=errors[-1] if errors else None)
+    response["artifacts"] = [
+        step.result["artifact"] for step in plan.steps
+        if isinstance(step.result, dict)
+        and isinstance(step.result.get("artifact"), dict)
+    ]
     if any(step.tool == MODEL_ANSWER_OPERATION for step in plan.steps):
         response["route"] = "KNOWLEDGE" if len(plan.steps) == 1 else "MIXED"
     response["plan"] = plan.payload()
