@@ -14,16 +14,16 @@ import {
 import { NavLink, Outlet } from 'react-router-dom'
 
 const engineering = [
-  { to: '/', label: '智能体控制台', icon: LayoutDashboard, end: true },
+  { to: '/', label: '工程总览', icon: LayoutDashboard, end: true },
   { to: '/runs', label: '运行检查', icon: Route },
-  { to: '/experiments', label: '实验契约', icon: FlaskConical },
-  { to: '/mechanisms', label: '机制注册表', icon: Boxes },
-  { to: '/datasets', label: '数据集覆盖', icon: Box },
+  { to: '/experiments', label: '论文实验室', icon: FlaskConical },
+  { to: '/mechanisms', label: '机制与配置', icon: Boxes },
+  { to: '/datasets', label: '评测数据集', icon: Box },
 ]
 
-const sandbox = [
+const consumer = [
   { to: '/sandbox', label: '消费工作台', icon: Store, end: true },
-  { to: '/sandbox/products', label: '商品发现', icon: PackageSearch },
+  { to: '/sandbox/products', label: '商品目录', icon: PackageSearch },
   { to: '/sandbox/orders', label: '订单与售后', icon: ShoppingBag },
   { to: '/sandbox/tasks', label: '任务记录', icon: History },
   { to: '/sandbox/preferences', label: '我的偏好', icon: Settings2 },
@@ -49,18 +49,18 @@ export function Layout() {
   return (
     <div className="app-shell">
       <aside className="sidebar">
-        <NavLink to="/" className="brand" aria-label="LingCart 首页">
+        <NavLink to="/sandbox" className="brand" aria-label="LingCart 消费工作台">
           <span className="brand-mark">序</span>
-          <span><b>LingCart</b><small>智能体工程</small></span>
+          <span><b>LingCart</b><small>消费任务智能体</small></span>
         </NavLink>
         <div className="nav-scroll">
-          <NavSection title="智能体工程" items={engineering} />
-          <NavSection title="业务沙盒" items={sandbox} />
+          <NavSection title="消费体验" items={consumer} />
+          <NavSection title="研发与证据" items={engineering} />
         </div>
         <div className="sidebar-runtime">
-          <div className="runtime-line"><i /><span>本地运行时</span><b>已连接</b></div>
+          <div className="runtime-line"><i /><span>本地工作区</span><b>演示数据</b></div>
           <NavLink className="new-session" to="/sandbox?new=1"><CircleUserRound size={15} />新建业务对话</NavLink>
-          <div className="build-note"><span>LINGCART / 网页界面</span><p>本地数据 · 可追溯执行 · 桌面工程界面</p></div>
+          <div className="build-note"><span>LINGCART / LOCAL</span><p>可恢复执行 · 证据可追溯 · 高影响操作需确认</p></div>
         </div>
       </aside>
       <main className="main-canvas">

@@ -1,11 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { ArrowUp, Check, CircleStop, CornerDownRight, RotateCcw, Search, Sparkles } from 'lucide-react'
+import { ArrowUp, Check, CircleStop, CornerDownRight, Headphones, PackageCheck, RotateCcw, Search, Sparkles } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { FormEvent } from 'react'
+import type { FormEvent, KeyboardEvent } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { api, ApiError, streamRunEvents } from '../api/client'
 import { ResultArtifactViews } from '../components/CatalogResultView'
-import { ExecutionSpine, PageHeader, StatusBadge, TERMINAL_REASON_LABELS } from '../components/SystemUI'
+import { ExecutionSpine, StatusBadge, TERMINAL_REASON_LABELS } from '../components/SystemUI'
+import { ExecutionModeSwitch, TaskPulseRail, WorkspaceEvidence, WorkspaceMasthead } from '../components/WorkspaceUI'
 import { getPreferenceProfileId, getSessionId, resetSessionId } from '../state/localSession'
 import { clearRunOperation, loadRunOperation, saveRunOperation } from '../state/runOperation'
 import type { RunOperation } from '../state/runOperation'
@@ -21,9 +22,9 @@ interface Message {
 }
 
 const quickPrompts = [
-  ['按预算选购', '推荐降噪耳机，预算 500 元以内'],
-  ['查物流', '查询订单 1002 的状态和物流'],
-  ['检查退款资格', '查询订单 1001 是否可以退款'],
+  { label: '按预算选购', prompt: '推荐降噪耳机，预算 500 元以内', icon: Headphones },
+  { label: '追踪订单物流', prompt: '查询订单 1002 的状态和物流', icon: PackageCheck },
+  { label: '检查退款资格', prompt: '查询订单 1001 是否可以退款', icon: RotateCcw },
 ] as const
 
 function operationId(): string {
@@ -236,10 +237,18 @@ export function SandboxPage() {
     send.mutate(next)
   }
   const onSubmit = (event: FormEvent) => { event.preventDefault(); submit(draft) }
+  const onComposerKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (event.key !== 'Enter' || event.shiftKey || event.nativeEvent.isComposing) return
+    event.preventDefault()
+    submit(draft)
+  }
   const latestResult = [...messages].reverse().find((item) => item.result)?.result
   const pending = latestResult?.pending_action ?? activeRun.data?.result?.pending_action
     ?? conversation.data?.state.pending_action ?? null
   const events = liveEvents.length ? liveEvents : activeRun.data?.events ?? []
+  const hasCurrentOperation = send.isPending || Boolean(activeRunId)
+  const pulseEvents = hasCurrentOperation ? events : latestResult?.events ?? []
+  const visibleStatus = send.isPending ? 'PENDING' : activeRun.data?.status ?? latestResult?.status
   const liveResponse = useMemo(() => projectRunResponse(events), [events])
   const agentStatus = useMemo(() => projectAgentStatus(events), [events])
   const liveStatusLabel = send.isPending ? '正在提交可恢复任务'
@@ -252,22 +261,43 @@ export function SandboxPage() {
   }
   const retryOperation = () => { if (operation && !operation.runId) send.mutate(operation) }
 
-  return <>
-    <PageHeader code="BUSINESS SANDBOX / 10" title="消费工作台"
-      subtitle="用真实业务路径产生可检查的运行证据。任务异步执行，可实时观察、调整、排队后续请求或中止。" marker="DEMO DATA" />
+  return <div className="consumer-workspace">
+    <WorkspaceMasthead />
     <div className="sandbox-layout">
       <section className="conversation-panel">
-        <div className="conversation-toolbar">
-          <div><span>CONVERSATION</span><code>{sessionId.slice(0, 12)}</code></div>
-          <label className="mode-switch"><input type="checkbox" checked={adaptive} disabled={busy} onChange={(event) => setAdaptive(event.target.checked)} /><span>自适应规划</span></label>
-        </div>
+        <header className="conversation-toolbar">
+          <div className="conversation-identity">
+            <span className="conversation-avatar" aria-hidden="true">L</span>
+            <div><strong>当前会话</strong><code>{sessionId.slice(0, 12)}</code></div>
+          </div>
+          <div className={`conversation-sync ${conversation.isError ? 'error' : conversation.isFetching ? 'syncing' : 'ready'}`} role="status">
+            <i />
+            <span>{conversation.isError ? '会话恢复失败' : conversation.isPending ? '正在恢复会话' : conversation.isFetching ? '正在同步' : '会话已同步'}</span>
+          </div>
+          <ExecutionModeSwitch adaptive={adaptive} disabled={busy} onChange={setAdaptive} />
+        </header>
+
+        <TaskPulseRail events={pulseEvents} status={visibleStatus} />
+
         <div className="message-list" ref={messageListRef} onScroll={(event) => {
           const node = event.currentTarget
           followOutputRef.current = node.scrollHeight - node.scrollTop - node.clientHeight < 96
         }}>
-          {messages.length === 0 && <div className="conversation-empty"><Sparkles size={24} /><h2>告诉 Agent 你的目标</h2><p>从明确的业务请求开始，或启用 Adaptive planning 观察自主规划链路。</p></div>}
+          {conversation.isPending && messages.length === 0 && <div className="conversation-loading"><i /><span>正在恢复这段会话…</span></div>}
+          {conversation.isError && messages.length === 0 && <div className="conversation-error" role="alert">
+            <strong>暂时无法恢复会话</strong>
+            <p>{conversation.error.message}</p>
+            <button type="button" onClick={() => void conversation.refetch()}>重新连接</button>
+          </div>}
+          {!conversation.isPending && !conversation.isError && messages.length === 0 && <div className="conversation-empty">
+            <div className="empty-signal" aria-hidden="true"><Sparkles size={25} /><span /></div>
+            <span className="empty-eyebrow">从一个真实目标开始</span>
+            <h2>今天想买什么，或解决哪笔订单？</h2>
+            <p>你可以同时说明预算、数量、偏好与限制。涉及支付或退款时，Agent 会在执行前单独向你确认。</p>
+            <div className="empty-capabilities" aria-label="支持的任务类型"><span>商品决策</span><span>订单追踪</span><span>售后处理</span></div>
+          </div>}
           {messages.map((message, index) => <article className={`message ${message.role}${message.result?.artifacts?.some((artifact) => ['catalog_query_result', 'constraint_plan_result'].includes(artifact.artifact_type)) ? ' has-catalog' : ''}`} key={`${message.runId}-${message.role}-${index}`}>
-            <div className="message-role">{message.role === 'user' ? 'YOU' : 'LINGCART AGENT'}</div>
+            <div className="message-role"><span className="message-avatar" aria-hidden="true">{message.role === 'user' ? '你' : 'L'}</span><span>{message.role === 'user' ? '你' : 'LingCart'}</span></div>
             <div className="message-copy">{message.content}</div>
             {message.result && <ResultArtifactViews artifacts={message.result.artifacts} />}
             {message.result?.error && <div className="message-error-evidence" role="alert" aria-label="运行失败详情">
@@ -275,10 +305,10 @@ export function SandboxPage() {
               <p>{conciseFailure(message.result.error.message)}</p>
               <small>{message.result.error.retryable ? '该错误允许使用同一请求编号重试' : '该错误需要修正协议或输入后再执行'}</small>
             </div>}
-            {message.result && <div className="message-meta"><StatusBadge status={message.result.status} /><span>{message.result.agent} · {message.result.run_id.slice(0, 10)} · {message.result.trace.length} tools</span></div>}
+            {message.result && <div className="message-meta"><StatusBadge status={message.result.status} /><span>{message.result.agent} · {message.result.run_id.slice(0, 10)} · {message.result.trace.length} 次工具调用</span></div>}
           </article>)}
           {(send.isPending || pendingRun) && <article className="message assistant live-response" aria-live="polite" aria-busy={liveResponse.state !== 'completed'}>
-            <div className="message-role"><span>LINGCART AGENT</span>{streamConnection === 'reconnecting' && <em>连接恢复中</em>}</div>
+            <div className="message-role"><span className="message-avatar" aria-hidden="true">L</span><span>LingCart</span>{streamConnection === 'reconnecting' && <em>连接恢复中</em>}</div>
             <div className="agent-progress"><i /><span>{liveStatusLabel}</span></div>
             {liveResponse.content && <div className="message-copy stream-copy">{liveResponse.content}{liveResponse.state === 'streaming' && <span className="stream-cursor" aria-hidden="true" />}</div>}
             {!liveResponse.content && <div className="stream-placeholder">执行进度会持续同步，回答生成后将在这里逐步显示。</div>}
@@ -288,7 +318,7 @@ export function SandboxPage() {
         </div>
 
         {activeRunId && <section className="live-run-panel">
-          <div className="live-run-head"><div><span>LIVE RUN</span><code>{activeRunId.slice(0, 12)}</code></div><StatusBadge status={activeRun.data?.status ?? 'RUNNING'} /></div>
+          <div className="live-run-head"><div><span>实时运行</span><code>{activeRunId.slice(0, 12)}</code></div><StatusBadge status={activeRun.data?.status ?? 'RUNNING'} /></div>
           <ExecutionSpine events={events} />
           {running && <div className="run-control-composer">
             <textarea aria-label="运行时指令" rows={2} value={controlDraft} onChange={(event) => setControlDraft(event.target.value)} placeholder="补充约束，或排队下一项任务…" />
@@ -302,16 +332,29 @@ export function SandboxPage() {
           onConfirm={() => submit(pending.type === 'PROCESS_PAYMENT' ? `确认使用 ${paymentMethod} 支付` : '确认继续', pending)}
           onCancel={() => submit('取消，先不要执行', pending)} disabled={busy} />}
         <form className="composer" onSubmit={onSubmit}>
-          <textarea aria-label="消费需求" value={draft} onChange={(event) => setDraft(event.target.value)} placeholder={busy ? '当前任务结束后可发送新需求；运行时约束请在上方补充' : '继续提问，或补充你的需求…'} rows={3} disabled={busy} />
-          <button aria-label="发送需求" disabled={!draft.trim() || busy}><ArrowUp size={18} /></button>
+          <div className="composer-field">
+            <label htmlFor="consumer-prompt">给 LingCart 一个清晰目标</label>
+            <textarea id="consumer-prompt" aria-label="消费需求" value={draft} onChange={(event) => setDraft(event.target.value)} onKeyDown={onComposerKeyDown} placeholder={busy ? '当前任务结束后可发送新需求；运行时约束请在上方补充' : '例如：400 元以内选一副降噪耳机和一把静音键盘…'} rows={3} disabled={busy} />
+            <div className="composer-hints"><span>{adaptive ? '自主规划' : '标准执行'}</span><small>Enter 发送 · Shift + Enter 换行</small></div>
+          </div>
+          <button aria-label="发送需求" disabled={!draft.trim() || busy}><ArrowUp size={17} /><span>发送</span></button>
         </form>
       </section>
+
       <aside className="sandbox-aside">
-        <div className="aside-block"><span>QUICK STARTS</span><h3>常用任务</h3>{quickPrompts.map(([label, prompt]) => <button onClick={() => submit(prompt)} disabled={busy} key={label}><Search size={14} /><div><b>{label}</b><small>{prompt}</small></div></button>)}</div>
-        <div className="aside-block evidence-note"><span>DURABLE EXECUTION</span><h3>刷新页面不会丢任务</h3><p>请求编号、活动 Run、检查点、审批状态和事件序列均由持久层恢复；网络重试复用同一幂等键。</p></div>
+        <WorkspaceEvidence result={latestResult} activeRunId={activeRunId} activeStatus={activeRun.data?.status} pending={send.isPending} />
+        <section className="quick-start-card">
+          <div className="context-card-heading"><div><span>快速开始</span><h2>常用任务</h2></div><Search size={17} aria-hidden="true" /></div>
+          <div className="quick-task-list">{quickPrompts.map(({ label, prompt, icon: Icon }) => <button type="button" onClick={() => submit(prompt)} disabled={busy} key={label}><Icon size={16} aria-hidden="true" /><div><b>{label}</b><small>{prompt}</small></div><ArrowUp size={14} aria-hidden="true" /></button>)}</div>
+        </section>
+        <section className="durable-note">
+          <div><Check size={14} aria-hidden="true" /><span>可恢复执行</span></div>
+          <h2>刷新页面，任务仍在。</h2>
+          <p>请求编号、活动 Run、检查点、审批状态和事件序列均从持久层恢复；网络重试复用同一幂等键。</p>
+        </section>
       </aside>
     </div>
-  </>
+  </div>
 }
 
 function ApprovalPanel({ action, paymentMethod, setPaymentMethod, onConfirm, onCancel, disabled }: {
@@ -319,7 +362,7 @@ function ApprovalPanel({ action, paymentMethod, setPaymentMethod, onConfirm, onC
   onConfirm: () => void; onCancel: () => void; disabled: boolean
 }) {
   const title = action.type === 'PROCESS_PAYMENT' ? '支付' : '退款'
-  return <div className="approval-panel"><div><span>APPROVAL REQUIRED</span><h3>确认订单 #{action.order_id} 的{title}操作</h3><p>审批状态已持久化；刷新后仍会恢复，只有明确确认才会修改本地演示数据库。</p></div>
+  return <div className="approval-panel"><div><span>需要你的确认</span><h3>确认订单 #{action.order_id} 的{title}操作</h3><p>审批状态已持久化；刷新后仍会恢复，只有明确确认才会修改本地演示数据库。</p></div>
     {action.type === 'PROCESS_PAYMENT' && <label>支付方式<select value={paymentMethod} onChange={(event) => setPaymentMethod(event.target.value)}><option value="card">银行卡</option><option value="paypal">PayPal</option></select></label>}
     <div className="approval-actions"><button className="primary" onClick={onConfirm} disabled={disabled}><Check size={14} />确认{title}</button><button onClick={onCancel} disabled={disabled}><CircleStop size={14} />取消操作</button></div>
   </div>
