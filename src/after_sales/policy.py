@@ -15,6 +15,7 @@ from src.after_sales.contracts import PolicyEvaluation, PolicyOutcome
 from src.after_sales.service import AfterSalesDomainError
 from src.backend.db import (
     AfterSalesCase,
+    AfterSalesCaseEvent,
     AfterSalesEvidence,
     Order,
     OrderItem,
@@ -25,7 +26,7 @@ from src.backend.db import (
 )
 
 
-EVALUATOR_VERSION = "after-sales-policy-v1"
+EVALUATOR_VERSION = "after-sales-policy-v2"
 
 
 def _utcnow() -> datetime:
@@ -155,6 +156,12 @@ class AfterSalesPolicyEngine:
             order_items=order_items,
             payment=payment,
         )
+        from src.after_sales.evidence import evaluate_requirements
+        requirements = evaluate_requirements(self.session, case, policy, rules, evaluated_at)
+        evidence_revision = self.session.scalar(select(AfterSalesCaseEvent.case_revision).where(
+            AfterSalesCaseEvent.case_id == case_id,
+            AfterSalesCaseEvent.event_type.in_(["EVIDENCE_ADDED", "EVIDENCE_REVOKED"]),
+        ).order_by(AfterSalesCaseEvent.case_revision.desc()).limit(1)) or 0
         facts = {
             "case_id": case.case_id,
             "case_type": case.case_type,
@@ -171,6 +178,8 @@ class AfterSalesPolicyEngine:
             "currency": item.currency if item else None,
             "refund_scope": refund_scope,
             "active_evidence_types": sorted({evidence.evidence_type for evidence in active_evidence}),
+            "evidence_requirements": requirements,
+            "evidence_revision": evidence_revision,
             "as_of_date": evaluated_at.date().isoformat(),
         }
         evidence_refs = self._evidence_refs(
@@ -247,6 +256,21 @@ class AfterSalesPolicyEngine:
             raise AfterSalesDomainError("POLICY_SCHEMA_INVALID", "政策规则结构不完整或类型无效")
         if rules["return_window_days"] < 0 or rules["manual_review_amount_minor"] < 0:
             raise AfterSalesDomainError("POLICY_SCHEMA_INVALID", "政策期限或金额阈值不能为负数")
+        if any(not isinstance(types, list) or any(not isinstance(t, str) for t in types)
+               for types in rules["required_evidence_by_reason"].values()):
+            raise AfterSalesDomainError("POLICY_SCHEMA_INVALID", "政策证据要求必须为类型列表")
+        acceptance = rules.get("evidence_acceptance", {})
+        if not isinstance(acceptance, dict) or any(
+            not isinstance(rule, dict)
+            or not isinstance(rule.get("accepted_sources"), list)
+            or any(s not in {"CUSTOMER_STATEMENT", "ORDER_RECORD"} for s in rule["accepted_sources"])
+            or rule.get("condition") not in {"CUSTOMER_ATTESTATION", "AUTHORITATIVE_ORDER"}
+            or not isinstance(rule.get("description"), str)
+            or (rule.get("max_age_days") is not None and
+                (type(rule["max_age_days"]) is not int or rule["max_age_days"] < 0))
+            for rule in acceptance.values()
+        ):
+            raise AfterSalesDomainError("POLICY_SCHEMA_INVALID", "证据接受规则无效")
         return rules
 
     @staticmethod
@@ -317,10 +341,8 @@ class AfterSalesPolicyEngine:
                 ("AFTER_SALES_REASON_NOT_SUPPORTED",),
                 ("ESCALATE_TO_HUMAN", "CANCEL_CASE"),
             )
-        required_evidence = set(
-            rules["required_evidence_by_reason"][facts["reason_code"]]
-        )
-        missing = sorted(required_evidence - set(facts["active_evidence_types"]))
+        missing = sorted(r["evidence_type"] for r in facts["evidence_requirements"]
+                         if r["status"] != "SATISFIED")
         if missing:
             return (
                 PolicyOutcome.NEEDS_EVIDENCE,

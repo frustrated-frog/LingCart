@@ -27,7 +27,10 @@ from src.backend.db import (
     AfterSalesCaseEvent,
     AfterSalesCaseRun,
     AfterSalesEvidence,
+    AfterSalesEvidenceValidation,
     AgentRun,
+    Conversation,
+    PendingAction,
     Order,
     OrderItem,
     PolicyDecision,
@@ -261,6 +264,9 @@ class AfterSalesCaseService:
             return self.get_case(case_id)
         self._assert_mutable(case, expected_revision)
 
+        if case.status == CaseStatus.SUBMITTED:
+            raise AfterSalesDomainError("CASE_ALREADY_SUBMITTED", "已提交案件不能继续修改证据")
+
         duplicate = self.session.scalar(
             select(AfterSalesEvidence).where(
                 AfterSalesEvidence.case_id == case_id,
@@ -284,9 +290,12 @@ class AfterSalesCaseService:
             )
             self.session.add(duplicate)
             self.session.flush()
+            from src.after_sales.evidence import record_validation
+            record_validation(self.session, case, duplicate, created_at)
+        self._invalidate_evidence_dependencies(case)
         self._advance(
             case,
-            target_status=CaseStatus(case.status),
+            target_status=CaseStatus.AWAITING_EVIDENCE,
             event_type="EVIDENCE_ADDED",
             idempotency_key=idempotency_key,
             actor_type=actor_type,
@@ -296,6 +305,45 @@ class AfterSalesCaseService:
             allow_same_status=True,
         )
         return self.get_case(case_id)
+
+    def revoke_evidence(
+        self, case_id: str, evidence_id: str, *, idempotency_key: str,
+        expected_revision: int, actor_id: str | None = None, now: datetime | None = None,
+    ) -> CaseProjection:
+        case = self._case(case_id)
+        payload = {"evidence_id": evidence_id}
+        previous = self._event_by_key(case_id, idempotency_key)
+        if previous:
+            self._assert_replay(previous, "EVIDENCE_REVOKED", payload)
+            return self.get_case(case_id)
+        self._assert_mutable(case, expected_revision)
+        if case.status == CaseStatus.SUBMITTED:
+            raise AfterSalesDomainError("CASE_ALREADY_SUBMITTED", "已提交案件不能撤回证据")
+        evidence = self.session.get(AfterSalesEvidence, evidence_id)
+        if evidence is None or evidence.case_id != case_id:
+            raise AfterSalesDomainError("EVIDENCE_NOT_FOUND", "证据不属于当前案件")
+        if evidence.status != "ACTIVE":
+            raise AfterSalesDomainError("EVIDENCE_NOT_ACTIVE", "该证据已失效，不能重复撤回")
+        evidence.status = "REVOKED"
+        self._invalidate_evidence_dependencies(case)
+        self._advance(case, target_status=CaseStatus.AWAITING_EVIDENCE,
+                      event_type="EVIDENCE_REVOKED", idempotency_key=idempotency_key,
+                      actor_type=ActorType.CUSTOMER, actor_id=actor_id, payload=payload,
+                      occurred_at=_naive_utc(now or _utcnow()), allow_same_status=True)
+        return self.get_case(case_id)
+
+    def _invalidate_evidence_dependencies(self, case) -> None:
+        # 授权关闭与证据变更必须在同一个事务内完成。
+        actions = self.session.scalars(select(PendingAction).where(
+            PendingAction.session_id == case.origin_session_id,
+            PendingAction.status.in_(["OPEN", "APPROVED"]),
+        )).all()
+        for action in actions:
+            if action.payload.get("case_id") == case.case_id:
+                action.status = "CLOSED"
+        conversation = self.session.get(Conversation, case.origin_session_id) if case.origin_session_id else None
+        if conversation and ((conversation.state or {}).get("pending_action") or {}).get("case_id") == case.case_id:
+            conversation.state = {**conversation.state, "pending_action": None}
 
     def attach_run(
         self,
@@ -482,7 +530,11 @@ class AfterSalesCaseService:
             opened_at=case.opened_at,
             updated_at=case.updated_at,
             closed_at=case.closed_at,
-            latest_decision=self._decision_dict(decision) if decision else None,
+            latest_decision={
+                **self._decision_dict(decision),
+                "valid": not any(e.event_type.startswith("EVIDENCE_") and e.case_revision > decision.case_revision
+                                 for e in events),
+            } if decision else None,
             evidence=tuple(
                 {
                     "evidence_id": item.evidence_id,
@@ -494,6 +546,7 @@ class AfterSalesCaseService:
                     "status": item.status,
                     "observed_at": item.observed_at,
                     "created_at": item.created_at,
+                    "validation": self._validation_dict(item.evidence_id),
                 }
                 for item in evidence
             ),
@@ -512,6 +565,14 @@ class AfterSalesCaseService:
                 for item in events
             ),
         )
+
+    def _validation_dict(self, evidence_id: str) -> dict[str, Any] | None:
+        row = self.session.get(AfterSalesEvidenceValidation, evidence_id)
+        if row is None:
+            return None
+        return {"status": row.status, "reason_code": row.reason_code,
+                "validator_version": row.validator_version, "checksum": row.checksum,
+                "case_revision": row.case_revision, "validated_at": row.validated_at}
 
     def _resolve_order_item(self, order_id: int, requested_item_id: str | None) -> str:
         items = self.session.scalars(

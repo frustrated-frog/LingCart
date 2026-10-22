@@ -17,6 +17,8 @@ from src.after_sales import (
 )
 from src.backend.db import (
     AfterSalesCaseEvent,
+    AgentRun,
+    Conversation,
     Order,
     OrderItem,
     Payment,
@@ -40,6 +42,12 @@ def session():
     init_db(engine)
     with get_session_factory(engine)() as db_session:
         seed(db_session)
+        db_session.add(Conversation(session_id="conversation-1", state={}))
+        db_session.flush()
+        db_session.add(AgentRun(run_id="evidence-run", session_id="conversation-1", request_id="evidence",
+                                request="包装完好但商品外壳开裂；实际功能与商品说明不一致", status="SUCCEEDED",
+                                created_at=datetime(2026, 5, 25), limits={}))
+        db_session.commit()
         yield db_session
 
 
@@ -62,8 +70,8 @@ def _evidence(description="包装完好但商品外壳开裂"):
     return EvidenceCommand(
         evidence_type="DAMAGE_DESCRIPTION",
         source_type="CUSTOMER_STATEMENT",
-        source_ref="conversation-1:message-2",
-        payload={"description": description},
+        source_ref="agent_runs:evidence-run:request",
+        payload={"statement": description},
         observed_at=datetime(2026, 6, 7, 9, 0),
     )
 
@@ -346,8 +354,8 @@ def test_high_value_case_is_sent_to_manual_review_after_hard_checks(session):
         EvidenceCommand(
             evidence_type="ISSUE_DESCRIPTION",
             source_type="CUSTOMER_STATEMENT",
-            source_ref="conversation-1:high-value-description",
-            payload={"description": "实际功能与商品说明不一致"},
+            source_ref="agent_runs:evidence-run:request",
+            payload={"statement": "实际功能与商品说明不一致"},
             observed_at=datetime(2026, 5, 25, 9, 0),
         ),
         idempotency_key="high-value-evidence",

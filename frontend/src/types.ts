@@ -385,6 +385,21 @@ export type AfterSalesCaseStatus = 'OPEN' | 'AWAITING_EVIDENCE' | 'AWAITING_CONF
 
 export type PolicyOutcome = 'ELIGIBLE' | 'NEEDS_EVIDENCE' | 'INELIGIBLE' | 'MANUAL_REVIEW'
 
+export interface EvidenceRequirement {
+  requirement_id: string
+  policy_version_id: string
+  policy_checksum: string
+  target_case_id: string
+  evidence_type: string
+  description: string
+  accepted_sources: string[]
+  validation_condition: string
+  max_age_days: number | null
+  status: 'SATISFIED' | 'UNSATISFIED'
+  evidence_refs: string[]
+  rejected_evidence: Record<string, string>
+}
+
 export interface PolicyDecision {
   decision_id: string
   policy_version_id: string
@@ -393,7 +408,8 @@ export interface PolicyDecision {
   outcome: PolicyOutcome
   reason_codes: string[]
   allowed_actions: string[]
-  facts: Record<string, unknown>
+  facts: Record<string, unknown> & { evidence_requirements?: EvidenceRequirement[] }
+  valid?: boolean
   evidence_refs: string[]
   evaluator_version: string
   decided_at: string
@@ -410,6 +426,14 @@ export interface AfterSalesEvidence {
   status: string
   observed_at: string
   created_at: string
+  validation?: {
+    status: 'VERIFIED' | 'UNVERIFIED' | 'REJECTED'
+    reason_code: string
+    validator_version: string
+    checksum: string
+    case_revision: number
+    validated_at: string
+  } | null
 }
 
 export interface AfterSalesCaseEvent {

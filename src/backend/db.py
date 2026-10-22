@@ -184,6 +184,20 @@ class AfterSalesEvidence(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime)
 
 
+class AfterSalesEvidenceValidation(Base):
+    """不可变来源核验记录；不代表陈述内容真实或满足政策。"""
+
+    __tablename__ = "after_sales_evidence_validations"
+
+    evidence_id: Mapped[str] = mapped_column(ForeignKey("after_sales_evidence.evidence_id"), primary_key=True)
+    checksum: Mapped[str] = mapped_column(String(64))
+    status: Mapped[str] = mapped_column(String(24))
+    reason_code: Mapped[str] = mapped_column(String(64))
+    validator_version: Mapped[str] = mapped_column(String(40))
+    case_revision: Mapped[int] = mapped_column(Integer)
+    validated_at: Mapped[datetime] = mapped_column(DateTime)
+
+
 class PolicyDecision(Base):
     """Append-only policy verdict with the exact facts and policy identity used."""
 
