@@ -33,6 +33,20 @@ class GraphGuidance(FrozenModel):
         return self
 
 
+class _ReservedGuidanceModel:
+    """限制 Runtime 的重试次数，保留 solver 和核验预算；Gateway 本身不另起重试。"""
+    def __init__(self, model, attempts):
+        self.model = model
+        self.max_attempts = max(1, min(getattr(model, "max_attempts", 2), attempts))
+
+    def __getattr__(self, name):
+        return getattr(self.model, name)
+
+    def bind(self, **kwargs):
+        model = self.model.bind(**kwargs) if hasattr(self.model, "bind") else self.model
+        return _ReservedGuidanceModel(model, self.max_attempts)
+
+
 @dataclass(frozen=True)
 class PGContextMechanism:
     slot: str = "context"
@@ -116,6 +130,7 @@ class PGContextEngine:
         payload = {"request": state["request"], "goal": state.get("goal"),
                    "feedback": state.get("feedback"), "recent_steps": recent, "subgraph": selection}
         key = fingerprint({"graph": self.graph.fingerprint, "payload": payload,
+                           "action_sequence": actions[-1].get("sequence") if actions else None,
                            "version": state.get("version"), "revision": state["goal_revision"],
                            "binding_revision": state.get("binding_revision", 0)})
         # 事件与模型响应同属持久状态。即使进程在 solver 决策前退出，也复用指导和游标。
@@ -129,6 +144,7 @@ class PGContextEngine:
                  "anchor": selection["anchor"], "fallback": selection["fallback"],
                  "node_ids": [n["id"] for n in selection["nodes"]],
                  "edge_ids": [], "retrieved_edge_ids": [e["id"] for e in selection["edges"]],
+                 "subgraph": selection if len(canonical(selection)) <= self.max_graph_chars else None,
                  "guidance": "", "status": "SKIPPED", "reason": None}
         cached_model = str(runtime.model_cursor + 1) in runtime.models
         if len(canonical(selection)) > self.max_graph_chars or len(canonical(payload)) + len(GUIDANCE_PROMPT) > max_chars:
@@ -141,6 +157,7 @@ class PGContextEngine:
             try:
                 model = get_llm(purpose="planner")
                 model = model.json_mode() if hasattr(model, "json_mode") else model
+                model = _ReservedGuidanceModel(model, runtime.limits.max_model_calls - runtime.counters["model_calls"] - 2)
                 response = runtime.model_call(model, [SystemMessage(content=GUIDANCE_PROMPT),
                     HumanMessage(content=canonical(payload))], purpose="pg_guidance", agent="pg",
                     allow_tools=False, isolated=True)

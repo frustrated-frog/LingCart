@@ -124,6 +124,21 @@ def test_graph_budget_and_invalid_guidance_have_explicit_evidence(monkeypatch):
         assert not any(e["type"] == "mechanism_applied" for e in context.events)
 
 
+def test_guidance_retries_cannot_consume_reserved_solver_and_audit_calls(monkeypatch):
+    class TimeoutModel:
+        max_attempts = 8
+        def invoke(self, messages):
+            raise TimeoutError("temporary timeout")
+    monkeypatch.setattr("src.pg_context.get_llm", lambda **_: TimeoutModel())
+    engine = PGContextEngine(ContextEngine("推荐耳机"), graph())
+    context = RunRuntime("pg-test", BudgetLimits(max_model_calls=3))
+    with runtime_scope(context):
+        _, manifest = engine.decision_messages("系统", state(), TaskPlan([], []), [], max_chars=10000)
+    assert manifest["pg_status"] == "FAILED"
+    assert context.counters["model_calls"] == 1
+    assert context.events[-1]["reason"] == "MODEL_TIMEOUT"
+
+
 def test_steering_invalidates_guidance_and_old_action_anchor(monkeypatch):
     model = Guide()
     monkeypatch.setattr("src.pg_context.get_llm", lambda **_: model)
