@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 import hashlib
 import json
 import re
+from types import MappingProxyType
 from typing import Callable, Mapping
 
 from src import tools
@@ -59,6 +60,47 @@ ResultValidator = Callable[[object, Mapping[str, object]], bool]
 ResultVerifier = Callable[[object, Mapping[str, object]], object]
 ResultRenderer = Callable[[object, Mapping[str, object]], str]
 OutcomeMapper = Callable[[object, Mapping[str, object]], str]
+
+
+@dataclass(frozen=True)
+class SemanticValueCatalog:
+    """Versioned model-facing enum whose values represent semantic classes.
+
+    Unlike literal entities such as order IDs, a semantic value does not need
+    to appear verbatim in user text. It is accepted only when selected from a
+    capability-declared catalog and remains tied to the exact source quote.
+    """
+
+    version: str
+    source: str
+    values: Mapping[str, str]
+
+    def __post_init__(self) -> None:
+        if not self.version.strip() or not self.source.strip() or not self.values:
+            raise ValueError("Semantic value catalogs require version, source and values")
+        if any(not key.strip() or not description.strip() for key, description in self.values.items()):
+            raise ValueError("Semantic value catalog entries cannot be empty")
+        object.__setattr__(self, "values", MappingProxyType(dict(self.values)))
+
+    @property
+    def fingerprint(self) -> str:
+        encoded = json.dumps(
+            self.public_payload(include_fingerprint=False),
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+    def public_payload(self, *, include_fingerprint: bool = True) -> dict:
+        payload = {
+            "version": self.version,
+            "source": self.source,
+            "values": dict(self.values),
+        }
+        if include_fingerprint:
+            payload["fingerprint"] = self.fingerprint
+        return payload
 
 
 @dataclass(frozen=True)
@@ -129,6 +171,7 @@ class CapabilitySpec:
     side_effect: str = "READ_ONLY"
     missing_question: str = "请补充完成这个请求所需的关键信息。"
     metadata_dependencies: tuple[str, ...] = ()
+    semantic_value_catalogs: Mapping[str, SemanticValueCatalog] = field(default_factory=dict)
 
     def public_payload(self) -> dict:
         return {
@@ -149,6 +192,10 @@ class CapabilitySpec:
             "supports_under_specified_goal": self.supports_under_specified_goal,
             "side_effect": self.side_effect,
             "metadata_dependencies": list(self.metadata_dependencies),
+            "semantic_value_catalogs": {
+                name: catalog.public_payload()
+                for name, catalog in sorted(self.semantic_value_catalogs.items())
+            },
         }
 
 
@@ -188,6 +235,13 @@ class CapabilityRegistry:
         required_droppable = droppable & set(registration.spec.required_fields)
         if required_droppable:
             raise ValueError(f"Required fields cannot be dropped by {kind}: {sorted(required_droppable)}")
+        undeclared_catalogs = set(registration.spec.semantic_value_catalogs) - set(
+            registration.spec.accepted_fields
+        )
+        if undeclared_catalogs:
+            raise ValueError(
+                f"Semantic value catalogs must be accepted by {kind}: {sorted(undeclared_catalogs)}"
+            )
         for name, handler in registration.tools.items():
             existing = self._tools.get(name)
             if existing is not None and existing is not handler:
@@ -242,6 +296,28 @@ class CapabilityRegistry:
         if registration.normalizer is not None:
             normalized, resolver_provenance = registration.normalizer(normalized, sources)
             provenance.update(resolver_provenance)
+        for field_name, catalog in registration.spec.semantic_value_catalogs.items():
+            value = normalized.get(field_name)
+            if value in (None, ""):
+                continue
+            if not isinstance(value, str) or value not in catalog.values:
+                raise AgentError(
+                    "INVALID_CAPABILITY_ARGUMENTS",
+                    f"能力 {registration.spec.objective_kind} 的 {field_name} 不在版本化语义目录中",
+                    retryable=False,
+                )
+            provenance.setdefault(
+                field_name,
+                {
+                    "name": field_name,
+                    "raw_text": str(objective.get("source_quote") or ""),
+                    "normalized_value": value,
+                    "resolver": "model_semantic_classification",
+                    "resolver_version": catalog.version,
+                    "resolver_fingerprint": catalog.fingerprint,
+                    "source_quote": str(objective.get("source_quote") or ""),
+                },
+            )
         folded_sources = [source.casefold() for source in sources]
 
         def grounded(value: object) -> bool:
@@ -323,6 +399,14 @@ class CapabilityRegistry:
                 f"能力 {spec.objective_kind} 的参数类型无效：{', '.join(sorted(invalid_parameters))}",
                 retryable=False,
             )
+        for name, catalog in spec.semantic_value_catalogs.items():
+            value = objective.get(name)
+            if value not in (None, "") and (not isinstance(value, str) or value not in catalog.values):
+                raise AgentError(
+                    "INVALID_CAPABILITY_ARGUMENTS",
+                    f"能力 {spec.objective_kind} 的 {name} 不在版本化语义目录中",
+                    retryable=False,
+                )
         for name, maximum in spec.max_items.items():
             value = objective.get(name)
             if isinstance(value, (list, tuple)) and len(value) > maximum:
@@ -513,10 +597,17 @@ def _refund_request(objective: Mapping[str, object], _request: str) -> tuple[Com
 
 
 def _after_sales_case(objective: Mapping[str, object], request: str) -> tuple[CompiledOperation, ...]:
+    registration = get_capability_registry().registration(AFTER_SALES_CASE)
+    reason_catalog = registration.spec.semantic_value_catalogs["reason_code"]
     arguments = {
         "order_id": objective["order_id"],
         "reason_text": request,
+        "reason_code": objective["reason_code"],
+        "reason_taxonomy_version": reason_catalog.version,
+        "reason_taxonomy_fingerprint": reason_catalog.fingerprint,
     }
+    if objective.get("order_item_id"):
+        arguments["order_item_id"] = objective["order_item_id"]
     return (
         CompiledOperation("case-assessment", "after_sales", "prepare_after_sales_case", arguments),
         CompiledOperation(
@@ -656,6 +747,7 @@ def _spec(kind: str, capability_id: str, description: str, target: str, evidence
           alternative_evidence: tuple[str, ...] = (),
           under_specified: bool = False, side_effect: str = "READ_ONLY",
           metadata_dependencies: tuple[str, ...] = (),
+          semantic_value_catalogs: Mapping[str, SemanticValueCatalog] | None = None,
           missing_question: str = "请补充完成这个请求所需的关键信息。",
           handlers: Mapping[str, object] | None = None, normalizer: Normalizer | None = None,
           operations: Mapping[str, OperationContract] | None = None) -> CapabilityRegistration:
@@ -678,6 +770,7 @@ def _spec(kind: str, capability_id: str, description: str, target: str, evidence
             supports_under_specified_goal=under_specified,
             side_effect=side_effect,
             metadata_dependencies=metadata_dependencies,
+            semantic_value_catalogs=semantic_value_catalogs or {},
             missing_question=missing_question,
         ),
         compiler,
@@ -688,6 +781,11 @@ def _spec(kind: str, capability_id: str, description: str, target: str, evidence
 
 
 def _builtin_registrations() -> tuple[CapabilityRegistration, ...]:
+    from src.after_sales.reason_taxonomy import (
+        REASON_CODE_DESCRIPTIONS,
+        REASON_TAXONOMY_SOURCE,
+        REASON_TAXONOMY_VERSION,
+    )
     from src.entity_resolution import normalize_clock_objective
     from src.constraint_planning import (
         CONSTRAINT_PLAN,
@@ -739,10 +837,17 @@ def _builtin_registrations() -> tuple[CapabilityRegistration, ...]:
             "after_sales_case",
             "POLICY_DECISION",
             _after_sales_case,
-            required=order_fields,
-            accepted=order_fields,
+            required=("order_id", "reason_code"),
+            accepted=("order_id", "order_item_id", "reason_code"),
             side_effect="REQUIRES_APPROVAL",
-            missing_question=order_question,
+            missing_question="请提供订单号，并说明具体售后原因；原因不明确时我不会猜测政策分类。",
+            semantic_value_catalogs={
+                "reason_code": SemanticValueCatalog(
+                    version=REASON_TAXONOMY_VERSION,
+                    source=REASON_TAXONOMY_SOURCE,
+                    values=REASON_CODE_DESCRIPTIONS,
+                )
+            },
             operations={
                 "prepare_after_sales_case": OperationContract(
                     handler=tools.prepare_after_sales_case,

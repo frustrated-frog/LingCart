@@ -229,8 +229,20 @@ class AfterSalesPolicyEngine:
                 ("RETURN_WINDOW_EXPIRED",),
                 ("VIEW_POLICY", "ESCALATE_TO_HUMAN", "CLOSE_CASE"),
             )
+        if not facts["reason_code"]:
+            return (
+                PolicyOutcome.NEEDS_EVIDENCE,
+                ("AFTER_SALES_REASON_REQUIRED",),
+                ("CLARIFY_REASON", "CANCEL_CASE", "ESCALATE_TO_HUMAN"),
+            )
+        if facts["reason_code"] not in rules["required_evidence_by_reason"]:
+            return (
+                PolicyOutcome.MANUAL_REVIEW,
+                ("AFTER_SALES_REASON_NOT_SUPPORTED",),
+                ("ESCALATE_TO_HUMAN", "CANCEL_CASE"),
+            )
         required_evidence = set(
-            rules["required_evidence_by_reason"].get(facts["reason_code"] or "", [])
+            rules["required_evidence_by_reason"][facts["reason_code"]]
         )
         missing = sorted(required_evidence - set(facts["active_evidence_types"]))
         if missing:

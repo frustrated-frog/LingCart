@@ -223,6 +223,28 @@ def test_policy_decision_requires_evidence_then_becomes_eligible(session):
     assert replay.revision == 4
 
 
+def test_policy_missing_or_unknown_reason_fails_closed(session):
+    service = AfterSalesCaseService(session)
+    missing_case = service.open_case(_command(request_key="missing-reason", reason_code=None))
+    missing = AfterSalesPolicyEngine(session).evaluate(
+        missing_case.case_id,
+        as_of=datetime(2026, 6, 20, 12, 0),
+    )
+
+    assert missing.outcome == PolicyOutcome.NEEDS_EVIDENCE
+    assert missing.reason_codes == ("AFTER_SALES_REASON_REQUIRED",)
+    assert "CLARIFY_REASON" in missing.allowed_actions
+
+    unknown_case = service.open_case(_command(request_key="unknown-reason", reason_code="OTHER"))
+    unknown = AfterSalesPolicyEngine(session).evaluate(
+        unknown_case.case_id,
+        as_of=datetime(2026, 6, 20, 12, 0),
+    )
+
+    assert unknown.outcome == PolicyOutcome.MANUAL_REVIEW
+    assert unknown.reason_codes == ("AFTER_SALES_REASON_NOT_SUPPORTED",)
+
+
 def test_policy_expiration_and_existing_refund_are_machine_readable(session):
     service = AfterSalesCaseService(session)
     expired_case = service.open_case(_command(request_key="expired", reason_code=None))
@@ -251,10 +273,22 @@ def test_high_value_case_is_sent_to_manual_review_after_hard_checks(session):
     session.flush()
     service = AfterSalesCaseService(session)
     case = service.open_case(
-        _command(request_key="high-value", order_id=1004, reason_code=None)
+        _command(request_key="high-value", order_id=1004, reason_code="NOT_AS_DESCRIBED")
+    )
+    case = service.add_evidence(
+        case.case_id,
+        EvidenceCommand(
+            evidence_type="ISSUE_DESCRIPTION",
+            source_type="CUSTOMER_STATEMENT",
+            source_ref="conversation-1:high-value-description",
+            payload={"description": "实际功能与商品说明不一致"},
+            observed_at=datetime(2026, 5, 25, 9, 0),
+        ),
+        idempotency_key="high-value-evidence",
+        expected_revision=case.revision,
     )
 
-    decision = AfterSalesPolicyEngine(session).evaluate(case.case_id, as_of=datetime(2026, 5, 25))
+    decision = AfterSalesPolicyEngine(session).evaluate(case.case_id, as_of=datetime(2026, 5, 25, 12, 0))
 
     assert decision.outcome == PolicyOutcome.MANUAL_REVIEW
     assert decision.reason_codes == ("AMOUNT_REQUIRES_MANUAL_REVIEW",)

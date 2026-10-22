@@ -431,6 +431,9 @@ def initiate_refund(order_id: int, reason: str) -> dict:
 def prepare_after_sales_case(
     order_id: int,
     reason_text: Annotated[str, Field(min_length=1, max_length=2000)],
+    reason_code: Annotated[str, Field(min_length=1, max_length=40)],
+    reason_taxonomy_version: Annotated[str, Field(min_length=1, max_length=80)],
+    reason_taxonomy_fingerprint: Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")],
     order_item_id: str | None = None,
 ) -> dict:
     """Open and deterministically assess a refund case without submitting a refund.
@@ -450,12 +453,33 @@ def prepare_after_sales_case(
         EvidenceCommand,
         RequestedResolution,
     )
+    from src.after_sales.reason_taxonomy import (
+        REASON_CODE_DESCRIPTIONS,
+        REASON_TAXONOMY_FINGERPRINT,
+        REASON_TAXONOMY_VERSION,
+        reason_taxonomy_identity,
+    )
     from src.errors import AgentError
     from src.runtime import current_runtime
 
     runtime = current_runtime()
     now = datetime.now(UTC).replace(tzinfo=None)
     run_id = runtime.run_id if runtime else uuid.uuid4().hex
+    if (
+        reason_taxonomy_version != REASON_TAXONOMY_VERSION
+        or reason_taxonomy_fingerprint != REASON_TAXONOMY_FINGERPRINT
+    ):
+        raise AgentError(
+            "REASON_TAXONOMY_STALE",
+            "售后原因分类目录已经变化，请重新理解当前诉求",
+            retryable=False,
+        )
+    if reason_code not in REASON_CODE_DESCRIPTIONS:
+        raise AgentError(
+            "AFTER_SALES_REASON_UNKNOWN",
+            "售后原因不在当前版本化分类目录中",
+            retryable=False,
+        )
     try:
         with _session() as session:
             run = session.get(AgentRun, run_id) if runtime else None
@@ -472,6 +496,12 @@ def prepare_after_sales_case(
                 reason_text=reason_text,
             )
             is_new_case = case is None
+            if case is not None and case.reason_code != reason_code:
+                raise AgentError(
+                    "CASE_REASON_CLASSIFICATION_CONFLICT",
+                    "进行中案件的售后原因分类与本轮理解不一致，需要重新核验案件",
+                    retryable=False,
+                )
             if case is None:
                 case = service.open_case(
                     CaseCreateCommand(
@@ -480,9 +510,18 @@ def prepare_after_sales_case(
                         order_id=order_id,
                         order_item_id=order_item_id,
                         requested_resolution=RequestedResolution.REFUND,
+                        reason_code=reason_code,
                         reason_text=reason_text,
                         origin_session_id=session_id,
-                        context={"source": "AGENT_RUNTIME", "source_run_id": run_id},
+                        context={
+                            "source": "AGENT_RUNTIME",
+                            "source_run_id": run_id,
+                            "reason_classification": {
+                                **reason_taxonomy_identity(),
+                                "code": reason_code,
+                                "method": "MODEL_SEMANTIC_CLASSIFICATION",
+                            },
+                        },
                     ),
                     actor_type=ActorType.CUSTOMER,
                     actor_id=session_id,

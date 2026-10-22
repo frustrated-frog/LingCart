@@ -51,6 +51,29 @@ class AfterSalesUnderstandingModel:
                             "kind": "AFTER_SALES_CASE",
                             "source_quote": MESSAGE,
                             "order_id": 1001,
+                            "reason_code": "NOT_AS_DESCRIBED",
+                        }
+                    ],
+                },
+                ensure_ascii=False,
+            )
+        )
+
+
+class MissingReasonUnderstandingModel(AfterSalesUnderstandingModel):
+    def invoke(self, prompt):
+        assert MESSAGE in str(prompt)
+        return AIMessage(
+            content=json.dumps(
+                {
+                    "reason": "原因分类不明确",
+                    "commands": [],
+                    "objectives": [
+                        {
+                            "id": "after-sales-case",
+                            "kind": "AFTER_SALES_CASE",
+                            "source_quote": MESSAGE,
+                            "order_id": 1001,
                         }
                     ],
                 },
@@ -92,11 +115,27 @@ def test_after_sales_tools_declare_distinct_write_and_approval_policies(database
     assert submit.transactional is True
 
 
+def test_missing_reason_classification_clarifies_without_opening_case(database, monkeypatch):
+    monkeypatch.setattr(orchestrator, "get_llm", lambda **_kwargs: MissingReasonUnderstandingModel())
+
+    result = run_conversation(MESSAGE, "after-sales-missing-reason", request_id="missing-reason")
+
+    assert result["status"] == "WAITING_CLARIFICATION"
+    assert result["terminal_reason"] == "MISSING_REQUIRED_INFORMATION"
+    assert "售后原因" in result["reply"]
+    assert result["trace"] == []
+    with tools._session() as session:
+        assert session.scalars(select(AfterSalesCase)).all() == []
+
+
 def test_case_assessment_and_confirmed_submission_are_one_auditable_chain(database):
     first = run_conversation(MESSAGE, "after-sales", request_id="open-case")
 
     assert first["status"] == "WAITING_APPROVAL"
     assert [entry["tool"] for entry in first["trace"]] == ["prepare_after_sales_case"]
+    assert first["trace"][0]["args"]["reason_code"] == "NOT_AS_DESCRIBED"
+    assert first["trace"][0]["args"]["reason_taxonomy_version"] == "after-sales-reason/2026-01"
+    assert len(first["trace"][0]["args"]["reason_taxonomy_fingerprint"]) == 64
     pending = first["pending_action"]
     assert pending["type"] == "SUBMIT_AFTER_SALES_CASE"
     assert pending["tool"] == "submit_after_sales_case"
@@ -106,6 +145,8 @@ def test_case_assessment_and_confirmed_submission_are_one_auditable_chain(databa
         case = session.get(AfterSalesCase, pending["case_id"])
         refund = session.scalar(select(Refund).where(Refund.order_id == 1001))
         assert case.status == "AWAITING_CONFIRMATION"
+        assert case.reason_code == "NOT_AS_DESCRIBED"
+        assert case.context["reason_classification"]["version"] == "after-sales-reason/2026-01"
         assert refund.status == "none"
         assert len(session.scalars(select(AfterSalesCaseRun).where(
             AfterSalesCaseRun.case_id == case.case_id
