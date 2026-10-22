@@ -332,6 +332,20 @@ class AfterSalesCaseService:
                       occurred_at=_naive_utc(now or _utcnow()), allow_same_status=True)
         return self.get_case(case_id)
 
+    def record_semantic_assessment(self, case_id, assessment_id, *, idempotency_key, expected_revision, now):
+        from src.backend.db import AfterSalesSemanticAssessment
+        case = self._case(case_id)
+        self._assert_mutable(case, expected_revision)
+        assessment = self.session.get(AfterSalesSemanticAssessment, assessment_id)
+        if assessment is None or assessment.case_id != case_id or assessment.case_revision != case.revision:
+            raise AfterSalesDomainError('SEMANTIC_ASSESSMENT_STALE', '语义核验不属于当前案件版本')
+        self._invalidate_evidence_dependencies(case)
+        self._advance(case, target_status=CaseStatus.AWAITING_EVIDENCE,
+                      event_type="EVIDENCE_SEMANTIC_ASSESSED", idempotency_key=idempotency_key,
+                      actor_type=ActorType.SYSTEM, actor_id=None, payload={"assessment_id": assessment_id},
+                      occurred_at=now, allow_same_status=True)
+        return self.get_case(case_id)
+
     def _invalidate_evidence_dependencies(self, case) -> None:
         # 授权关闭与证据变更必须在同一个事务内完成。
         actions = self.session.scalars(select(PendingAction).where(

@@ -276,11 +276,11 @@ class RunRuntime:
         return message_id
 
     def model_call(self, model, messages, *, purpose, agent=None, allow_tools=True, schemas=None,
-                   stream_response=False):
+                   stream_response=False, isolated=False):
         from src.session_control import apply_controls
         apply_controls(self)
         self.hooks.emit(self, 'before_model', {'purpose': purpose, 'agent': agent})
-        if self.context_engine:
+        if self.context_engine and not isolated:
             messages = self.context_engine.model_messages(messages)
         from src.context_budget import compact_context
         from src.llm import extract_usage
@@ -475,6 +475,7 @@ class ToolSpec:
     replay_policy: ReplayPolicy | None = None
     concurrency_policy: ConcurrencyPolicy | None = None
     approval_action: str | None = None
+    preflight: object = None
 
     def __post_init__(self):
         # side_effect 保留旧调用兼容性；新策略字段一旦明确指定就不能被静默覆盖。
@@ -609,7 +610,7 @@ def tool_spec(name, fn):
         function = getattr(fn.function, "func", None) or fn.function
         return ToolSpec(function, fn.schema or _argument_schema(name, fn.function), fn.side_effect,
                         fn.transactional, fn.risk_level, fn.effect, fn.replay_policy, fn.concurrency_policy,
-                        fn.approval_action)
+                        fn.approval_action, fn.preflight)
     function = getattr(fn, "func", None) or fn
     # 依据注册对象身份匹配，不能仅凭工具名或伪造 __module__ 取得权限。
     for module_name, definitions in _PRODUCTION_TOOL_POLICIES.items():
@@ -619,7 +620,11 @@ def tool_spec(name, fn):
         registered = getattr(module, name)
         registered_function = getattr(registered, "func", None) or registered
         if function is registered_function:
-            return ToolSpec(function, _argument_schema(name, fn), **definitions[name])
+            options = dict(definitions[name])
+            if module_name == "src.tools" and name in {"continue_after_sales_case", "prepare_after_sales_case"}:
+                from src.after_sales.semantic import prepare
+                options["preflight"] = prepare
+            return ToolSpec(function, _argument_schema(name, fn), **options)
     raise AgentError("TOOL_POLICY_MISSING", f"工具 {name} 尚未显式注册执行策略", retryable=False)
 
 
@@ -691,6 +696,12 @@ class ToolExecutor:
         context = context if context and context.run_id == self.recorder.run_id else None
         if context:
             context.hooks.emit(context, 'before_tool', {'tool': name, 'args': args, 'policy': policy})
+        if spec.preflight:
+            # 只读模型核验发生在事务外，账本重放也需恢复对应模型游标。
+            try:
+                spec.preflight(args, context)
+            except AgentError as error:
+                self._fail(error, name, args)
         approval = context.approval if context and context.store else (context.approval if context else None) or self.approval
         if spec.replay_policy == ReplayPolicy.REQUIRES_APPROVAL and not self._approval_matches(spec, name, args, approval):
             action = spec.approval_action or {"process_payment": "PROCESS_PAYMENT", "initiate_refund": "INITIATE_REFUND"}.get(name)

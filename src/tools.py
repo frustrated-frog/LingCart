@@ -502,6 +502,17 @@ def prepare_after_sales_case(
                     "进行中案件的售后原因分类与本轮理解不一致，需要重新核验案件",
                     retryable=False,
                 )
+            from src.after_sales.semantic import prepared_initial, persist_assessment
+            prepared = None
+            if case is None or case.status.value != "SUBMITTED":
+                prepared = prepared_initial(session, runtime, {
+                    "order_id": order_id, "order_item_id": order_item_id, "reason_text": reason_text,
+                    "reason_code": reason_code, "reason_taxonomy_version": reason_taxonomy_version,
+                    "reason_taxonomy_fingerprint": reason_taxonomy_fingerprint})
+                policy = AfterSalesPolicyEngine(session)._applicable_policy('REFUND', now)
+                if (policy.policy_version_id != prepared['input']['policy_version_id']
+                        or policy.checksum != prepared['input']['policy_checksum']):
+                    raise AgentError('SEMANTIC_ASSESSMENT_STALE', '适用政策已变化，请重新核验', retryable=False)
             if case is None:
                 case = service.open_case(
                     CaseCreateCommand(
@@ -556,7 +567,7 @@ def prepare_after_sales_case(
                     source_type="CUSTOMER_STATEMENT",
                     source_ref=f"agent_runs:{run_id}:request",
                     payload={"statement": reason_text},
-                    observed_at=now,
+                    observed_at=datetime.fromisoformat(prepared['input']['observed_at']),
                 ),
                 idempotency_key=f"reason:{run_id}",
                 expected_revision=case.revision,
@@ -564,6 +575,11 @@ def prepare_after_sales_case(
                 actor_id=session_id,
                 now=now,
             )
+            incoming_id = next(e['evidence_id'] for e in case.evidence
+                               if e['source_ref'] == f'agent_runs:{run_id}:request')
+            assessment = persist_assessment(session, case, run_id, prepared, incoming_id=incoming_id, now=now)
+            case = service.record_semantic_assessment(case.case_id, assessment.assessment_id,
+                        idempotency_key=f'semantic:{run_id}', expected_revision=case.revision, now=now)
             evaluation = AfterSalesPolicyEngine(session).evaluate(case.case_id, as_of=now)
             case = service.record_policy_decision(
                 case.case_id,

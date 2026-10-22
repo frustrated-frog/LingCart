@@ -198,6 +198,23 @@ class AfterSalesEvidenceValidation(Base):
     validated_at: Mapped[datetime] = mapped_column(DateTime)
 
 
+class AfterSalesSemanticAssessment(Base):
+    """不可变语义核验；绑定政策与完整证据集合，不赋予业务权限。"""
+
+    __tablename__ = "after_sales_semantic_assessments"
+    __table_args__ = (UniqueConstraint("case_id", "input_hash", name="uq_case_semantic_input"),)
+    assessment_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    case_id: Mapped[str] = mapped_column(ForeignKey("after_sales_cases.case_id"), index=True)
+    run_id: Mapped[str] = mapped_column(ForeignKey("agent_runs.run_id"))
+    policy_version_id: Mapped[str] = mapped_column(ForeignKey("policy_versions.policy_version_id"))
+    policy_checksum: Mapped[str] = mapped_column(String(64))
+    basis_hash: Mapped[str] = mapped_column(String(64))
+    input_hash: Mapped[str] = mapped_column(String(64))
+    case_revision: Mapped[int] = mapped_column(Integer)
+    payload: Mapped[dict] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime)
+
+
 class AfterSalesCasePlan(Base):
     """案件级目标依赖与计划修订，独立于单次 Run 的执行计划。"""
 

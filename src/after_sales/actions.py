@@ -19,6 +19,7 @@ def case_result(case):
 def continue_case(*, case_id, expected_revision, requirement_id, evidence_text, revoke_evidence_id):
     from src import tools
     from src.runtime import current_runtime
+    from src.after_sales.semantic import prepared_assessment, persist_assessment
 
     runtime = current_runtime()
     if runtime is None:
@@ -49,6 +50,10 @@ def continue_case(*, case_id, expected_revision, requirement_id, evidence_text, 
                 old = next((e for e in case.evidence if e['evidence_id'] == revoke_evidence_id), None)
                 if not old or old['evidence_type'] != requirement['evidence_type']:
                     raise AgentError("EVIDENCE_REPLACEMENT_CONFLICT", "替换材料必须属于同一证据要求", retryable=False)
+            prepared = prepared_assessment(session, runtime, {
+                "case_id": case_id, "expected_revision": expected_revision, "requirement_id": requirement_id,
+                "evidence_text": evidence_text, "revoke_evidence_id": revoke_evidence_id,
+            }, case, evaluation)
             case = service.attach_run(case_id, run.run_id, session_id=run.session_id, role="EVIDENCE_UPDATE",
                                       idempotency_key=f"run:{run.run_id}", expected_revision=case.revision, now=now)
             if revoke_evidence_id:
@@ -58,7 +63,8 @@ def continue_case(*, case_id, expected_revision, requirement_id, evidence_text, 
             if evidence_text:
                 command = EvidenceCommand(evidence_type=requirement['evidence_type'], source_type="CUSTOMER_STATEMENT",
                                           source_ref=f"agent_runs:{run.run_id}:request",
-                                          payload={"statement": evidence_text}, observed_at=now)
+                                          payload={"statement": evidence_text},
+                                          observed_at=datetime.fromisoformat(prepared['input']['observed_at']))
             elif requirement and requirement['validation_condition'] == 'AUTHORITATIVE_ORDER' and 'ORDER_RECORD' in requirement['accepted_sources']:
                 order = session.get(Order, case.order_id)
                 if order:
@@ -70,6 +76,12 @@ def continue_case(*, case_id, expected_revision, requirement_id, evidence_text, 
             if command:
                 case = service.add_evidence(case_id, command, idempotency_key=f"evidence:{run.run_id}",
                                             expected_revision=case.revision, actor_id=run.session_id, now=now)
+            incoming_id = next((e['evidence_id'] for e in case.evidence
+                                if evidence_text and e['source_ref'] == f'agent_runs:{run.run_id}:request'
+                                and e['payload'].get('statement') == evidence_text), None)
+            assessment = persist_assessment(session, case, run.run_id, prepared, incoming_id=incoming_id, now=now)
+            case = service.record_semantic_assessment(case_id, assessment.assessment_id,
+                        idempotency_key=f"semantic:{run.run_id}", expected_revision=case.revision, now=now)
             evaluation = AfterSalesPolicyEngine(session).evaluate(case_id, as_of=now)
             case = service.record_policy_decision(case_id, evaluation, idempotency_key=f"policy:{evaluation.input_hash}",
                                                  expected_revision=case.revision)

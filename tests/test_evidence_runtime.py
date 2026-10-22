@@ -37,6 +37,9 @@ class EvidenceModel:
 
 
 def start_case(monkeypatch, session_id='evidence-session'):
+    from src import llm
+    from tests.evidence_fixtures import SemanticModel
+    monkeypatch.setattr(llm, 'get_llm', lambda **kw: SemanticModel())
     monkeypatch.setattr(orchestrator, 'get_llm', lambda **kw: EvidenceModel())
     result = run_conversation(MESSAGE, session_id, request_id='open')
     assert not result.get('pending_action')

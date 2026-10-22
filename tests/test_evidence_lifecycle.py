@@ -14,6 +14,8 @@ NOW = datetime(2026, 6, 20, 12)
 
 
 def assess(session, case):
+    from tests.evidence_fixtures import record_assessment_fixture
+    record_assessment_fixture(session, case)
     evaluation = AfterSalesPolicyEngine(session).evaluate(case.case_id, as_of=NOW)
     return AfterSalesCaseService(session).record_policy_decision(
         case.case_id, evaluation, idempotency_key=f"policy:{evaluation.input_hash}", expected_revision=case.revision)

@@ -26,7 +26,7 @@ from src.backend.db import (
 )
 
 
-EVALUATOR_VERSION = "after-sales-policy-v2"
+EVALUATOR_VERSION = "after-sales-policy-v3"
 
 
 def _utcnow() -> datetime:

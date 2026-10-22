@@ -398,6 +398,16 @@ export interface EvidenceRequirement {
   status: 'SATISFIED' | 'UNSATISFIED'
   evidence_refs: string[]
   rejected_evidence: Record<string, string>
+  semantic_assessment?: {
+    assessment_id: string
+    verifier_version: string
+    status: 'SUFFICIENT' | 'INCOMPLETE' | 'IRRELEVANT' | 'CONFLICT' | 'UNKNOWN'
+    explanation: string
+    question: string
+    missing_information: string[]
+    citations: { evidence_id: string; quote: string }[]
+    error_code?: string | null
+  } | null
 }
 
 export interface PolicyDecision {

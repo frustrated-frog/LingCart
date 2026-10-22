@@ -11,7 +11,7 @@
   "mechanisms": [
     {"slot": "planning", "id": "structured-dialogue-understanding", "version": "1"},
     {"slot": "tool_protocol", "id": "runtime-tool-ledger", "version": "2"},
-    {"slot": "verification", "id": "deterministic-business-gates", "version": "1"}
+    {"slot": "verification", "id": "deterministic-business-gates", "version": "2"}
   ],
   "capabilities": [
     "deterministic_intake",

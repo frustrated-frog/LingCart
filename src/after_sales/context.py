@@ -43,6 +43,7 @@ def current_case_context() -> list[dict]:
                            "revision": row.revision, "status": row.status,
                            "requirements": decision.get("facts", {}).get("evidence_requirements", []),
                            "evidence": [{"evidence_id": e["evidence_id"], "evidence_type": e["evidence_type"],
+                                         "statement_excerpt": str(e['payload'].get('statement', ''))[:512],
                                          "status": e["status"]} for e in case.evidence[-32:]]})
         runtime.checkpoint(case_context=result)
         return result

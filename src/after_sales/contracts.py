@@ -108,6 +108,7 @@ class EvidenceRequirement(BaseModel):
     status: str
     evidence_refs: tuple[str, ...] = ()
     rejected_evidence: dict[str, str] = Field(default_factory=dict)
+    semantic_assessment: dict[str, Any] | None = None
 
 
 class CaseProjection(BaseModel):

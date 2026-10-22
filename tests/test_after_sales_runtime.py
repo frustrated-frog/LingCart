@@ -125,6 +125,9 @@ def database(tmp_path, monkeypatch):
         delivered.occurred_at = datetime.now(UTC).replace(tzinfo=None) - timedelta(days=2)
         session.commit()
     monkeypatch.setattr(orchestrator, "get_llm", lambda **_kwargs: AfterSalesUnderstandingModel())
+    from src import llm
+    from tests.evidence_fixtures import SemanticModel
+    monkeypatch.setattr(llm, "get_llm", lambda **_kwargs: SemanticModel())
     yield path
     engine.dispose()
 
@@ -384,7 +387,7 @@ def test_case_creation_reuses_transactional_ledger_after_process_restart(databas
     with tools._session() as session:
         cases = session.scalars(select(AfterSalesCase)).all()
         assert len(cases) == 1
-        assert cases[0].revision == 4
+        assert cases[0].revision == 5
 
 
 def test_after_sales_read_api_returns_case_timeline_policy_and_refund_link(database):
@@ -414,7 +417,7 @@ def test_after_sales_read_api_returns_case_timeline_policy_and_refund_link(datab
     assert detail.status_code == 200
     payload = detail.json()
     assert payload["case"]["case_id"] == pending["case_id"]
-    assert [event["sequence"] for event in payload["case"]["events"]] == [1, 2, 3, 4, 5, 6]
+    assert [event["sequence"] for event in payload["case"]["events"]] == [1, 2, 3, 4, 5, 6, 7]
     assert {row["role"] for row in payload["runs"]} == {"INTAKE", "SUBMISSION"}
     assert payload["refund"]["refund_id"] == listed_cases[0]["refund_id"]
     assert payload["policy"]["policy_version_id"] == DEFAULT_AFTER_SALES_POLICY_VERSION_ID

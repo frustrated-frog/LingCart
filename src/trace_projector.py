@@ -3,6 +3,8 @@ from __future__ import annotations
 
 
 _PHASES = {
+    "evidence_semantic_assessed": "VERIFY",
+    "evidence_semantic_reused": "VERIFY",
     "case_plan_revised": "PLAN",
     "agent_status_changed": "RUNTIME",
     "response_started": "RESPONSE",
@@ -43,6 +45,8 @@ _PHASES = {
 }
 
 _LABELS = {
+    "evidence_semantic_assessed": "已独立核验证据语义与冲突",
+    "evidence_semantic_reused": "已复用持久化证据语义核验",
     "case_plan_revised": "售后案件证据与行动计划已修订",
     "agent_status_changed": "Agent 状态变化",
     "response_started": "回答流开始",

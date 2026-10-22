@@ -204,6 +204,9 @@ def test_policy_decision_requires_evidence_then_becomes_eligible(session):
         idempotency_key="evidence-1",
         expected_revision=2,
     )
+    from tests.evidence_fixtures import record_assessment_fixture
+    assert engine.evaluate(case.case_id, as_of=datetime(2026, 6, 20, 12)).outcome == PolicyOutcome.NEEDS_EVIDENCE
+    record_assessment_fixture(session, with_evidence)
     second = engine.evaluate(case.case_id, as_of=datetime(2026, 6, 20, 12, 0))
     assert second.outcome == PolicyOutcome.ELIGIBLE
     assert second.input_hash != first.input_hash
@@ -362,6 +365,8 @@ def test_high_value_case_is_sent_to_manual_review_after_hard_checks(session):
         expected_revision=case.revision,
     )
 
+    from tests.evidence_fixtures import record_assessment_fixture
+    record_assessment_fixture(session, case, now=datetime(2026, 5, 25, 12))
     decision = AfterSalesPolicyEngine(session).evaluate(case.case_id, as_of=datetime(2026, 5, 25, 12, 0))
 
     assert decision.outcome == PolicyOutcome.MANUAL_REVIEW

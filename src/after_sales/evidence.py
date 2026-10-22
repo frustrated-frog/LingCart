@@ -54,12 +54,16 @@ def record_validation(session, case, evidence, now):
 def evaluate_requirements(session, case, policy, rules, as_of: datetime) -> list[dict]:
     evidence = session.scalars(select(AfterSalesEvidence).where(
         AfterSalesEvidence.case_id == case.case_id).order_by(AfterSalesEvidence.evidence_id)).all()
+    from src.after_sales.semantic import current_assessment
+    assessment = current_assessment(session, case, policy, evidence, as_of)
+    semantic_rows = {r['requirement_id']: r for r in assessment.payload['result']['requirements']} if assessment else {}
     requirements = []
     for evidence_type in rules["required_evidence_by_reason"].get(case.reason_code, []):
         rule = rules.get("evidence_acceptance", {}).get(evidence_type, {})
         sources = rule.get("accepted_sources", [])
         condition = rule.get("condition", "UNSUPPORTED")
         age = rule.get("max_age_days")
+        semantic = semantic_rows.get(f"{policy.policy_version_id}:{evidence_type}")
         accepted, rejected = [], {}
         for item in evidence:
             if item.evidence_type != evidence_type:
@@ -79,8 +83,11 @@ def evaluate_requirements(session, case, policy, rules, as_of: datetime) -> list
             elif item.source_type not in sources:
                 reason = "SOURCE_NOT_ACCEPTED"
             elif condition == "CUSTOMER_ATTESTATION" and item.source_type == "CUSTOMER_STATEMENT":
-                accepted.append(item.evidence_id)
-                continue
+                cited = {c['evidence_id'] for c in (semantic or {}).get('citations', [])}
+                if semantic and semantic['status'] == 'SUFFICIENT' and item.evidence_id in cited:
+                    accepted.append(item.evidence_id)
+                    continue
+                reason = f"SEMANTIC_{semantic['status']}" if semantic else "SEMANTIC_NOT_ASSESSED"
             elif condition == "AUTHORITATIVE_ORDER" and item.source_type == "ORDER_RECORD":
                 accepted.append(item.evidence_id)
                 continue
@@ -95,5 +102,9 @@ def evaluate_requirements(session, case, policy, rules, as_of: datetime) -> list
             accepted_sources=tuple(sources), validation_condition=condition, max_age_days=age,
             status="SATISFIED" if accepted else "UNSATISFIED",
             evidence_refs=tuple(accepted), rejected_evidence=rejected,
+            semantic_assessment=({**semantic, "assessment_id": assessment.assessment_id,
+                                  "verifier_version": assessment.payload['verifier_version'],
+                                  "error_code": assessment.payload['result'].get('error_code')}
+                                 if semantic else None),
         ).model_dump(mode="json"))
     return requirements

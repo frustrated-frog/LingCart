@@ -676,7 +676,8 @@ def _render_after_sales_case(result: object, _arguments: Mapping[str, object]) -
     if result.get("case_status") == "SUBMITTED":
         return f"售后案件 {result['case_id']} 已经提交，无需重复确认。"
     requirements = decision.get("facts", {}).get("evidence_requirements", [])
-    missing = [r["description"] for r in requirements if r["status"] != "SATISFIED"]
+    missing = [(r.get("semantic_assessment") or {}).get("question") or r["description"]
+               for r in requirements if r["status"] != "SATISFIED"]
     return (
         f"售后案件 {result['case_id']}：{messages[decision['outcome']]}。"
         + (f"依据：{reasons}。" if reasons else "")

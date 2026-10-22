@@ -25,10 +25,14 @@ def revise_case_plan(session, case, decision, now: datetime):
     requirements = decision.facts.get('evidence_requirements', [])
     for requirement in requirements:
         goal_id = f"evidence:{requirement['evidence_type']}"
+        basis = dict(requirement)
+        if basis.get('semantic_assessment'):
+            basis['semantic_assessment'] = {k: v for k, v in basis['semantic_assessment'].items()
+                                            if k != 'assessment_id'}
         goal = {'goal_id': goal_id, 'requirement_id': requirement['requirement_id'],
                 'description': requirement['description'], 'status': requirement['status'],
                 'evidence_refs': requirement['evidence_refs'], 'depends_on': [],
-                'basis_hash': _checksum(requirement)}
+                'basis_hash': _checksum(basis)}
         if old_goals.get(goal_id) == goal:
             goals.append(old_goals[goal_id])
             retained.append(goal_id)
@@ -41,9 +45,11 @@ def revise_case_plan(session, case, decision, now: datetime):
                                 'operation': 'continue_after_sales_case',
                                 'requirement_id': requirement['requirement_id']})
             elif requirement['validation_condition'] == 'CUSTOMER_ATTESTATION' and 'CUSTOMER_STATEMENT' in requirement['accepted_sources']:
+                semantic = requirement.get('semantic_assessment') or {}
                 actions.append({'kind': 'REQUEST_CUSTOMER_EVIDENCE', 'goal_id': goal_id,
                                 'requirement_id': requirement['requirement_id'],
-                                'question': requirement['description']})
+                                'question': semantic.get('question') or requirement['description'],
+                                'semantic_status': semantic.get('status', 'NOT_ASSESSED')})
             else:
                 actions.append({'kind': 'REQUIRES_HUMAN_CAPABILITY', 'goal_id': goal_id})
     removed = sorted(set(old_goals) - {g['goal_id'] for g in goals} - {'resolution'})
