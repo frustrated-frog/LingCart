@@ -164,16 +164,35 @@ function ConstraintArtifactView({ artifact }: { artifact: ConstraintPlanResultAr
   }
 
   const infeasible = artifact.feasibility === 'INFEASIBLE'
+  const optimalityStatus = artifact.optimality?.status
+    ?? (artifact.plan_spec.optimization
+      ? artifact.search.complete ? 'PROVEN_OPTIMAL' : 'BEST_KNOWN'
+      : 'NOT_REQUESTED')
+  const optimalityLabels = {
+    NOT_REQUESTED: ['未请求', '仅验证硬约束'],
+    NO_FEASIBLE_SOLUTION: ['不适用', '已证明没有可行方案'],
+    BEST_KNOWN: ['未证明', '当前已知最优'],
+    PROVEN_OPTIMAL: ['已证明', '全局最优'],
+  } as const
+  const optimalityLabel = optimalityLabels[optimalityStatus]
+  const proofLabel = infeasible
+    ? '无解结论已核验'
+    : optimalityStatus === 'BEST_KNOWN'
+      ? '硬约束已核验 · 最优性未证明'
+      : optimalityStatus === 'PROVEN_OPTIMAL'
+        ? '硬约束与最优性已核验'
+        : '全部硬约束已核验'
   const goalLabels = new Map(artifact.plan_spec.goals.map((goal) => [goal.goal_id, goal.source_quote]))
   return <section className="catalog-result constraint-result" aria-label="已核验约束方案">
     <header className="catalog-result-head">
-      <div><span>GLOBAL GOAL PROOF</span><h3>{infeasible ? '当前约束下没有可行方案' : '全局约束方案'}</h3></div>
-      <div className="catalog-result-proof"><CheckCircle2 size={14} /><span>{infeasible ? '无解结论已核验' : '全部硬约束已核验'}</span></div>
+      <div><span>GLOBAL GOAL PROOF</span><h3>{infeasible ? '当前约束下没有可行方案' : optimalityStatus === 'BEST_KNOWN' ? '当前已知约束方案' : '全局约束方案'}</h3></div>
+      <div className="catalog-result-proof"><CheckCircle2 size={14} /><span>{proofLabel}</span></div>
     </header>
     <div className="catalog-result-summary">
       <div><GitMerge size={15} /><span>目标节点</span><strong>{artifact.plan_spec.goals.length}</strong><small>{artifact.domains.map((domain) => domain.provider).join(' · ')}</small></div>
       <div><Boxes size={15} /><span>交付方案</span><strong>{artifact.solutions.length}</strong><small>{artifact.search.feasible_count_exact ? `共 ${artifact.search.feasible_count} 组可行` : `至少 ${artifact.search.feasible_count} 组可行`}</small></div>
       <div><SearchCheck size={15} /><span>求解边界</span><strong>{artifact.search.complete ? '完整' : '有界'}</strong><small>检查 {artifact.search.nodes_examined} 个完整赋值</small></div>
+      <div><CheckCircle2 size={15} /><span>最优性</span><strong>{optimalityLabel[0]}</strong><small>{optimalityLabel[1]}{artifact.optimality?.objective_value != null ? ` · 目标值 ${constraintValue(artifact.optimality.objective_value)}` : ''}</small></div>
     </div>
     <div className="constraint-domain-rail" aria-label="候选数据域">
       {artifact.domains.map((domain) => <div key={domain.goal_id}>
@@ -196,11 +215,18 @@ function ConstraintArtifactView({ artifact }: { artifact: ConstraintPlanResultAr
             <p>{String(candidate.evidence.summary ?? '已由数据域提供身份与属性证据')}</p>
           </div>)}
         </section>)}</div>
-        <div className="constraint-proof-list">{solution.constraint_checks.map((check) => <div key={check.requirement_id}>
-          <CheckCircle2 size={13} /><span>{check.requirement_id}</span><strong>{constraintCheckLabel(check)}</strong>
-        </div>)}</div>
+        <div className="constraint-proof-list">
+          {solution.constraint_checks.map((check) => <div key={check.requirement_id}>
+            <CheckCircle2 size={13} /><span>{check.requirement_id}</span><strong>{constraintCheckLabel(check)}</strong>
+          </div>)}
+          {(solution.resource_checks ?? []).map((check) => <div key={`resource-${check.resource_id}`}>
+            <CheckCircle2 size={13} /><span>RESOURCE · {check.resource_id}</span><strong>占用 {check.used} / 容量 {check.capacity} · 剩余 {check.remaining}</strong>
+          </div>)}
+        </div>
       </article>)}</div>}
-    <footer><code>{artifact.solution_set_id}</code><span>{artifact.selection_policy === 'EXPLICIT_OPTIMIZATION' ? '按用户优化目标排序' : '确定性差异覆盖 · 非个人偏好排序'}</span></footer>
+    <footer><code>{artifact.solution_set_id}</code><span>{artifact.selection_policy === 'EXPLICIT_OPTIMIZATION'
+      ? optimalityStatus === 'PROVEN_OPTIMAL' ? '显式优化 · 已证明全局最优' : '显式优化 · 当前已知最优'
+      : '确定性差异覆盖 · 非个人偏好排序'}</span></footer>
   </section>
 }
 

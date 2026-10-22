@@ -144,12 +144,46 @@ class ConstraintPlanSpec(StrictModel):
 
 
 @dataclass(frozen=True)
+class ResourceClaim:
+    """A candidate's consumption of a globally identified finite resource."""
+
+    resource_id: str
+    capacity: int
+    units: int = 1
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.resource_id, str) or not self.resource_id.strip():
+            raise ValueError("Resource ID must not be empty")
+        if not isinstance(self.capacity, int) or isinstance(self.capacity, bool) or self.capacity < 0:
+            raise ValueError("Resource capacity must be non-negative")
+        if not isinstance(self.units, int) or isinstance(self.units, bool) or self.units < 1:
+            raise ValueError("Resource units must be positive")
+
+
+@dataclass(frozen=True)
 class CandidateValue:
     candidate_id: str
     label: str
     attributes: Mapping[str, Scalar]
     evidence: Mapping[str, object] = field(default_factory=dict)
+    # Kept as a provider-compatibility bridge. New providers should emit a
+    # globally stable ResourceClaim so overlapping domains can share capacity.
     max_quantity: int | None = None
+    resource_claims: tuple[ResourceClaim, ...] = ()
+
+    def __post_init__(self) -> None:
+        resource_ids = [claim.resource_id for claim in self.resource_claims]
+        if len(resource_ids) != len(set(resource_ids)):
+            raise ValueError("Candidate resource claims must have unique IDs")
+        if (
+            self.max_quantity is not None
+            and (
+                not isinstance(self.max_quantity, int)
+                or isinstance(self.max_quantity, bool)
+                or self.max_quantity < 0
+            )
+        ):
+            raise ValueError("Candidate max quantity must be non-negative")
 
 
 @dataclass(frozen=True)
@@ -325,7 +359,10 @@ def _catalog_resolution(parameters: Mapping[str, object]) -> DomainResolution:
                 "specs": row.get("specs") or {},
                 "data_source": row.get("data_source", "DEMO_CATALOG"),
             },
-            max_quantity=int(row["stock"]),
+            resource_claims=(ResourceClaim(
+                resource_id=f"catalog.product:{row['product_id']}",
+                capacity=int(row["stock"]),
+            ),),
         )
         for row in artifact["products"]
     )
@@ -564,14 +601,80 @@ def _constraint_result(constraint: HardConstraint,
     }
 
 
-def _goal_options(goal: GoalNode, resolution: DomainResolution) -> tuple[tuple[CandidateValue, ...], ...]:
+def _candidate_resource_claims(candidate: CandidateValue, provider: str) -> tuple[ResourceClaim, ...]:
+    if candidate.resource_claims:
+        return candidate.resource_claims
+    if candidate.max_quantity is not None:
+        return (ResourceClaim(
+            resource_id=f"{provider}:{candidate.candidate_id}",
+            capacity=candidate.max_quantity,
+        ),)
+    return ()
+
+
+def _resource_capacities(domains: Mapping[str, DomainResolution]) -> dict[str, int]:
+    capacities: dict[str, int] = {}
+    for resolution in domains.values():
+        for candidate in resolution.candidates:
+            for claim in _candidate_resource_claims(candidate, resolution.provider):
+                previous = capacities.setdefault(claim.resource_id, claim.capacity)
+                if previous != claim.capacity:
+                    raise AgentError(
+                        "INCONSISTENT_RESOURCE_CAPACITY",
+                        f"资源 {claim.resource_id} 在不同候选域中声明了不一致的容量",
+                        retryable=False,
+                    )
+    return capacities
+
+
+def _resource_capacity_checks(
+    assignments: Mapping[str, tuple[CandidateValue, ...]],
+    domains: Mapping[str, DomainResolution],
+    capacities: Mapping[str, int],
+) -> tuple[bool, list[dict]]:
+    usage: dict[str, dict] = {
+        resource_id: {"used": 0, "consumers": []}
+        for resource_id in capacities
+    }
+    for goal_id, candidates in assignments.items():
+        resolution = domains[goal_id]
+        for candidate in candidates:
+            for claim in _candidate_resource_claims(candidate, resolution.provider):
+                row = usage[claim.resource_id]
+                row["used"] += claim.units
+                row["consumers"].append({
+                    "goal_id": goal_id,
+                    "candidate_id": candidate.candidate_id,
+                    "units": claim.units,
+                })
+    checks = [
+        {
+            "resource_id": resource_id,
+            "capacity": capacity,
+            "used": usage[resource_id]["used"],
+            "remaining": capacity - usage[resource_id]["used"],
+            "satisfied": usage[resource_id]["used"] <= capacity,
+            "consumers": usage[resource_id]["consumers"],
+        }
+        for resource_id, capacity in sorted(capacities.items())
+        if usage[resource_id]["used"]
+    ]
+    return all(check["satisfied"] for check in checks), checks
+
+
+def _goal_options(
+    goal: GoalNode,
+    resolution: DomainResolution,
+    capacities: Mapping[str, int],
+) -> tuple[tuple[CandidateValue, ...], ...]:
     options = []
     for choice in combinations_with_replacement(resolution.candidates, goal.quantity):
-        counts: dict[str, int] = {}
-        for candidate in choice:
-            counts[candidate.candidate_id] = counts.get(candidate.candidate_id, 0) + 1
-        if any(candidate.max_quantity is not None and counts[candidate.candidate_id] > candidate.max_quantity
-               for candidate in choice):
+        within_capacity, _checks = _resource_capacity_checks(
+            {goal.goal_id: choice},
+            {goal.goal_id: resolution},
+            capacities,
+        )
+        if not within_capacity:
             continue
         options.append(choice)
         if len(options) > MAX_GOAL_OPTIONS:
@@ -591,9 +694,30 @@ def _optimization_value(spec: ConstraintPlanSpec,
                    spec.optimization.attribute, spec.optimization.function)
 
 
+def _optimization_order_key(
+    spec: ConstraintPlanSpec,
+    assignments: Mapping[str, tuple[CandidateValue, ...]],
+) -> tuple[Decimal, tuple[str, ...]]:
+    """Return a stable best-first key for an explicit numeric objective."""
+
+    value = _optimization_value(spec, assignments)
+    numeric = _decimal(value)
+    if numeric is None:
+        raise AgentError(
+            "UNRESOLVED_OPTIMIZATION_ATTRIBUTE",
+            "优化目标引用的属性不能从候选数据域中完整解析",
+            retryable=False,
+        )
+    rank = -numeric if spec.optimization and spec.optimization.direction == "MAX" else numeric
+    return rank, _solution_signature(assignments, spec.goals)
+
+
 def _serialize_solution(spec: ConstraintPlanSpec,
-                        assignments: Mapping[str, tuple[CandidateValue, ...]]) -> dict:
+                        assignments: Mapping[str, tuple[CandidateValue, ...]],
+                        domains: Mapping[str, DomainResolution],
+                        capacities: Mapping[str, int]) -> dict:
     constraint_checks = [_constraint_result(constraint, assignments)[1] for constraint in spec.constraints]
+    _resources_satisfied, resource_checks = _resource_capacity_checks(assignments, domains, capacities)
     selections = []
     for goal in spec.goals:
         candidates = assignments[goal.goal_id]
@@ -607,35 +731,46 @@ def _serialize_solution(spec: ConstraintPlanSpec,
                     "label": candidate.label,
                     "attributes": dict(candidate.attributes),
                     "evidence": dict(candidate.evidence),
+                    "resource_claims": [
+                        {
+                            "resource_id": claim.resource_id,
+                            "capacity": claim.capacity,
+                            "units": claim.units,
+                        }
+                        for claim in _candidate_resource_claims(candidate, domains[goal.goal_id].provider)
+                    ],
                 }
                 for candidate in candidates
             ],
         })
-    identity = {"selections": selections, "constraints": constraint_checks}
+    identity = {
+        "selections": selections,
+        "constraints": constraint_checks,
+        "resource_capacity": resource_checks,
+    }
     return {
         "solution_id": "cps_" + hashlib.sha256(_canonical_json(identity).encode("utf-8")).hexdigest()[:20],
         "selections": selections,
         "constraint_checks": constraint_checks,
+        "resource_checks": resource_checks,
         "optimization_value": _optimization_value(spec, assignments),
     }
 
 
-def _choose_solutions(spec: ConstraintPlanSpec, feasible: list[Mapping[str, tuple[CandidateValue, ...]]]) -> list[dict]:
+def _choose_solutions(
+    spec: ConstraintPlanSpec,
+    feasible: list[Mapping[str, tuple[CandidateValue, ...]]],
+    domains: Mapping[str, DomainResolution],
+    capacities: Mapping[str, int],
+) -> list[dict]:
     if not feasible:
         return []
     if spec.optimization:
-        scored = [(row, _optimization_value(spec, row)) for row in feasible]
-        if any(value is None for _row, value in scored):
-            raise AgentError(
-                "UNRESOLVED_OPTIMIZATION_ATTRIBUTE",
-                "优化目标引用的属性不能从候选数据域中完整解析",
-                retryable=False,
-            )
-        reverse = spec.optimization.direction == "MAX"
-        ordered_pairs = sorted(scored, key=lambda item: (item[1], _solution_signature(item[0], spec.goals)),
-                               reverse=reverse)
-        ordered = [row for row, _value in ordered_pairs]
-        return [_serialize_solution(spec, row) for row in ordered[:MAX_DELIVERED_SOLUTIONS]]
+        ordered = sorted(feasible, key=lambda row: _optimization_order_key(spec, row))
+        return [
+            _serialize_solution(spec, row, domains, capacities)
+            for row in ordered[:MAX_DELIVERED_SOLUTIONS]
+        ]
     remaining = sorted(feasible, key=lambda row: _solution_signature(row, spec.goals))
     selected = [remaining.pop(0)]
     while remaining and len(selected) < MAX_DELIVERED_SOLUTIONS:
@@ -650,7 +785,7 @@ def _choose_solutions(spec: ConstraintPlanSpec, feasible: list[Mapping[str, tupl
         chosen = max(remaining, key=distance)
         selected.append(chosen)
         remaining.remove(chosen)
-    return [_serialize_solution(spec, row) for row in selected]
+    return [_serialize_solution(spec, row, domains, capacities) for row in selected]
 
 
 def solve_finite_domain(
@@ -661,29 +796,50 @@ def solve_finite_domain(
 ) -> dict:
     """Solve a generic finite-domain CSP without knowing what candidates represent."""
 
-    options: dict[str, tuple[tuple[CandidateValue, ...], ...]] = {}
+    if max_search_nodes < 1:
+        raise AgentError("INVALID_SEARCH_BUDGET", "约束搜索预算必须大于零", retryable=False)
+    goal_domains: dict[str, DomainResolution] = {}
     for goal in spec.goals:
         resolution = domains.get(goal.goal_id)
         if resolution is None:
             raise AgentError("MISSING_GOAL_DOMAIN", f"目标 {goal.goal_id} 缺少候选数据域", retryable=False)
-        options[goal.goal_id] = _goal_options(goal, resolution)
-    _validate_constraint_attributes(spec, domains)
+        goal_domains[goal.goal_id] = resolution
+    resource_capacities = _resource_capacities(goal_domains)
+    options: dict[str, tuple[tuple[CandidateValue, ...], ...]] = {}
+    for goal in spec.goals:
+        resolution = goal_domains[goal.goal_id]
+        options[goal.goal_id] = _goal_options(goal, resolution, resource_capacities)
+    _validate_constraint_attributes(spec, goal_domains)
     feasible: list[Mapping[str, tuple[CandidateValue, ...]]] = []
+    feasible_count = 0
     nodes_examined = 0
     exhausted = False
 
     def visit(index: int, assignments: dict[str, tuple[CandidateValue, ...]]) -> None:
-        nonlocal nodes_examined, exhausted
+        nonlocal feasible_count, nodes_examined, exhausted
         if exhausted:
             return
         if index == len(spec.goals):
-            nodes_examined += 1
-            if nodes_examined > max_search_nodes:
+            if nodes_examined >= max_search_nodes:
                 exhausted = True
                 return
-            if all(_constraint_result(constraint, assignments)[0] for constraint in spec.constraints):
-                if len(feasible) < MAX_STORED_FEASIBLE:
-                    feasible.append(dict(assignments))
+            nodes_examined += 1
+            resources_satisfied, _resource_checks = _resource_capacity_checks(
+                assignments, goal_domains, resource_capacities
+            )
+            if resources_satisfied and all(
+                _constraint_result(constraint, assignments)[0] for constraint in spec.constraints
+            ):
+                feasible_count += 1
+                feasible.append(dict(assignments))
+                if spec.optimization:
+                    # Retain the true best K seen so far instead of the first K.
+                    # A completed traversal can therefore prove optimality without
+                    # retaining every feasible assignment in memory.
+                    feasible.sort(key=lambda row: _optimization_order_key(spec, row))
+                    del feasible[MAX_DELIVERED_SOLUTIONS:]
+                elif len(feasible) > MAX_STORED_FEASIBLE:
+                    feasible.pop()
             return
         goal = spec.goals[index]
         for choice in options[goal.goal_id]:
@@ -700,18 +856,36 @@ def solve_finite_domain(
             "约束搜索在找到可验证方案前达到安全上限，不能据此宣称无解",
             retryable=False,
         )
-    solutions = _choose_solutions(spec, feasible)
+    solutions = _choose_solutions(spec, feasible, goal_domains, resource_capacities)
+    if spec.optimization is None:
+        optimality = {"status": "NOT_REQUESTED", "objective_value": None, "proof": None}
+    elif not solutions:
+        optimality = {
+            "status": "NO_FEASIBLE_SOLUTION",
+            "objective_value": None,
+            "proof": "EXHAUSTIVE_SEARCH",
+        }
+    else:
+        optimality = {
+            "status": "PROVEN_OPTIMAL" if not exhausted else "BEST_KNOWN",
+            "objective_value": solutions[0]["optimization_value"],
+            "proof": "EXHAUSTIVE_SEARCH" if not exhausted else "BOUNDED_SEARCH",
+        }
     return {
         "feasibility": "FEASIBLE" if solutions else "INFEASIBLE",
         "solutions": solutions,
         "search": {
             "complete": not exhausted,
             "nodes_examined": nodes_examined,
-            "feasible_count": len(feasible),
-            "feasible_count_exact": not exhausted and len(feasible) < MAX_STORED_FEASIBLE,
-            "stored_solution_limit_reached": len(feasible) == MAX_STORED_FEASIBLE,
+            "feasible_count": feasible_count,
+            "feasible_count_exact": not exhausted,
+            "retained_feasible_count": len(feasible),
+            "stored_solution_limit_reached": (
+                spec.optimization is None and feasible_count > MAX_STORED_FEASIBLE
+            ),
             "max_search_nodes": max_search_nodes,
         },
+        "optimality": optimality,
         "selection_policy": (
             "EXPLICIT_OPTIMIZATION" if spec.optimization else "STABLE_FARTHEST_FIRST"
         ),
@@ -813,7 +987,7 @@ def verify_constraint_plan_result(result: object, arguments: Mapping[str, object
         required = {
             "artifact_type", "version", "solution_set_id", "plan_spec", "compilation_coverage",
             "provider_registry_version", "domains", "feasibility", "solutions", "search",
-            "selection_policy", "generated_at",
+            "optimality", "selection_policy", "generated_at",
         }
         if not required <= artifact.keys() or artifact.get("artifact_type") != "constraint_plan_result":
             raise AgentError("INVALID_TOOL_RESULT", "约束结果缺少必要证据", retryable=False)
@@ -831,11 +1005,16 @@ def verify_constraint_plan_result(result: object, arguments: Mapping[str, object
         if artifact["feasibility"] == "INFEASIBLE" and not artifact["search"].get("complete"):
             raise AgentError("CONSTRAINT_SEARCH_INCONCLUSIVE", "未完成搜索不能宣称约束无解", retryable=False)
         checked = [row["requirement_id"] for row in compiled]
+        best_known_only = artifact["optimality"].get("status") == "BEST_KNOWN"
         artifact["verification"] = {
             "status": "VERIFIED",
-            "verdict": "SATISFIED" if artifact["feasibility"] == "FEASIBLE" else "PROVEN_INFEASIBLE",
+            "verdict": (
+                "BEST_KNOWN" if best_known_only
+                else "SATISFIED" if artifact["feasibility"] == "FEASIBLE"
+                else "PROVEN_INFEASIBLE"
+            ),
             "checked_requirements": checked,
-            "global_goal": True,
+            "global_goal": not best_known_only,
         }
         return artifact["verification"]
     except AgentError as exc:
@@ -848,7 +1027,13 @@ def verify_constraint_plan_result(result: object, arguments: Mapping[str, object
 
 def constraint_plan_outcome(result: object, _arguments: Mapping[str, object]) -> str:
     artifact = result.get("artifact") if isinstance(result, dict) else None
-    return "SATISFIED" if isinstance(artifact, dict) and artifact.get("feasibility") == "FEASIBLE" else "UNAVAILABLE_EVIDENCE"
+    if not isinstance(artifact, dict) or artifact.get("feasibility") != "FEASIBLE":
+        return "UNAVAILABLE_EVIDENCE"
+    return (
+        "UNAVAILABLE_EVIDENCE"
+        if (artifact.get("optimality") or {}).get("status") == "BEST_KNOWN"
+        else "SATISFIED"
+    )
 
 
 def render_constraint_plan_result(result: object, _arguments: Mapping[str, object]) -> str:
@@ -869,4 +1054,8 @@ def render_constraint_plan_result(result: object, _arguments: Mapping[str, objec
         lines.append(f"- 方案 {index}：{'；'.join(parts)}{aggregate}")
     if artifact["selection_policy"] == "STABLE_FARTHEST_FIRST":
         lines.append("这些方案按确定性的差异覆盖策略选取，不代表系统已经知道你的个人偏好。")
+    elif artifact["optimality"]["status"] == "BEST_KNOWN":
+        lines.append("搜索已达到安全上限，以上是当前已知最优方案，尚未证明全局最优。")
+    elif artifact["optimality"]["status"] == "PROVEN_OPTIMAL":
+        lines.append("搜索已完整结束，首个方案的显式优化目标已证明达到全局最优。")
     return "\n".join(lines)

@@ -131,17 +131,26 @@ describe('SandboxPage durable session behavior', () => {
                 { goal_id: 'headphones', source_quote: '一个耳机', quantity: 1, candidates: [{
                   candidate_id: 'P1', label: '基础耳机', attributes: { price: 99 },
                   evidence: { product_id: 'P1', name: '基础耳机', price: 99, currency: 'CNY', summary: '轻量有线耳机' },
+                  resource_claims: [{ resource_id: 'catalog.product:P1', capacity: 8, units: 1 }],
                 }] },
                 { goal_id: 'keyboard', source_quote: '一个键盘', quantity: 1, candidates: [{
                   candidate_id: 'P2', label: '静音键盘', attributes: { price: 199 },
                   evidence: { product_id: 'P2', name: '静音键盘', price: 199, currency: 'CNY', summary: '静音轴键盘' },
+                  resource_claims: [{ resource_id: 'catalog.product:P2', capacity: 4, units: 1 }],
                 }] },
               ],
               constraint_checks: [{ requirement_id: 'shared_budget', kind: 'AGGREGATE', observed: 298,
                 operator: 'LTE', expected: 400, satisfied: true }],
+              resource_checks: [
+                { resource_id: 'catalog.product:P1', capacity: 8, used: 1, remaining: 7, satisfied: true,
+                  consumers: [{ goal_id: 'headphones', candidate_id: 'P1', units: 1 }] },
+                { resource_id: 'catalog.product:P2', capacity: 4, used: 1, remaining: 3, satisfied: true,
+                  consumers: [{ goal_id: 'keyboard', candidate_id: 'P2', units: 1 }] },
+              ],
             }],
             search: { complete: true, nodes_examined: 400, feasible_count: 22, feasible_count_exact: true,
-              stored_solution_limit_reached: false, max_search_nodes: 100000 },
+              retained_feasible_count: 22, stored_solution_limit_reached: false, max_search_nodes: 100000 },
+            optimality: { status: 'NOT_REQUESTED', objective_value: null, proof: null },
             selection_policy: 'STABLE_FARTHEST_FIRST',
             verification: { status: 'VERIFIED', verdict: 'SATISFIED', global_goal: true,
               checked_requirements: ['constraint:shared_budget'] },
@@ -157,6 +166,8 @@ describe('SandboxPage durable session behavior', () => {
     expect(screen.getByText('基础耳机')).toBeInTheDocument()
     expect(screen.getByText('静音键盘')).toBeInTheDocument()
     expect(screen.getByText('298 ≤ 400')).toBeInTheDocument()
+    expect(screen.getByText('占用 1 / 容量 8 · 剩余 7')).toBeInTheDocument()
+    expect(screen.getByText('未请求')).toBeInTheDocument()
     expect(screen.getByText('确定性差异覆盖 · 非个人偏好排序')).toBeInTheDocument()
   })
 

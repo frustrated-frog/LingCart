@@ -14,8 +14,10 @@ from src.constraint_planning import (
     DomainProviderRegistration,
     DomainProviderRegistry,
     DomainResolution,
+    ResourceClaim,
     compile_constraint_plan,
     compilation_coverage,
+    constraint_plan_outcome,
     solve_constraint_plan,
     solve_finite_domain,
     use_domain_provider_registry,
@@ -233,6 +235,169 @@ def test_search_budget_never_turns_incomplete_search_into_false_infeasible():
         solve_finite_domain(spec, domains, max_search_nodes=1)
 
     assert error.value.code == "CONSTRAINT_SEARCH_INCONCLUSIVE"
+
+
+def test_explicit_optimization_proves_the_true_optimum_beyond_the_storage_limit():
+    candidates = tuple(
+        CandidateValue(f"candidate-{index:02d}", str(index), {"score": index})
+        for index in range(71)
+    )
+    domains = {
+        "left": DomainResolution("TEST", "fp", candidates, {}, ("score",)),
+        "right": DomainResolution("TEST", "fp", candidates, {}, ("score",)),
+    }
+    spec = ConstraintPlanSpec.model_validate({
+        "version": "constraint-plan/v1",
+        "goals": [
+            {"requirement_id": "left_goal", "source_quote": "左", "goal_id": "left", "quantity": 1,
+             "domain": {"requirement_id": "left_domain", "source_quote": "左", "provider": "TEST", "parameters": {}}},
+            {"requirement_id": "right_goal", "source_quote": "右", "goal_id": "right", "quantity": 1,
+             "domain": {"requirement_id": "right_domain", "source_quote": "右", "provider": "TEST", "parameters": {}}},
+        ],
+        "constraints": [],
+        "optimization": {
+            "requirement_id": "max_score",
+            "source_quote": "总分最高",
+            "direction": "MAX",
+            "scope_goal_ids": ["left", "right"],
+            "attribute": "score",
+            "function": "SUM",
+        },
+    }, strict=True)
+
+    result = solve_finite_domain(spec, domains)
+
+    assert result["search"]["complete"] is True
+    assert result["search"]["feasible_count"] == 71 * 71
+    assert result["search"]["feasible_count_exact"] is True
+    assert result["solutions"][0]["optimization_value"] == 140
+    assert result["optimality"]["status"] == "PROVEN_OPTIMAL"
+    assert result["optimality"]["objective_value"] == 140
+    assert constraint_plan_outcome({"artifact": result}, {}) == "SATISFIED"
+
+
+def test_incomplete_optimization_only_reports_the_best_known_solution():
+    candidates = tuple(
+        CandidateValue(f"candidate-{index}", str(index), {"score": index})
+        for index in range(3)
+    )
+    domains = {
+        "left": DomainResolution("TEST", "fp", candidates, {}, ("score",)),
+        "right": DomainResolution("TEST", "fp", candidates, {}, ("score",)),
+    }
+    spec = ConstraintPlanSpec.model_validate({
+        "version": "constraint-plan/v1",
+        "goals": [
+            {"requirement_id": "left_goal", "source_quote": "左", "goal_id": "left", "quantity": 1,
+             "domain": {"requirement_id": "left_domain", "source_quote": "左", "provider": "TEST", "parameters": {}}},
+            {"requirement_id": "right_goal", "source_quote": "右", "goal_id": "right", "quantity": 1,
+             "domain": {"requirement_id": "right_domain", "source_quote": "右", "provider": "TEST", "parameters": {}}},
+        ],
+        "constraints": [],
+        "optimization": {
+            "requirement_id": "max_score",
+            "source_quote": "总分最高",
+            "direction": "MAX",
+            "scope_goal_ids": ["left", "right"],
+            "attribute": "score",
+            "function": "SUM",
+        },
+    }, strict=True)
+
+    result = solve_finite_domain(spec, domains, max_search_nodes=4)
+
+    assert result["feasibility"] == "FEASIBLE"
+    assert result["search"]["complete"] is False
+    assert result["search"]["feasible_count"] == 4
+    assert result["search"]["feasible_count_exact"] is False
+    assert result["optimality"]["status"] == "BEST_KNOWN"
+    assert result["optimality"]["objective_value"] == result["solutions"][0]["optimization_value"]
+    assert constraint_plan_outcome({"artifact": result}, {}) == "UNAVAILABLE_EVIDENCE"
+
+
+def test_resource_capacity_is_enforced_across_overlapping_goal_domains():
+    shared_left = CandidateValue(
+        "left-shared",
+        "共享设备",
+        {"cost": 1},
+        resource_claims=(ResourceClaim("device:shared", capacity=1),),
+    )
+    shared_right = CandidateValue(
+        "right-shared",
+        "共享设备的另一域表示",
+        {"cost": 1},
+        resource_claims=(ResourceClaim("device:shared", capacity=1),),
+    )
+    independent = CandidateValue(
+        "right-independent",
+        "独立设备",
+        {"cost": 2},
+        resource_claims=(ResourceClaim("device:independent", capacity=1),),
+    )
+    domains = {
+        "left": DomainResolution("LEFT_PROVIDER", "left-fp", (shared_left,), {}, ("cost",)),
+        "right": DomainResolution(
+            "RIGHT_PROVIDER", "right-fp", (shared_right, independent), {}, ("cost",)
+        ),
+    }
+    spec = ConstraintPlanSpec.model_validate({
+        "version": "constraint-plan/v1",
+        "goals": [
+            {"requirement_id": "left_goal", "source_quote": "左", "goal_id": "left", "quantity": 1,
+             "domain": {"requirement_id": "left_domain", "source_quote": "左", "provider": "TEST", "parameters": {}}},
+            {"requirement_id": "right_goal", "source_quote": "右", "goal_id": "right", "quantity": 1,
+             "domain": {"requirement_id": "right_domain", "source_quote": "右", "provider": "TEST", "parameters": {}}},
+        ],
+        "constraints": [],
+        "optimization": None,
+    }, strict=True)
+
+    result = solve_finite_domain(spec, domains)
+
+    assert result["feasibility"] == "FEASIBLE"
+    assert result["search"]["feasible_count"] == 1
+    selected = {
+        candidate["candidate_id"]
+        for selection in result["solutions"][0]["selections"]
+        for candidate in selection["candidates"]
+    }
+    assert selected == {"left-shared", "right-independent"}
+    assert all(check["satisfied"] for check in result["solutions"][0]["resource_checks"])
+    assert next(
+        check for check in result["solutions"][0]["resource_checks"]
+        if check["resource_id"] == "device:shared"
+    )["used"] == 1
+
+
+def test_inconsistent_capacity_for_the_same_resource_is_rejected():
+    domains = {
+        "left": DomainResolution(
+            "TEST", "fp", (
+                CandidateValue("a", "甲", {}, resource_claims=(ResourceClaim("shared", capacity=1),)),
+            ), {},
+        ),
+        "right": DomainResolution(
+            "TEST", "fp", (
+                CandidateValue("b", "乙", {}, resource_claims=(ResourceClaim("shared", capacity=2),)),
+            ), {},
+        ),
+    }
+    spec = ConstraintPlanSpec.model_validate({
+        "version": "constraint-plan/v1",
+        "goals": [
+            {"requirement_id": "left_goal", "source_quote": "左", "goal_id": "left", "quantity": 1,
+             "domain": {"requirement_id": "left_domain", "source_quote": "左", "provider": "TEST", "parameters": {}}},
+            {"requirement_id": "right_goal", "source_quote": "右", "goal_id": "right", "quantity": 1,
+             "domain": {"requirement_id": "right_domain", "source_quote": "右", "provider": "TEST", "parameters": {}}},
+        ],
+        "constraints": [],
+        "optimization": None,
+    }, strict=True)
+
+    with pytest.raises(AgentError) as error:
+        solve_finite_domain(spec, domains)
+
+    assert error.value.code == "INCONSISTENT_RESOURCE_CAPACITY"
 
 
 def test_shared_budget_request_runs_through_registered_capability(monkeypatch):

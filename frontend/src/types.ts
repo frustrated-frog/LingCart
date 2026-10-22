@@ -284,6 +284,7 @@ export interface ConstraintCandidate {
   label: string
   attributes: Record<string, unknown>
   evidence: Partial<Product> & Record<string, unknown>
+  resource_claims?: Array<{ resource_id: string; capacity: number; units: number }>
 }
 
 export interface ConstraintSelection {
@@ -309,6 +310,14 @@ export interface ConstraintSolution {
   solution_id: string
   selections: ConstraintSelection[]
   constraint_checks: ConstraintCheck[]
+  resource_checks: Array<{
+    resource_id: string
+    capacity: number
+    used: number
+    remaining: number
+    satisfied: boolean
+    consumers: Array<{ goal_id: string; candidate_id: string; units: number }>
+  }>
   optimization_value?: unknown
 }
 
@@ -338,8 +347,14 @@ export interface ConstraintPlanResultArtifact {
     nodes_examined: number
     feasible_count: number
     feasible_count_exact: boolean
+    retained_feasible_count: number
     stored_solution_limit_reached: boolean
     max_search_nodes: number
+  }
+  optimality: {
+    status: 'NOT_REQUESTED' | 'NO_FEASIBLE_SOLUTION' | 'BEST_KNOWN' | 'PROVEN_OPTIMAL'
+    objective_value: unknown
+    proof: 'EXHAUSTIVE_SEARCH' | 'BOUNDED_SEARCH' | null
   }
   selection_policy: 'EXPLICIT_OPTIMIZATION' | 'STABLE_FARTHEST_FIRST' | string
   verification?: {

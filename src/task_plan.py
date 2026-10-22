@@ -381,7 +381,14 @@ def execute_plan(intake, run_id, *, plan=None, source="deterministic", incomplet
     if not plan.steps:
         status = "FAILED"
         errors.append({"code": "EMPTY_TASK_PLAN", "message": "没有可验证的业务步骤", "retryable": False})
+    optimality_not_proven = any(
+        step.tool == CONSTRAINT_PLAN_OPERATION
+        and (step.result.get("artifact", {}).get("optimality") or {}).get("status") == "BEST_KNOWN"
+        for step in plan.steps
+        if isinstance(step.result, dict)
+    )
     reason = (errors[-1]["code"] if errors else "APPROVAL_REQUIRED" if pending else
+              "OPTIMALITY_NOT_PROVEN" if optimality_not_proven else
               "EVIDENCE_UNAVAILABLE" if unavailable else "BUSINESS_RULE_REJECTED"
               if any(s.status == "REJECTED" for s in plan.steps) else "COMPLETED")
     if not errors and not pending and any(s.tool == "prepare_payment" and s.status == "REJECTED" for s in plan.steps):
