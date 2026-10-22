@@ -13,12 +13,14 @@ import {
   JsonBlock,
   LoadingState,
   PageHeader,
+  SegmentedTabs,
   SectionHeading,
   SPECIALIST_LABELS,
   STATUS_LABELS,
   TERMINAL_REASON_LABELS,
   TelemetryStrip,
   TOOL_LABELS,
+  ViewTransition,
 } from '../components/SystemUI'
 
 type Tab = 'result' | 'evidence' | 'steering' | 'tools' | 'raw'
@@ -73,7 +75,7 @@ export function RunsPage({ businessMode = false }: { businessMode?: boolean }) {
         </div>
         {detailQuery.isLoading && <LoadingState label="正在装载运行证据" />}
         {detailQuery.isError && <ErrorState error={detailQuery.error} retry={() => void detailQuery.refetch()} />}
-        {detail && <>
+        {detail && <ViewTransition viewKey={detail.run_id}>
           <TelemetryStrip items={[
             { label: '运行状态', value: STATUS_LABELS[detail.status] ?? detail.status, note: detail.terminal_reason ? (TERMINAL_REASON_LABELS[detail.terminal_reason] ?? detail.terminal_reason) : '尚未终止', tone: 'teal' },
             { label: '运行配置档案', value: detail.profile.profile_id, note: detail.profile.legacy_profile_reference ? '历史运行未记录' : '已记录', tone: 'violet' },
@@ -83,27 +85,28 @@ export function RunsPage({ businessMode = false }: { businessMode?: boolean }) {
           <SectionHeading index="01" title="执行主脊" note={`${detail.run_id.slice(0, 12)} / ${formatTime(detail.created_at)}`} />
           <div className="run-prompt">{detail.request}</div>
           <ExecutionSpine events={events} selected={selectedEvent} onSelect={setSelectedEvent} />
-          {event && <section className="event-probe">
-            <div className="probe-title"><span>事件探针</span><b>{String(event.sequence ?? selectedEvent + 1).padStart(2, '0')} · {eventLabel(event).join(' / ')}</b></div>
-            <DefinitionGrid items={[
-              ['事件类型', eventLabel(event)[1]], ['事件语义', eventLabel(event).join(' / ')],
-              ['发生时间', event.timestamp ?? '—'], ['事件序号', event.sequence ?? selectedEvent + 1],
-            ]} />
-            <details><summary>查看原始事件数据</summary><JsonBlock value={event} /></details>
-          </section>}
-          <div className="tab-list" role="tablist">
-            {([['result', '结果与计划'], ['evidence', '上下文与证据'], ['steering', '在线监控与纠偏'], ['tools', '工具账本'], ['raw', '原始记录']] as Array<[Tab, string]>).map(([id, label]) => (
-              <button role="tab" aria-selected={tab === id} className={tab === id ? 'active' : ''} onClick={() => setTab(id)} key={id}>{label}</button>
-            ))}
-          </div>
-          <section className="tab-panel">
+          {event && <ViewTransition viewKey={String(event.sequence ?? selectedEvent)}>
+            <section className="event-probe">
+              <div className="probe-title"><span>事件探针</span><b>{String(event.sequence ?? selectedEvent + 1).padStart(2, '0')} · {eventLabel(event).join(' / ')}</b></div>
+              <DefinitionGrid items={[
+                ['事件类型', eventLabel(event)[1]], ['事件语义', eventLabel(event).join(' / ')],
+                ['发生时间', event.timestamp ?? '—'], ['事件序号', event.sequence ?? selectedEvent + 1],
+              ]} />
+              <details><summary>查看原始事件数据</summary><JsonBlock value={event} /></details>
+            </section>
+          </ViewTransition>}
+          <SegmentedTabs value={tab} onChange={(value) => setTab(value as Tab)} layoutId="run-detail-tab"
+            items={
+              [['result', '结果与计划'], ['evidence', '上下文与证据'], ['steering', '在线监控与纠偏'], ['tools', '工具账本'], ['raw', '原始记录']]
+            } />
+          <ViewTransition viewKey={tab} className="tab-panel">
             {tab === 'result' && <ResultTab detail={detail} />}
             {tab === 'evidence' && <EvidenceTab detail={detail} />}
             {tab === 'steering' && <SteeringTab detail={detail} />}
             {tab === 'tools' && <ToolsTab detail={detail} />}
             {tab === 'raw' && <JsonBlock value={{ run_id: detail.run_id, harness: detail.profile, events, budget: detail.result.budget, usage: detail.result.usage, commands: detail.commands }} />}
-          </section>
-        </>}
+          </ViewTransition>
+        </ViewTransition>}
       </>}
     </>
   )

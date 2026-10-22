@@ -11,7 +11,9 @@ import {
   ShoppingBag,
   Store,
 } from 'lucide-react'
-import { NavLink, Outlet } from 'react-router-dom'
+import { AnimatePresence } from 'motion/react'
+import * as m from 'motion/react-m'
+import { NavLink, useLocation, useOutlet } from 'react-router-dom'
 
 const engineering = [
   { to: '/', label: '工程总览', icon: LayoutDashboard, end: true },
@@ -46,8 +48,12 @@ function NavSection({ title, items }: { title: string; items: typeof engineering
 }
 
 export function Layout() {
+  const location = useLocation()
+  const outlet = useOutlet()
+  const routeGroup = location.pathname.split('/')[1] || 'console'
+  const engineeringMode = ['console', 'runs', 'experiments', 'mechanisms', 'datasets'].includes(routeGroup)
   return (
-    <div className="app-shell">
+    <div className={`app-shell${engineeringMode ? ' engineering-mode' : ''}`}>
       <aside className="sidebar">
         <NavLink to="/sandbox" className="brand" aria-label="LingCart 消费工作台">
           <span className="brand-mark">序</span>
@@ -64,7 +70,17 @@ export function Layout() {
         </div>
       </aside>
       <main className="main-canvas">
-        <Outlet />
+        {engineeringMode ? (
+          <AnimatePresence mode="popLayout" initial={false}>
+            <m.div className="route-stage engineering-route" key={routeGroup}
+              initial={{ opacity: 0, scale: 0.996, filter: 'blur(5px)' }}
+              animate={{ opacity: 1, scale: 1, filter: 'blur(0px)' }}
+              exit={{ opacity: 0, scale: 0.996, filter: 'blur(5px)' }}
+              transition={{ type: 'spring', stiffness: 400, damping: 40, mass: 0.8 }}>
+              {outlet}
+            </m.div>
+          </AnimatePresence>
+        ) : <div className="route-stage">{outlet}</div>}
       </main>
     </div>
   )
