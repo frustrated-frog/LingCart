@@ -16,6 +16,7 @@ LingCart 是一个面向消费决策与售后任务的 Agent 工程项目。它�
 - 独立证据语义核验：区分充分、缺失、无关、冲突与未知，保留原文引用并提出具体追问；来源核验不替代充分性判断，语义核验不代表客观鉴定。
 - Durable Runtime：对话串行化、请求幂等、Checkpoint、工具账本、恢复、运行中调整、取消和排队追问。
 - Model Gateway：Gemini、Groq、OpenAI 与 OpenAI-compatible，支持按职责选模、超时、降级和熔断。
+- PG 研究候选：冻结程序图的局部检索与情境指导，dev 轨迹驱动的离线结构演化、验证选择和拒绝记忆；尚无真实模型收益结论。
 
 所有品牌、价格、库存、客户、订单和物流都是本地演示数据。支付与退款只修改演示 SQLite 数据库，并且必须经过明确确认。
 
@@ -192,6 +193,8 @@ python eval/run_live_eval.py --harness-profile adaptive-v1 --split test --repeat
 候选实验必须提供机器可校验的 `experiment-spec.json`，冻结 baseline、candidate、数据分组、重复次数、指标方向和最大回退。报告还记录 Profile、机制实现、Prompt、Python、依赖锁和源码指纹。candidate Profile 只能从研究评测入口执行，产品 `/chat` 与 `/runs` 只接受 `baseline` 或 `promoted`。
 
 第一版 ACE（Agentic Context Engineering）纵向切片已经接入：现有 adaptive Agent 产生真实执行轨迹，离线 Reflector/Curator 只从 `dev` 环境反馈增量构建不可变 Playbook，候选 Profile 在 `test` 时只读加载固定版本。它与用户偏好、业务事实和权限分仓，独立审查不会接收 Playbook；代码门禁拒绝具体商品/订单事实和放宽硬约束的策略。
+
+PG（Procedural Graphs）通过 `adaptive-pg-context-v1` 候选装配。它根据最近行动读取两跳局部图，用独立指导模型影响下一次决策；离线 Refiner 从训练轨迹提出图修改，在互斥 dev 验证案例上决定保留或拒绝。运行检查的“程序图指导”页展示冻结版本、关系条件、实际暴露状态和后续行动。`venv/bin/python -m eval.run_pg_evolution` 默认仅验证配置；真实学习须显式 `--live`。流程和种子/演化/无 PG 对照见 [论文机制与实验说明](research/experiments/pg-context-v1/论文机制与实验说明.md)。
 
 ```bash
 # 只验证 ACE 学习来源，不调用模型

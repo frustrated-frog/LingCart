@@ -216,9 +216,11 @@ input:focus, select:focus, textarea:focus { border-color: var(--blue); box-shado
 .steering-advice b { font: 600 10px/1.3 var(--mono); }
 .steering-advice p { margin: 12px 0 8px; color: #3f3560; font-size: 12px; line-height: 1.65; }
 .steering-ledger { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.pg-guidance-ledger { grid-template-columns: minmax(0, 1fr); }
 .steering-ledger article { min-width: 0; padding: 13px; border: 1px solid var(--line); background: var(--surface); }
 .steering-ledger b { display: block; margin-top: 10px; font: 600 10px/1.3 var(--mono); overflow-wrap: anywhere; }
 .steering-ledger p { min-height: 50px; margin: 9px 0; color: var(--ink-2); font-size: 10px; line-height: 1.6; }
+.pg-guidance-ledger p { min-height: 0; }
 
 .table-wrap { overflow-x: auto; border: 1px solid var(--line); background: var(--surface); }
 table { width: 100%; border-collapse: collapse; }

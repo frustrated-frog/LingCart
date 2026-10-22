@@ -86,6 +86,7 @@ export const CAPABILITY_LABELS: Record<string, string> = {
   tool_ledger: '工具调用账本', model_directed_planning: '模型驱动规划', bounded_replanning: '有界重规划',
   evidence_retrieval: '证据检索', objective_first_context: '目标证据优先上下文',
   ace_frozen_playbook: 'ACE 冻结策略手册', offline_experience_learning: '离线经验学习',
+  procedural_graph_guidance: '程序图情境指导', offline_graph_evolution: '离线程序图演化',
   goal_verification: '目标核验', durable_resume: '持久化恢复', runtime_steering: '运行时调整',
   deterministic_trajectory_monitoring: '确定性轨迹监控', conditional_corrective_advice: '条件式纠偏建议',
   precommit_action_intervention: '执行前动作干预',
@@ -98,6 +99,7 @@ export const MECHANISM_LABELS: Record<string, string> = {
   'ace-playbook-context': 'ACE 策略手册上下文', 'objective-ledger': '目标账本',
   'independent-request-audit': '独立请求审查', 'native-strict-tools': '原生严格工具协议',
   'liveplan-online-steering': 'LivePlan 在线监控与纠偏',
+  'procedural-graph-context': 'PG 程序图上下文',
 }
 
 export const ENGINE_LABELS: Record<string, string> = {
@@ -149,6 +151,7 @@ const EVENT_LABELS: Record<string, [string, string]> = {
   replan_requested: ['重规划', '请求重规划'], adaptive_decision: ['决策', '自主决策'],
   decision_rejected: ['决策', '拒绝无效决策'], approval_required: ['审批', '需要用户确认'],
   context_compacted: ['上下文', '压缩上下文'], evidence_context: ['证据', '装配证据上下文'],
+  pg_guidance: ['程序图', '生成程序图情境指导'],
   evidence_read: ['证据', '读取证据'], constraint_binding_proposed: ['约束', '生成映射提案'],
   constraint_binding_unresolved: ['约束', '等待兼容证据'], constraint_binding_rejected: ['审查', '拒绝映射提案'],
   constraint_bindings_refined: ['约束', '提交约束映射'], decision_action_surface: ['预算', '收敛决策动作面'],
@@ -165,6 +168,7 @@ const EVENT_LABELS: Record<string, [string, string]> = {
 const MODEL_PURPOSE_LABELS: Record<string, string> = {
   dialogue_understanding: '对话理解', evidence_verification: '证据语义核验', goal: '目标提取', planner: '任务规划',
   agent: '智能体执行', final_response: '最终回答', audit: '独立审查', liveplan_advisor: 'LivePlan 纠偏建议',
+  pg_guidance: '程序图指导', pg_refiner: '程序图演化',
 }
 
 export function localizeEngineeringText(value: string): string {

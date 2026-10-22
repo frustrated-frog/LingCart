@@ -68,3 +68,48 @@ describe('RunsPage LivePlan evidence', () => {
     expect(screen.getByText('候选动作与已确认的无进展动作完全相同，已在执行前阻止。')).toBeInTheDocument()
   })
 })
+
+describe('RunsPage PG evidence', () => {
+  it('distinguishes generated guidance, exposure, budget skip and committed action', async () => {
+    const pgDetail: RunDetail = { ...detail, checkpoint: { context: { procedural_graph: {
+      graph_id: 'lingcart-pg', version: 1, sha256: 'frozen-graph',
+    } } }, result: { trace: [], events: [
+      { type: 'model_started', sequence: 1, purpose: 'pg_guidance' },
+      { type: 'pg_guidance', sequence: 2, decision_key: 'first', graph_sha256: 'frozen-graph',
+        anchor: 'search_products', status: 'READY', guidance: '空结果后扩大检索范围', edge_ids: ['search-retry'], fallback: false },
+      { type: 'evidence_context', sequence: 3, pg_decision_key: 'first', pg_status: 'EXPOSED' },
+      { type: 'adaptive_decision', sequence: 4, decision: { action: 'tool', tool: 'search_products' } },
+      { type: 'pg_guidance', sequence: 5, decision_key: 'second', anchor: 'unknown_action', fallback: true,
+        status: 'SKIPPED', guidance: '', edge_ids: [], reason: 'RESERVED_DECISION_AND_AUDIT' },
+    ] } }
+    vi.spyOn(api, 'runs').mockResolvedValue({ runs: [summary] })
+    vi.spyOn(api, 'run').mockResolvedValue(pgDetail)
+    renderPage()
+    fireEvent.click(await screen.findByRole('tab', { name: '程序图指导' }))
+    expect(screen.getByText('已送入决策')).toBeInTheDocument()
+    expect(screen.getByText('空结果后扩大检索范围')).toBeInTheDocument()
+    expect(screen.getByText('为决策和独立核验保留预算')).toBeInTheDocument()
+    expect(screen.getByText(/引用关系：search-retry · 后续行动：search_products/)).toBeInTheDocument()
+    expect(screen.getByText(/全图回退/)).toBeInTheDocument()
+  })
+
+  it('shows an empty state when no graph has been bound', async () => {
+    vi.spyOn(api, 'runs').mockResolvedValue({ runs: [summary] })
+    vi.spyOn(api, 'run').mockResolvedValue(detail)
+    renderPage()
+    fireEvent.click(await screen.findByRole('tab', { name: '程序图指导' }))
+    expect(screen.getByText('该运行尚无程序图指导记录。')).toBeInTheDocument()
+  })
+
+  it('does not imply graph exposure when guidance was omitted by context budget', async () => {
+    vi.spyOn(api, 'runs').mockResolvedValue({ runs: [summary] })
+    vi.spyOn(api, 'run').mockResolvedValue({ ...detail, result: { trace: [], events: [
+      { type: 'pg_guidance', sequence: 1, decision_key: 'omitted', status: 'READY', guidance: '建议内容', edge_ids: ['edge-a'] },
+      { type: 'evidence_context', sequence: 2, pg_decision_key: 'omitted', pg_status: 'CONTEXT_OMITTED' },
+    ] } })
+    renderPage()
+    fireEvent.click(await screen.findByRole('tab', { name: '程序图指导' }))
+    expect(screen.getByText('上下文不足，未送入决策')).toBeInTheDocument()
+    expect(screen.queryByText('已送入决策')).not.toBeInTheDocument()
+  })
+})

@@ -45,6 +45,18 @@ def test_contract_rejects_missing_guard_and_unreviewed_runtime_change():
         ExperimentSpec.model_validate_json(json.dumps(payload))
 
 
+def test_pg_contract_freezes_context_only_and_disjoint_dev_selection():
+    from eval.run_live_eval import load_dataset
+    from src.pg_learning import EvolutionSpec
+    folder = ROOT / 'research/experiments/pg-context-v1'
+    experiment = ExperimentSpec.from_path(folder / 'experiment-spec.json')
+    evolution = EvolutionSpec.model_validate_json((folder / 'evolution-spec.json').read_text())
+    evolution.validate_dataset(load_dataset(ROOT / evolution.dataset))
+    assert experiment.candidate_profile == 'adaptive-pg-context-v1'
+    assert [(c.slot, c.implementation_id) for c in experiment.changes] == [('context', 'procedural-graph-context')]
+    assert len(set(evolution.train_cases) | set(evolution.validation_cases)) == 10
+    assert experiment.repeats == evolution.repeats == 3
+
 def test_contract_rejects_reversed_guards_and_requires_a_cost_metric():
     payload = json.loads((ROOT / 'research/templates/experiment-spec.json').read_text())
     payload['guard_metrics'][0]['objective'] = 'minimize'
