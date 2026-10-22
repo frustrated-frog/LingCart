@@ -28,6 +28,37 @@ beforeEach(() => {
 })
 
 describe('SandboxPage durable session behavior', () => {
+  it('uses the selected execution mode when Enter submits a task', async () => {
+    vi.spyOn(api, 'conversation').mockResolvedValue({ active_run_id: null, messages: [], state: {} })
+    const start = vi.spyOn(api, 'startRun').mockImplementation(() => new Promise(() => undefined))
+    renderPage()
+
+    const mode = await screen.findByRole('switch', { name: '自适应规划' })
+    expect(mode).toHaveAttribute('aria-checked', 'false')
+    fireEvent.click(mode)
+    expect(mode).toHaveAttribute('aria-checked', 'true')
+
+    const input = screen.getByLabelText('消费需求')
+    fireEvent.change(input, { target: { value: '400 元以内选耳机和键盘' } })
+    fireEvent.keyDown(input, { key: 'Enter', code: 'Enter', shiftKey: true })
+    expect(start).not.toHaveBeenCalled()
+    fireEvent.keyDown(input, { key: 'Enter', code: 'Enter' })
+
+    await waitFor(() => expect(start).toHaveBeenCalledTimes(1))
+    expect(start.mock.calls[0][0]).toMatchObject({
+      message: '400 元以内选耳机和键盘', harness_profile: 'adaptive-v1', execution_mode: 'adaptive',
+    })
+  })
+
+  it('offers a retry when persisted conversation recovery fails', async () => {
+    vi.spyOn(api, 'conversation').mockRejectedValue(new Error('本地 API 暂时不可用'))
+    renderPage()
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('暂时无法恢复会话')
+    expect(screen.getByText('本地 API 暂时不可用')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '重新连接' })).toBeInTheDocument()
+  })
+
   it('shows an execution acknowledgement before the server accepts the run', async () => {
     vi.spyOn(api, 'conversation').mockResolvedValue({ active_run_id: null, messages: [], state: {} })
     vi.spyOn(api, 'startRun').mockImplementation(() => new Promise(() => undefined))
@@ -198,6 +229,27 @@ describe('SandboxPage durable session behavior', () => {
 
     expect(await screen.findByText('确认订单 #1001 的退款操作')).toBeInTheDocument()
     expect(screen.getByText(/审批状态已持久化/)).toBeInTheDocument()
+  })
+
+  it('distinguishes a policy-approved case submission from a generic refund', async () => {
+    vi.spyOn(api, 'conversation').mockResolvedValue({
+      active_run_id: null,
+      messages: [
+        { role: 'user', content: '订单 1001 的耳机有异响', run_id: 'run-case' },
+        { role: 'assistant', content: '案件已通过政策核验，请确认是否提交。', run_id: 'run-case' },
+      ],
+      state: { pending_action: {
+        action_id: 'approval-case-1', type: 'SUBMIT_AFTER_SALES_CASE', order_id: 1001,
+        case_id: 'case-audit-001', policy_version_id: 'standard-after-sales:2026-01',
+        policy_decision_id: 'decision-001',
+      } },
+    })
+
+    renderPage()
+
+    expect(await screen.findByText('确认订单 #1001 的售后退款提交操作')).toBeInTheDocument()
+    expect(screen.getByText(/案件 case-audit-001 已通过政策核验/)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '确认提交退款申请' })).toBeInTheDocument()
   })
 
   it('shows persisted machine-readable failure evidence', async () => {

@@ -271,7 +271,19 @@ class RunStore:
             row.status = status
             row.result = json_value(result)
 
-    def execute_write(self, run_id, token, key, name, args, approval, invoke):
+    def execute_write(
+        self,
+        run_id,
+        token,
+        key,
+        name,
+        args,
+        approval,
+        invoke,
+        *,
+        requires_approval=True,
+        approval_action=None,
+    ):
         with transaction() as session:
             self._lease(session, run_id, token)
             previous = session.get(ToolLedger, key)
@@ -280,14 +292,28 @@ class RunStore:
                     raise AgentError("IDEMPOTENCY_CONFLICT", "该操作已使用其他参数执行", retryable=False)
                 if previous.status == "SUCCEEDED":
                     return previous.result
-            action = session.get(PendingAction, approval.get("action_id")) if approval else None
-            if action is None or action.approved_run_id != run_id or action.status != "APPROVED":
-                raise AgentError("INVALID_APPROVAL", "操作缺少当前任务的有效确认", retryable=False)
-            expected = "PROCESS_PAYMENT" if name == "process_payment" else "INITIATE_REFUND"
-            if action.payload.get("type") != expected or action.payload.get("order_id") != args.get("order_id"):
-                raise AgentError("INVALID_APPROVAL", "确认内容与实际操作不一致", retryable=False)
+            action = None
+            if requires_approval:
+                action = session.get(PendingAction, approval.get("action_id")) if approval else None
+                if action is None or action.approved_run_id != run_id or action.status != "APPROVED":
+                    raise AgentError("INVALID_APPROVAL", "操作缺少当前任务的有效确认", retryable=False)
+                expected = approval_action or {
+                    "process_payment": "PROCESS_PAYMENT",
+                    "initiate_refund": "INITIATE_REFUND",
+                }.get(name)
+                if not expected or action.payload.get("type") != expected:
+                    raise AgentError("INVALID_APPROVAL", "确认内容与实际操作不一致", retryable=False)
+                if action.payload.get("action_fingerprint"):
+                    from src.runtime import ToolExecutor
+                    if action.payload["action_fingerprint"] != ToolExecutor.fingerprint(name, args):
+                        raise AgentError("INVALID_APPROVAL", "确认参数与实际操作不一致", retryable=False)
+                elif action.payload.get("tool") == name and isinstance(action.payload.get("args"), dict):
+                    if action.payload["args"] != args:
+                        raise AgentError("INVALID_APPROVAL", "确认参数与实际操作不一致", retryable=False)
+                elif action.payload.get("order_id") != args.get("order_id"):
+                    raise AgentError("INVALID_APPROVAL", "确认订单与实际操作不一致", retryable=False)
             with tools.use_transaction(session):
-                if name == "process_payment" and action.payload.get("amount") is not None:
+                if name == "process_payment" and action and action.payload.get("amount") is not None:
                     payment = tools.get_payment_status(args["order_id"])
                     if payment.get("amount") != action.payload["amount"]:
                         raise AgentError("APPROVAL_STALE", "支付金额发生变化，请重新核验并确认", retryable=False)
@@ -297,7 +323,8 @@ class RunStore:
                                        status="SUCCEEDED", result=json_value(result)))
             else:
                 previous.status, previous.result = "SUCCEEDED", json_value(result)
-            action.status = "COMPLETED"
+            if action is not None:
+                action.status = "COMPLETED"
             return result
 
     def finish(self, run_id, token, result, state):

@@ -38,6 +38,7 @@ from src.intake import (
 GENERAL_ANSWER = "GENERAL_ANSWER"
 SYSTEM_TIME = "SYSTEM_TIME"
 CALCULATE = "CALCULATE"
+AFTER_SALES_CASE = "AFTER_SALES_CASE"
 MODEL_ANSWER_OPERATION = "__model_answer__"
 
 
@@ -511,6 +512,73 @@ def _refund_request(objective: Mapping[str, object], _request: str) -> tuple[Com
     )
 
 
+def _after_sales_case(objective: Mapping[str, object], request: str) -> tuple[CompiledOperation, ...]:
+    arguments = {
+        "order_id": objective["order_id"],
+        "reason_text": request,
+    }
+    return (
+        CompiledOperation("case-assessment", "after_sales", "prepare_after_sales_case", arguments),
+        CompiledOperation(
+            "case-proposal",
+            "after_sales",
+            "prepare_case_submission",
+            {"order_id": objective["order_id"]},
+            ("case-assessment",),
+        ),
+    )
+
+
+def _verify_after_sales_case(result: object, arguments: Mapping[str, object]) -> None:
+    case = result.get("case") if isinstance(result, dict) else None
+    decision = result.get("policy_decision") if isinstance(result, dict) else None
+    valid = (
+        isinstance(result, dict)
+        and result.get("order_id") == arguments.get("order_id")
+        and isinstance(result.get("case_id"), str)
+        and bool(result["case_id"])
+        and isinstance(result.get("revision"), int)
+        and result["revision"] > 0
+        and result.get("data_source") == "AFTER_SALES_CASE_LEDGER"
+        and result.get("case_status")
+        in {"OPEN", "AWAITING_EVIDENCE", "AWAITING_CONFIRMATION", "SUBMITTED", "MANUAL_REVIEW", "REJECTED"}
+        and isinstance(decision, dict)
+        and decision.get("outcome")
+        in {"ELIGIBLE", "NEEDS_EVIDENCE", "INELIGIBLE", "MANUAL_REVIEW"}
+        and isinstance(decision.get("reason_codes"), list)
+        and isinstance(decision.get("evidence_refs"), list)
+        and result.get("requires_confirmation")
+        == (decision.get("outcome") == "ELIGIBLE" and result.get("case_status") == "AWAITING_CONFIRMATION")
+        and isinstance(case, dict)
+        and case.get("case_id") == result.get("case_id")
+        and case.get("order_id") == result.get("order_id")
+        and case.get("status") == result.get("case_status")
+        and case.get("revision") == result.get("revision")
+        and (case.get("latest_decision") or {}).get("decision_id") == decision.get("decision_id")
+    )
+    if not valid:
+        raise AgentError("INVALID_TOOL_RESULT", "售后案件结果缺少可核验的政策裁决", retryable=False)
+
+
+def _render_after_sales_case(result: object, _arguments: Mapping[str, object]) -> str:
+    if not isinstance(result, dict):
+        raise AgentError("INVALID_TOOL_RESULT", "售后案件结果格式无效", retryable=False)
+    decision = result["policy_decision"]
+    reasons = "、".join(decision.get("reason_codes") or [])
+    messages = {
+        "ELIGIBLE": "政策核验已通过，尚未提交退款，需要你明确确认后才能继续",
+        "NEEDS_EVIDENCE": "政策核验需要补充证据",
+        "INELIGIBLE": "当前权威事实不满足适用政策",
+        "MANUAL_REVIEW": "当前案件需要人工审核",
+    }
+    if result.get("case_status") == "SUBMITTED":
+        return f"售后案件 {result['case_id']} 已经提交，无需重复确认。"
+    return (
+        f"售后案件 {result['case_id']}：{messages[decision['outcome']]}。"
+        + (f"依据：{reasons}。" if reasons else "")
+    )
+
+
 def _payment_process(objective: Mapping[str, object], _request: str) -> tuple[CompiledOperation, ...]:
     args = _args(objective, ("order_id",))
     return (
@@ -664,6 +732,35 @@ def _builtin_registrations() -> tuple[CapabilityRegistration, ...]:
               side_effect="REQUIRES_APPROVAL", missing_question=order_question,
               handlers={"get_order_status": tools.get_order_status,
                         "check_refund_eligibility": tools.check_refund_eligibility}),
+        _spec(
+            AFTER_SALES_CASE,
+            "after_sales.case.prepare",
+            "为退货或退款诉求建立持久案件，绑定订单证据与适用政策，并在提交前生成需确认的操作",
+            "after_sales_case",
+            "POLICY_DECISION",
+            _after_sales_case,
+            required=order_fields,
+            accepted=order_fields,
+            side_effect="REQUIRES_APPROVAL",
+            missing_question=order_question,
+            operations={
+                "prepare_after_sales_case": OperationContract(
+                    handler=tools.prepare_after_sales_case,
+                    required_result_fields=(
+                        "case_id",
+                        "order_id",
+                        "case_status",
+                        "revision",
+                        "policy_decision",
+                        "requires_confirmation",
+                        "case",
+                        "data_source",
+                    ),
+                    result_verifier=_verify_after_sales_case,
+                    renderer=_render_after_sales_case,
+                )
+            },
+        ),
         _spec(PAYMENT_STATUS, "payment.status.read", "查询订单支付状态", "order", "BUSINESS_DATA",
               _single("payment", "get_payment_status", order_fields), required=order_fields,
               accepted=order_fields, missing_question=order_question,

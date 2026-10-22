@@ -14,6 +14,9 @@ from src.intake import (FAQ, ORDER_DETAILS, ORDER_STATUS, PAYMENT_PROCESS, PAYME
 from src.runtime import ToolExecutor, TraceRecorder, current_runtime
 
 
+_PROPOSAL_OPERATIONS = {"prepare_refund", "prepare_payment", "prepare_case_submission"}
+
+
 @dataclass
 class TaskStep:
     step_id: str
@@ -225,7 +228,7 @@ def execute_plan(intake, run_id, *, plan=None, source="deterministic", incomplet
     recorder = TraceRecorder(run_id)
     plan = plan or build_plan(intake)
     plan.validate(context.limits.max_steps if context else 8, context.limits.max_depth if context else 4)
-    proposals = [step for step in plan.steps if step.tool.startswith("prepare_")]
+    proposals = [step for step in plan.steps if step.tool in _PROPOSAL_OPERATIONS]
     if len(proposals) > 1:
         # One explicit confirmation must never authorize several independent writes.
         return _finish(recorder, intake, run_id, "intake", [], reply="请分别提交每个订单的支付或退款申请，逐项确认。",
@@ -266,8 +269,74 @@ def execute_plan(intake, run_id, *, plan=None, source="deterministic", incomplet
         else:
             recorder.record("step_started", step_id=step.step_id, specialist=step.specialist, dependencies=step.depends_on)
             try:
-                if step.tool.startswith("prepare_"):
+                if step.tool in _PROPOSAL_OPERATIONS:
                     observation = completed[step.depends_on[0]].result
+                    if step.tool == "prepare_case_submission":
+                        decision = observation.get("policy_decision") or {}
+                        outcome = decision.get("outcome")
+                        if observation.get("case_status") == "SUBMITTED":
+                            step.status = "SUCCEEDED"
+                            step.outcome = "SATISFIED"
+                            step.result = {
+                                "message": f"售后案件 {observation['case_id']} 已经提交，无需重复操作。"
+                            }
+                        elif outcome == "ELIGIBLE":
+                            args = {
+                                "case_id": observation["case_id"],
+                                "expected_revision": observation["revision"],
+                                "decision_id": decision["decision_id"],
+                            }
+                            pending = {
+                                "type": "SUBMIT_AFTER_SALES_CASE",
+                                "tool": "submit_after_sales_case",
+                                "args": args,
+                                "action_fingerprint": ToolExecutor.fingerprint("submit_after_sales_case", args),
+                                "case_id": observation["case_id"],
+                                "order_id": observation["order_id"],
+                                "policy_version_id": decision["policy_version_id"],
+                                "policy_decision_id": decision["decision_id"],
+                                "requires_approval": True,
+                            }
+                            step.status = "WAITING_APPROVAL"
+                            step.outcome = "WAITING_APPROVAL"
+                            step.result = {
+                                "message": (
+                                    f"售后案件 {observation['case_id']} 已通过政策核验；"
+                                    "退款尚未提交，请明确确认后继续。"
+                                )
+                            }
+                            recorder.record("approval_required", step_id=step.step_id, action=pending)
+                        elif outcome in {"NEEDS_EVIDENCE", "MANUAL_REVIEW"}:
+                            step.status = "SUCCEEDED"
+                            step.outcome = "UNAVAILABLE_EVIDENCE"
+                            label = "需要补充证据" if outcome == "NEEDS_EVIDENCE" else "需要人工审核"
+                            step.result = {
+                                "message": (
+                                    f"售后案件 {observation['case_id']} 已保存，{label}。"
+                                    f"原因：{'、'.join(decision.get('reason_codes') or [])}"
+                                )
+                            }
+                        else:
+                            step.status = "REJECTED"
+                            step.outcome = "SATISFIED"
+                            step.result = {
+                                "message": (
+                                    f"售后案件 {observation['case_id']} 已核验，当前不符合政策。"
+                                    f"原因：{'、'.join(decision.get('reason_codes') or [])}"
+                                )
+                            }
+                        completed[step.step_id] = step
+                        recorder.record(
+                            "step_completed",
+                            step_id=step.step_id,
+                            specialist=step.specialist,
+                            status=step.status,
+                            error=step.error,
+                        )
+                        if context:
+                            context.phase = "PLAN"
+                            context.checkpoint(plan=plan.payload())
+                        continue
                     eligible = observation.get("eligible") if step.tool == "prepare_refund" else observation.get("status") == "pending"
                     if eligible:
                         pending = dict(type="INITIATE_REFUND" if step.tool == "prepare_refund" else "PROCESS_PAYMENT",

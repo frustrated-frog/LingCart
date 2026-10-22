@@ -380,11 +380,121 @@ export interface Order {
   refund_reason: string | null
 }
 
+export type AfterSalesCaseStatus = 'OPEN' | 'AWAITING_EVIDENCE' | 'AWAITING_CONFIRMATION' | 'SUBMITTED'
+  | 'MANUAL_REVIEW' | 'RESOLVED' | 'REJECTED' | 'CANCELLED'
+
+export type PolicyOutcome = 'ELIGIBLE' | 'NEEDS_EVIDENCE' | 'INELIGIBLE' | 'MANUAL_REVIEW'
+
+export interface PolicyDecision {
+  decision_id: string
+  policy_version_id: string
+  case_revision: number
+  input_hash: string
+  outcome: PolicyOutcome
+  reason_codes: string[]
+  allowed_actions: string[]
+  facts: Record<string, unknown>
+  evidence_refs: string[]
+  evaluator_version: string
+  decided_at: string
+  supersedes_decision_id: string | null
+}
+
+export interface AfterSalesEvidence {
+  evidence_id: string
+  evidence_type: string
+  source_type: string
+  source_ref: string
+  payload: Record<string, unknown>
+  checksum: string
+  status: string
+  observed_at: string
+  created_at: string
+}
+
+export interface AfterSalesCaseEvent {
+  event_id: string
+  sequence: number
+  case_revision: number
+  event_type: string
+  actor_type: string
+  actor_id: string | null
+  idempotency_key: string
+  payload: Record<string, unknown>
+  occurred_at: string
+}
+
+export interface AfterSalesCaseProjection {
+  case_id: string
+  request_key: string
+  case_type: string
+  order_id: number
+  order_item_id: string | null
+  requested_resolution: string
+  reason_code: string | null
+  reason_text: string
+  status: AfterSalesCaseStatus
+  revision: number
+  origin_session_id: string | null
+  context: Record<string, unknown>
+  opened_at: string
+  updated_at: string
+  closed_at: string | null
+  latest_decision: PolicyDecision | null
+  evidence: AfterSalesEvidence[]
+  events: AfterSalesCaseEvent[]
+}
+
+export interface AfterSalesCaseSummary {
+  case_id: string
+  case_type: string
+  order_id: number
+  order_item_id: string | null
+  requested_resolution: string
+  reason_text: string
+  status: AfterSalesCaseStatus
+  revision: number
+  origin_session_id: string | null
+  opened_at: string
+  updated_at: string
+  policy_outcome: PolicyOutcome | null
+  policy_reason_codes: string[]
+  policy_version_id: string | null
+  refund_id: number | null
+}
+
+export interface AfterSalesCaseDetail {
+  case: AfterSalesCaseProjection
+  runs: Array<{ run_id: string; session_id: string; role: string; linked_at: string }>
+  refund: {
+    refund_id: number
+    status: string
+    reason: string | null
+    policy_decision_id: string
+    submitted_run_id: string | null
+    linked_at: string
+  } | null
+  policy: {
+    policy_version_id: string
+    policy_id: string
+    version: string
+    status: string
+    effective_from: string
+    effective_until: string | null
+    rules: Record<string, unknown>
+    source_ref: string
+    checksum: string
+  } | null
+}
+
 export interface PendingAction {
   action_id: string
   type: string
   order_id: number
   amount?: number
+  case_id?: string
+  policy_version_id?: string
+  policy_decision_id?: string
   [key: string]: unknown
 }
 

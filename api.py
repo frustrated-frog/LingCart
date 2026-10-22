@@ -26,6 +26,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field
 
 from src import tools
+from src.after_sales import CaseDetail, CaseListItem, CaseStatus
 from src.logging_config import configure_logging
 from src.durable import run_conversation, resume_run
 from src.errors import AgentError
@@ -189,6 +190,10 @@ class ReadinessResponse(BaseModel):
     ready: bool
     message: str
     checks: dict[str, ComponentReadiness]
+
+
+class AfterSalesCaseListResponse(BaseModel):
+    cases: list[CaseListItem]
 
 
 @app.middleware("http")
@@ -491,6 +496,48 @@ def business_order(order_id: int):
     if details.get('error'):
         raise HTTPException(404, details['error'])
     return {'order': details, 'shipment': tools.track_shipment(order_id)}
+
+
+@app.get('/business/after-sales/cases', response_model=AfterSalesCaseListResponse)
+def business_after_sales_cases(
+    order_id: int | None = Query(None, gt=0),
+    session_id: str | None = Query(None, min_length=1, max_length=64),
+    status: CaseStatus | None = None,
+    limit: int = Query(50, ge=1, le=200),
+):
+    """返回真实案件投影；不会从聊天文本推导或伪造售后状态。"""
+
+    from src.after_sales.queries import list_cases
+
+    with tools._session() as session:
+        return AfterSalesCaseListResponse(
+            cases=list(
+                list_cases(
+                    session,
+                    order_id=order_id,
+                    origin_session_id=session_id,
+                    status=status,
+                    limit=limit,
+                )
+            )
+        )
+
+
+@app.get('/business/after-sales/cases/{case_id}', response_model=CaseDetail)
+def business_after_sales_case(case_id: str):
+    """返回案件、运行关联、退款关联、证据、事件与适用政策快照。"""
+
+    from src.after_sales import AfterSalesDomainError
+    from src.after_sales.queries import get_case_detail
+
+    try:
+        with tools._session() as session:
+            return get_case_detail(session, case_id)
+    except AfterSalesDomainError as error:
+        raise HTTPException(
+            404,
+            detail={"code": error.code, "message": str(error), "retryable": error.retryable},
+        ) from error
 
 
 @app.post('/runs/{run_id}/resume-async', status_code=202)

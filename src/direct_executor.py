@@ -41,6 +41,7 @@ _READ_ONLY_TOOLS = {
 _APPROVED_TOOLS = {
     "initiate_refund": tools.initiate_refund,
     "process_payment": tools.process_payment,
+    "submit_after_sales_case": tools.submit_after_sales_case,
 }
 
 _STATUS_ZH = {
@@ -188,6 +189,35 @@ def execute_approved_action(pending_action: dict, user_message: str, run_id: str
             trace,
             reply=f"退款没有重复提交：{result.get('reason', '当前状态不允许退款')} ",
             status="SUCCEEDED",
+            terminal_reason="BUSINESS_RULE_REJECTED",
+        )
+
+    if action_type == "SUBMIT_AFTER_SALES_CASE":
+        args = dict(pending_action.get("args") or {})
+        result, event = executor.execute("submit_after_sales_case", args)
+        trace.append(_trace_entry(run_id, "after_sales", "submit_after_sales_case", args, result, event))
+        if result.get("success"):
+            return _finish(
+                recorder,
+                intake,
+                run_id,
+                "after_sales",
+                trace,
+                reply=(
+                    f"已按你的确认提交售后案件 {result['case_id']}，"
+                    f"退款单号为 {result['refund_id']}。"
+                ),
+                status="SUCCEEDED",
+                terminal_reason="COMPLETED",
+            )
+        return _finish(
+            recorder,
+            intake,
+            run_id,
+            "after_sales",
+            trace,
+            reply="售后案件未提交，请重新查看当前案件状态。",
+            status="FAILED",
             terminal_reason="BUSINESS_RULE_REJECTED",
         )
 
