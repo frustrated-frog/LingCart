@@ -613,6 +613,12 @@ def submit_after_sales_case(
             ):
                 raise AgentError("APPROVAL_STALE", "案件或政策裁决已经变化，请重新核验后确认", retryable=False)
             refreshed = AfterSalesPolicyEngine(session).evaluate(case_id, as_of=now)
+            if (refreshed.facts.get("refund_scope") or {}).get("alignment") != "EXACT":
+                raise AgentError(
+                    "REFUND_SCOPE_MISMATCH",
+                    "当前案件只覆盖部分订单，但现有退款执行能力会作用于整张订单，已拒绝提交并转人工处理",
+                    retryable=False,
+                )
             if refreshed.input_hash != latest.get("input_hash") or refreshed.outcome.value != "ELIGIBLE":
                 raise AgentError("APPROVAL_STALE", "订单事实或适用政策已经变化，请重新核验后确认", retryable=False)
             submission_run = session.get(AgentRun, runtime.run_id) if runtime else None

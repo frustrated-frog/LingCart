@@ -17,7 +17,9 @@ from src.after_sales import (
 )
 from src.backend.db import (
     AfterSalesCaseEvent,
+    Order,
     OrderItem,
+    Payment,
     PolicyDecision,
     PolicyVersion,
     Refund,
@@ -178,6 +180,7 @@ def test_policy_decision_requires_evidence_then_becomes_eligible(session):
     first = engine.evaluate(case.case_id, as_of=datetime(2026, 6, 20, 12, 0))
     assert first.outcome == PolicyOutcome.NEEDS_EVIDENCE
     assert first.reason_codes == ("MISSING_EVIDENCE:DAMAGE_DESCRIPTION",)
+    assert first.facts["refund_scope"]["alignment"] == "EXACT"
     waiting = service.record_policy_decision(
         case.case_id,
         first,
@@ -243,6 +246,69 @@ def test_policy_missing_or_unknown_reason_fails_closed(session):
 
     assert unknown.outcome == PolicyOutcome.MANUAL_REVIEW
     assert unknown.reason_codes == ("AFTER_SALES_REASON_NOT_SUPPORTED",)
+
+
+def test_line_item_case_cannot_authorize_order_level_refund_for_multi_item_order(session):
+    session.add(
+        OrderItem(
+            item_id="OI-1001-2",
+            order_id=1001,
+            line_number=2,
+            name="附加配件",
+            quantity=1,
+            unit_price_minor=1200,
+            currency="CNY",
+            attributes={},
+        )
+    )
+    session.get(Order, 1001).amount = 91.99
+    session.scalar(select(Payment).where(Payment.order_id == 1001)).amount = 91.99
+    session.flush()
+    service = AfterSalesCaseService(session)
+    case = service.open_case(
+        _command(
+            request_key="multi-item-scope",
+            order_item_id="OI-1001-1",
+            reason_code="NOT_AS_DESCRIBED",
+        )
+    )
+    case = service.add_evidence(
+        case.case_id,
+        EvidenceCommand(
+            evidence_type="ISSUE_DESCRIPTION",
+            source_type="CUSTOMER_STATEMENT",
+            source_ref="conversation-1:multi-item-description",
+            payload={"description": "耳机功能与说明不一致"},
+            observed_at=datetime(2026, 6, 20, 9, 0),
+        ),
+        idempotency_key="multi-item-evidence",
+        expected_revision=case.revision,
+    )
+
+    decision = AfterSalesPolicyEngine(session).evaluate(
+        case.case_id,
+        as_of=datetime(2026, 6, 20, 12, 0),
+    )
+
+    assert decision.outcome == PolicyOutcome.MANUAL_REVIEW
+    assert decision.reason_codes == ("REFUND_SCOPE_REQUIRES_LINE_ITEM_EXECUTION",)
+    assert decision.facts["refund_scope"] == {
+        "requested_scope": {
+            "type": "ORDER_ITEM",
+            "order_item_id": "OI-1001-1",
+            "amount_minor": 7999,
+        },
+        "execution_scope": {"type": "ORDER", "order_id": 1001, "amount_minor": 9199},
+        "alignment": "REQUIRES_SCOPED_REFUND",
+        "mismatch_reasons": [
+            "ORDER_HAS_MULTIPLE_LINE_ITEMS",
+            "ORDER_AND_LINE_ITEM_AMOUNTS_DIFFER",
+        ],
+        "order_item_count": 2,
+        "order_amount_minor": 9199,
+        "payment_amount_minor": 9199,
+    }
+    assert "ESCALATE_TO_HUMAN" in decision.allowed_actions
 
 
 def test_policy_expiration_and_existing_refund_are_machine_readable(session):

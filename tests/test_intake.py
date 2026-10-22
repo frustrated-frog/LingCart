@@ -53,6 +53,14 @@ def test_compound_intent_keeps_all_required_tasks():
     assert set(result.intents) == {ORDER_STATUS, SHIPMENT_TRACKING, REFUND_ELIGIBILITY}
 
 
+def test_unproven_after_sales_refund_phrase_does_not_default_to_eligibility():
+    result = analyze_request("订单 1001 的行项目 OI-1001-1 出现异响，需要申请售后退款")
+
+    assert result.execution_mode == LLM_REQUIRED
+    assert result.intents == ()
+    assert result.entities["order_id"] == 1001
+
+
 @pytest.mark.parametrize(
     "message",
     [
@@ -204,3 +212,10 @@ def test_approval_requires_an_explicit_standalone_confirmation(message):
 def test_explicit_confirmation_still_matches_pending_action():
     pending = {"type": "PROCESS_PAYMENT", "order_id": 1003}
     assert parse_approval_response("确认使用 paypal 支付", pending) == APPROVAL_CONFIRMED
+
+
+@pytest.mark.parametrize("message", ["确认退款", "取消退款", "confirm refund", "cancel the refund"])
+def test_approval_for_a_different_action_family_never_consumes_pending_payment(message):
+    pending = {"type": "PROCESS_PAYMENT", "order_id": 1003}
+
+    assert parse_approval_response(message, pending) == APPROVAL_UNKNOWN

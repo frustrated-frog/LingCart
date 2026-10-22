@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 import hashlib
 import json
 from typing import Any
@@ -45,6 +46,63 @@ def _checksum(value: Any) -> str:
     return hashlib.sha256(_canonical(value).encode("utf-8")).hexdigest()
 
 
+def _minor_units(value: object) -> int | None:
+    if value is None:
+        return None
+    try:
+        amount = (Decimal(str(value)) * Decimal("100")).quantize(
+            Decimal("1"),
+            rounding=ROUND_HALF_UP,
+        )
+        return int(amount)
+    except (InvalidOperation, ValueError):
+        return None
+
+
+def _refund_scope_facts(
+    *,
+    order: Order | None,
+    selected_item: OrderItem | None,
+    order_items: list[OrderItem],
+    payment: Payment | None,
+) -> dict[str, Any]:
+    selected_amount = (
+        selected_item.unit_price_minor * selected_item.quantity
+        if selected_item is not None
+        else None
+    )
+    order_amount = _minor_units(order.amount if order is not None else None)
+    payment_amount = _minor_units(payment.amount if payment is not None else None)
+    reasons: list[str] = []
+    if selected_item is None:
+        reasons.append("SELECTED_ORDER_ITEM_MISSING")
+    if len(order_items) != 1:
+        reasons.append("ORDER_HAS_MULTIPLE_LINE_ITEMS")
+    elif selected_item is not None and order_items[0].item_id != selected_item.item_id:
+        reasons.append("SELECTED_ORDER_ITEM_NOT_COMPLETE_ORDER")
+    if selected_amount is not None and order_amount is not None and selected_amount != order_amount:
+        reasons.append("ORDER_AND_LINE_ITEM_AMOUNTS_DIFFER")
+    if payment_amount is not None and order_amount is not None and payment_amount != order_amount:
+        reasons.append("ORDER_AND_PAYMENT_AMOUNTS_DIFFER")
+    return {
+        "requested_scope": {
+            "type": "ORDER_ITEM",
+            "order_item_id": selected_item.item_id if selected_item is not None else None,
+            "amount_minor": selected_amount,
+        },
+        "execution_scope": {
+            "type": "ORDER",
+            "order_id": order.order_id if order is not None else None,
+            "amount_minor": payment_amount,
+        },
+        "alignment": "EXACT" if not reasons else "REQUIRES_SCOPED_REFUND",
+        "mismatch_reasons": reasons,
+        "order_item_count": len(order_items),
+        "order_amount_minor": order_amount,
+        "payment_amount_minor": payment_amount,
+    }
+
+
 class AfterSalesPolicyEngine:
     """Produces a verdict; it never mutates a case or executes a side effect."""
 
@@ -61,6 +119,11 @@ class AfterSalesPolicyEngine:
 
         order = self.session.get(Order, case.order_id)
         item = self.session.get(OrderItem, case.order_item_id) if case.order_item_id else None
+        order_items = self.session.scalars(
+            select(OrderItem)
+            .where(OrderItem.order_id == case.order_id)
+            .order_by(OrderItem.line_number, OrderItem.item_id)
+        ).all()
         payment = self.session.scalar(select(Payment).where(Payment.order_id == case.order_id))
         refund = self.session.scalar(select(Refund).where(Refund.order_id == case.order_id))
         shipment_events = self.session.scalars(
@@ -86,6 +149,12 @@ class AfterSalesPolicyEngine:
             None,
         )
         amount_minor = item.unit_price_minor * item.quantity if item else None
+        refund_scope = _refund_scope_facts(
+            order=order,
+            selected_item=item,
+            order_items=order_items,
+            payment=payment,
+        )
         facts = {
             "case_id": case.case_id,
             "case_type": case.case_type,
@@ -100,6 +169,7 @@ class AfterSalesPolicyEngine:
             "delivery_date": delivered_event.occurred_at.date().isoformat() if delivered_event else None,
             "amount_minor": amount_minor,
             "currency": item.currency if item else None,
+            "refund_scope": refund_scope,
             "active_evidence_types": sorted({evidence.evidence_type for evidence in active_evidence}),
             "as_of_date": evaluated_at.date().isoformat(),
         }
@@ -228,6 +298,12 @@ class AfterSalesPolicyEngine:
                 PolicyOutcome.INELIGIBLE,
                 ("RETURN_WINDOW_EXPIRED",),
                 ("VIEW_POLICY", "ESCALATE_TO_HUMAN", "CLOSE_CASE"),
+            )
+        if facts["refund_scope"]["alignment"] != "EXACT":
+            return (
+                PolicyOutcome.MANUAL_REVIEW,
+                ("REFUND_SCOPE_REQUIRES_LINE_ITEM_EXECUTION",),
+                ("ESCALATE_TO_HUMAN", "CANCEL_CASE"),
             )
         if not facts["reason_code"]:
             return (
