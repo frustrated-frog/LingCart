@@ -1,4 +1,7 @@
+import json
+
 import pytest
+from langchain_core.messages import AIMessage
 from sqlalchemy import select
 
 from src import tools
@@ -55,7 +58,28 @@ def test_approval_is_not_a_completed_goal():
     assert not result["plan"]["verification"]["side_effects_executed"]
 
 
-def test_compound_goals_and_missing_slot_survive_new_service_instance():
+def test_compound_goals_and_missing_slot_survive_new_service_instance(monkeypatch):
+    class Model:
+        def json_mode(self):
+            return self
+
+        def invoke(self, _messages):
+            return AIMessage(content=json.dumps({
+                "reason": "保留订单状态与商品预算两个独立目标",
+                "commands": [],
+                "objectives": [
+                    {
+                        "id": "order", "kind": "ORDER_STATUS",
+                        "source_quote": "查询订单 1002 的状态", "order_id": 1002,
+                    },
+                    {
+                        "id": "headphones", "kind": "PRODUCT_SEARCH",
+                        "source_quote": "推荐 500 元以内的耳机", "category": "耳机", "max_price": 500,
+                    },
+                ],
+            }, ensure_ascii=False))
+
+    monkeypatch.setattr("src.orchestrator.get_llm", lambda **_kwargs: Model())
     missing = run_conversation("查询订单的物流进度", "slots")
     assert missing["status"] == "WAITING_CLARIFICATION"
     completed = run_conversation("1002", "slots")

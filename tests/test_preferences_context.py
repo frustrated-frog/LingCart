@@ -13,6 +13,17 @@ from src.preferences import PreferenceStore
 from src.runtime import RunRuntime, ToolExecutor, TraceRecorder, runtime_scope
 
 
+class ScriptedModel:
+    def __init__(self, *payloads):
+        self.payloads = iter(payloads)
+
+    def json_mode(self):
+        return self
+
+    def invoke(self, _messages):
+        return AIMessage(content=json.dumps(next(self.payloads), ensure_ascii=False))
+
+
 @pytest.fixture
 def database(tmp_path):
     engine = get_engine(f'sqlite:///{tmp_path / "preferences.db"}')
@@ -63,14 +74,7 @@ def test_saved_budget_fills_only_missing_current_constraint(database, monkeypatc
         },
     ))
 
-    class Model:
-        def json_mode(self):
-            return self
-
-        def invoke(self, _messages):
-            return AIMessage(content=json.dumps(next(responses), ensure_ascii=False))
-
-    model = Model()
+    model = ScriptedModel(*responses)
     monkeypatch.setattr(orchestrator, "get_llm", lambda **_kwargs: model)
     store = PreferenceStore()
     profile = store.create()
@@ -129,12 +133,22 @@ def test_after_hook_failure_retains_actual_result_and_stops_next_step(database):
         assert len([e for e in context.events if e['type'] == 'tool_call']) == 1
 
 
-def test_explicit_unlimited_budget_overrides_saved_preference(database):
+def test_explicit_unlimited_budget_overrides_saved_preference(database, monkeypatch):
+    message = '推荐耳机，这次不限制预算'
+    model = ScriptedModel({
+        "reason": "当前请求明确要求不限预算",
+        "commands": [],
+        "objectives": [{
+            "id": "headphones", "kind": "PRODUCT_DISCOVERY", "source_quote": message,
+            "category": "耳机",
+        }],
+    })
+    monkeypatch.setattr(orchestrator, "get_llm", lambda **_kwargs: model)
     store = PreferenceStore()
     profile = store.create()
     store.remember(profile, 'max_price', 300, confirmed=True)
     store.bind('unlimited', profile)
-    result = run_conversation('推荐耳机，这次不限制预算', 'unlimited')
+    result = run_conversation(message, 'unlimited')
     assert result['trace'][0]['args'].get('max_price') is None
     with pytest.raises(AgentError):
         store.remember(profile, 'features', ['订单1002已支付', 'P1001价格99元，库存20件'], confirmed=True)
@@ -163,5 +177,5 @@ def test_after_hook_failure_is_persisted_across_resume(database):
 
 
 def test_context_evidence_does_not_duplicate_normal_business_trace(database):
-    result = run_conversation('推荐耳机', 'no-duplicate')
+    result = run_conversation('推荐商品', 'no-duplicate')
     assert len(result['trace']) == sum(e['type'] == 'tool_result' for e in result['events']) == 1
