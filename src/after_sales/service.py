@@ -428,6 +428,10 @@ class AfterSalesCaseService:
         policy = self.session.get(PolicyVersion, evaluation.policy_version_id)
         if policy is None or policy.checksum != evaluation.policy_checksum:
             raise AfterSalesDomainError("POLICY_VERSION_MISMATCH", "政策版本不存在或内容指纹不匹配")
+        from src.after_sales.policy import AfterSalesPolicyEngine
+        current = AfterSalesPolicyEngine(self.session).evaluate(case_id, as_of=evaluation.evaluated_at)
+        if current.model_dump() != evaluation.model_dump():
+            raise AfterSalesDomainError("POLICY_EVALUATION_STALE", "裁决输入已变化或内容与权威评估不一致")
         latest = self.session.scalar(
             select(PolicyDecision)
             .where(PolicyDecision.case_id == case_id)
@@ -463,6 +467,8 @@ class AfterSalesCaseService:
             occurred_at=_naive_utc(evaluation.evaluated_at),
             allow_same_status=True,
         )
+        from src.after_sales.planning import revise_case_plan
+        revise_case_plan(self.session, case, decision, _naive_utc(evaluation.evaluated_at))
         return self.get_case(case_id)
 
     def transition(
@@ -495,6 +501,12 @@ class AfterSalesCaseService:
             payload=event_payload,
             occurred_at=_naive_utc(now or _utcnow()),
         )
+        if target_status == CaseStatus.SUBMITTED:
+            from src.after_sales.planning import revise_case_plan
+            decision = self.session.scalar(select(PolicyDecision).where(PolicyDecision.case_id == case_id)
+                                           .order_by(PolicyDecision.case_revision.desc()).limit(1))
+            if decision:
+                revise_case_plan(self.session, case, decision, _naive_utc(now or _utcnow()))
         return self.get_case(case_id)
 
     def get_case(self, case_id: str) -> CaseProjection:
@@ -515,6 +527,9 @@ class AfterSalesCaseService:
             .order_by(PolicyDecision.case_revision.desc())
             .limit(1)
         )
+        from src.after_sales.planning import plans_for_case
+        decision_valid = bool(decision and not any(
+            e.event_type.startswith("EVIDENCE_") and e.case_revision > decision.case_revision for e in events))
         return CaseProjection(
             case_id=case.case_id,
             request_key=case.request_key,
@@ -533,9 +548,9 @@ class AfterSalesCaseService:
             closed_at=case.closed_at,
             latest_decision={
                 **self._decision_dict(decision),
-                "valid": not any(e.event_type.startswith("EVIDENCE_") and e.case_revision > decision.case_revision
-                                 for e in events),
+                "valid": decision_valid,
             } if decision else None,
+            plans=plans_for_case(self.session, case, decision_valid),
             evidence=tuple(
                 {
                     "evidence_id": item.evidence_id,

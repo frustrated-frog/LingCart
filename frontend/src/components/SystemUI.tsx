@@ -75,6 +75,7 @@ export const TOOL_LABELS: Record<string, string> = {
   query_catalog: '执行结构化目录查询',
   prepare_after_sales_case: '建立并核验售后案件', prepare_case_submission: '准备售后提交',
   submit_after_sales_case: '提交售后案件',
+  continue_after_sales_case: '补证并重新核验案件',
   select_product: '核验并选择商品', read_clock: '读取当前时间', calculate: '执行计算',
   __model_answer__: '生成知识回答',
 }
@@ -127,6 +128,7 @@ export const METRIC_LABELS: Record<string, string> = {
 }
 
 const EVENT_LABELS: Record<string, [string, string]> = {
+  case_plan_revised: ['案件', '修订证据与行动计划'],
   agent_status_changed: ['状态', 'Agent 执行状态'], response_started: ['回答', '开始生成回答'],
   response_delta: ['回答', '接收回答分片'], response_completed: ['回答', '回答生成完成'],
   response_failed: ['回答', '回答生成中断'],

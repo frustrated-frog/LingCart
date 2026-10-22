@@ -131,6 +131,7 @@ class CaseProjection(BaseModel):
     latest_decision: dict[str, Any] | None = None
     evidence: tuple[dict[str, Any], ...] = ()
     events: tuple[dict[str, Any], ...] = ()
+    plans: tuple[dict[str, Any], ...] = ()
 
 
 class CaseRunReference(BaseModel):

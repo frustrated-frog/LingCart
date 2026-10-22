@@ -106,3 +106,38 @@ def test_revoke_rejects_foreign_evidence_and_stale_revision(session):
     with pytest.raises(AfterSalesDomainError) as exc:
         service.revoke_evidence(first.case_id, first.evidence[0]['evidence_id'], idempotency_key='r', expected_revision=1)
     assert exc.value.code == 'CASE_REVISION_CONFLICT'
+
+
+def test_stale_evaluation_cannot_be_written_after_evidence_changes(session):
+    service = AfterSalesCaseService(session)
+    case = service.open_case(_command())
+    old = AfterSalesPolicyEngine(session).evaluate(case.case_id, as_of=NOW)
+    case = service.add_evidence(case.case_id, _evidence(), idempotency_key='e', expected_revision=case.revision)
+    with pytest.raises(AfterSalesDomainError) as exc:
+        service.record_policy_decision(case.case_id, old, idempotency_key='old', expected_revision=case.revision)
+    assert exc.value.code == 'POLICY_EVALUATION_STALE'
+
+
+def test_authoritative_evidence_is_rechecked_when_business_record_changes(session):
+    from src.after_sales import EvidenceCommand
+    from src.backend.db import Order
+    service = AfterSalesCaseService(session)
+    policy = session.get(PolicyVersion, DEFAULT_AFTER_SALES_POLICY_VERSION_ID)
+    policy.rules = {**policy.rules,
+                    'required_evidence_by_reason': {'DAMAGED': ['ORDER_FACT']},
+                    'evidence_acceptance': {'ORDER_FACT': {'accepted_sources': ['ORDER_RECORD'],
+                        'condition': 'AUTHORITATIVE_ORDER', 'description': '需要权威订单状态'}}}
+    policy.checksum = _checksum(policy.rules)
+    session.flush()
+    case = service.open_case(_command())
+    case = service.add_evidence(case.case_id, EvidenceCommand(
+        evidence_type='ORDER_FACT', source_type='ORDER_RECORD', source_ref='orders:1001',
+        payload={'order_id': 1001, 'status': 'delivered'}, observed_at=NOW),
+        idempotency_key='order-fact', expected_revision=case.revision)
+    result = AfterSalesPolicyEngine(session).evaluate(case.case_id, as_of=NOW)
+    assert result.facts['evidence_requirements'][0]['status'] == 'SATISFIED'
+    session.get(Order, 1001).status = 'shipped'
+    session.flush()
+    changed = AfterSalesPolicyEngine(session).evaluate(case.case_id, as_of=NOW)
+    assert changed.facts['evidence_requirements'][0]['status'] == 'UNSATISFIED'
+    assert 'AUTHORITATIVE_RECORD_CHANGED' in changed.facts['evidence_requirements'][0]['rejected_evidence'].values()

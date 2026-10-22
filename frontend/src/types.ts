@@ -410,6 +410,7 @@ export interface PolicyDecision {
   allowed_actions: string[]
   facts: Record<string, unknown> & { evidence_requirements?: EvidenceRequirement[] }
   valid?: boolean
+  stale_reason?: string
   evidence_refs: string[]
   evaluator_version: string
   decided_at: string
@@ -467,6 +468,28 @@ export interface AfterSalesCaseProjection {
   latest_decision: PolicyDecision | null
   evidence: AfterSalesEvidence[]
   events: AfterSalesCaseEvent[]
+  plans?: CasePlan[]
+}
+
+export interface CasePlan {
+  schema_version: number
+  planner_version: string
+  plan_id: string
+  case_id: string
+  revision: number
+  case_revision: number
+  decision_id: string
+  policy_version_id: string
+  status: string
+  supersedes_plan_id: string | null
+  goals: { goal_id: string; description: string; status: string; depends_on: string[]; evidence_refs: string[]; basis_hash: string; requirement_id?: string }[]
+  next_actions: { kind: string; goal_id: string; operation?: string; requirement_id?: string; question?: string; requires_approval?: boolean }[]
+  retained_goal_ids: string[]
+  changed_goal_ids: string[]
+  removed_goal_ids: string[]
+  invalidated_decision_id: string | null
+  created_at: string
+  valid: boolean
 }
 
 export interface AfterSalesCaseSummary {

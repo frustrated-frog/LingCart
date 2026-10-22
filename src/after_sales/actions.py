@@ -1,6 +1,5 @@
 """跨轮案件操作；调用者提供 ToolExecutor 的原子事务。"""
 from datetime import UTC, datetime
-from sqlalchemy import select
 
 from src.after_sales.contracts import EvidenceCommand
 from src.after_sales.policy import AfterSalesPolicyEngine
@@ -43,6 +42,9 @@ def continue_case(*, case_id, expected_revision, requirement_id, evidence_text, 
                 raise AgentError("EVIDENCE_REQUIREMENT_STALE", "政策证据要求已经变化，请重新读取", retryable=False)
             if evidence_text and (not requirement or evidence_text not in run.request or not evidence_text.strip()):
                 raise AgentError("UNGROUNDED_EVIDENCE", "补证内容必须来自本轮用户原文及当前政策要求", retryable=False)
+            if evidence_text and (requirement['validation_condition'] != 'CUSTOMER_ATTESTATION'
+                                  or 'CUSTOMER_STATEMENT' not in requirement['accepted_sources']):
+                raise AgentError("EVIDENCE_SOURCE_NOT_ACCEPTED", "该要求不能用用户陈述替代权威证据", retryable=False)
             if revoke_evidence_id and requirement and evidence_text:
                 old = next((e for e in case.evidence if e['evidence_id'] == revoke_evidence_id), None)
                 if not old or old['evidence_type'] != requirement['evidence_type']:
@@ -57,7 +59,7 @@ def continue_case(*, case_id, expected_revision, requirement_id, evidence_text, 
                 command = EvidenceCommand(evidence_type=requirement['evidence_type'], source_type="CUSTOMER_STATEMENT",
                                           source_ref=f"agent_runs:{run.run_id}:request",
                                           payload={"statement": evidence_text}, observed_at=now)
-            elif requirement and requirement['validation_condition'] == 'AUTHORITATIVE_ORDER':
+            elif requirement and requirement['validation_condition'] == 'AUTHORITATIVE_ORDER' and 'ORDER_RECORD' in requirement['accepted_sources']:
                 order = session.get(Order, case.order_id)
                 if order:
                     command = EvidenceCommand(evidence_type=requirement['evidence_type'], source_type="ORDER_RECORD",

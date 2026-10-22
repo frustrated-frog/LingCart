@@ -1,5 +1,5 @@
 """从业务账本解析会话内案件，模型输出不能扩大访问范围。"""
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from src.after_sales.service import AfterSalesCaseService
 from src.backend.db import AgentRun, AfterSalesCase
@@ -25,9 +25,15 @@ def current_case_context() -> list[dict]:
         ).order_by(AfterSalesCase.updated_at.desc()).limit(21)).all()
         if len(rows) > 20:
             # 不截断后再把最后一个匹配误认为唯一案件。
-            result = [{"overflow": True, "message": "案件过多，请通过案件详情明确编号"}]
-            runtime.checkpoint(case_context=result)
-            return result
+            rows = session.scalars(select(AfterSalesCase).where(
+                AfterSalesCase.origin_session_id == run.session_id,
+                AfterSalesCase.status.not_in(["RESOLVED", "REJECTED", "CANCELLED", "SUBMITTED"]),
+                func.instr(run.request, AfterSalesCase.case_id) > 0,
+            ).limit(21)).all()
+            if not rows or len(rows) > 20:
+                result = [{"overflow": True, "message": "案件过多，请通过案件详情明确编号"}]
+                runtime.checkpoint(case_context=result)
+                return result
         service = AfterSalesCaseService(session)
         result = []
         for row in rows:
@@ -37,7 +43,7 @@ def current_case_context() -> list[dict]:
                            "revision": row.revision, "status": row.status,
                            "requirements": decision.get("facts", {}).get("evidence_requirements", []),
                            "evidence": [{"evidence_id": e["evidence_id"], "evidence_type": e["evidence_type"],
-                                         "status": e["status"]} for e in case.evidence]})
+                                         "status": e["status"]} for e in case.evidence[-32:]]})
         runtime.checkpoint(case_context=result)
         return result
 
@@ -50,8 +56,10 @@ def normalize_case_continuation(objective: dict, sources: tuple[str, ...]):
     order_id = objective.get("order_id")
     # 多案件必须由用户明确指定案件或唯一订单；仅凭模型挑选不够。
     if len(cases) > 1:
-        cases = [c for c in cases if (requested and requested in quote and c.get("case_id") == requested)
-                 or (order_id and str(order_id) in quote and c.get("order_id") == order_id)]
+        if requested and requested in quote:
+            cases = [c for c in cases if c.get("case_id") == requested]
+        else:
+            cases = [c for c in cases if order_id and str(order_id) in quote and c.get("order_id") == order_id]
     elif requested:
         cases = [c for c in cases if c.get("case_id") == requested]
     if len(cases) != 1 or cases[0].get("overflow"):

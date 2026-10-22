@@ -145,3 +145,28 @@ def test_continuation_tool_rejects_invalid_context_before_writing(database, monk
     with tools._session() as session:
         assert session.get(AfterSalesCase, case_id).revision == case.revision
         assert len(session.scalars(select(AfterSalesEvidence)).all()) == 1
+
+
+def test_concurrent_evidence_writes_keep_single_revision_and_no_partial_rows(database, monkeypatch):
+    from src.after_sales import AfterSalesCaseService, EvidenceCommand, AfterSalesDomainError
+    case_id = start_case(monkeypatch)
+    with tools._SessionLocal() as first, tools._SessionLocal() as second:
+        left = first.get(AfterSalesCase, case_id)
+        right = second.get(AfterSalesCase, case_id)
+        revision = right.revision
+        for session, key in [(first, 'left'), (second, 'right')]:
+            command = EvidenceCommand(evidence_type='DAMAGE_DESCRIPTION', source_type='CUSTOMER_STATEMENT',
+                                      source_ref=f'test:{key}', payload={'statement': key}, observed_at=datetime.now(UTC))
+            if key == 'left':
+                AfterSalesCaseService(session).add_evidence(case_id, command, idempotency_key=key,
+                                                           expected_revision=revision)
+                session.commit()
+            else:
+                with pytest.raises(AfterSalesDomainError) as exc:
+                    AfterSalesCaseService(session).add_evidence(case_id, command, idempotency_key=key,
+                                                               expected_revision=revision)
+                assert exc.value.code == 'CASE_REVISION_CONFLICT'
+                session.rollback()
+    with tools._session() as session:
+        assert session.get(AfterSalesCase, case_id).revision == revision + 1
+        assert len(session.scalars(select(AfterSalesEvidence)).all()) == 2

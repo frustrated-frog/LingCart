@@ -131,3 +131,31 @@ describe('OrdersPage after-sales case ledger', () => {
     expect(screen.getByRole('button', { name: /状态与物流/ })).toBeInTheDocument()
   })
 })
+
+it('shows stale decisions, unverified evidence and persisted plan changes without implying approval', async () => {
+  const detail = structuredClone(caseDetail)
+  detail.case.latest_decision!.valid = false
+  detail.case.latest_decision!.facts.evidence_requirements = [{
+    requirement_id: 'policy:DAMAGE_DESCRIPTION', policy_version_id: 'policy', policy_checksum: 'checksum',
+    target_case_id: detail.case.case_id, evidence_type: 'DAMAGE_DESCRIPTION', description: '请补充损坏位置和表现',
+    accepted_sources: ['CUSTOMER_STATEMENT'], validation_condition: 'CUSTOMER_ATTESTATION', max_age_days: 30,
+    status: 'UNSATISFIED', evidence_refs: [], rejected_evidence: { 'evidence-001': 'SOURCE_NOT_VERIFIED' },
+  }]
+  detail.case.plans = [{
+    schema_version: 1, planner_version: 'evidence-driven-case-plan-v1', plan_id: 'plan-2', case_id: detail.case.case_id,
+    revision: 2, case_revision: 5, decision_id: 'decision-001', policy_version_id: 'policy', status: 'AWAITING_EVIDENCE',
+    supersedes_plan_id: 'plan-1', goals: [], next_actions: [], retained_goal_ids: ['evidence:condition'],
+    changed_goal_ids: ['evidence:damage'], removed_goal_ids: [], invalidated_decision_id: 'old-decision',
+    created_at: '2026-10-23T01:00:00Z', valid: false,
+  }]
+  vi.spyOn(api, 'orders').mockResolvedValue({ orders: [order] })
+  vi.spyOn(api, 'afterSalesCases').mockResolvedValue({ cases: [caseSummary] })
+  vi.spyOn(api, 'afterSalesCase').mockResolvedValue(detail)
+  renderPage()
+  expect(await screen.findByText('旧裁决已失效，需重新核验')).toBeInTheDocument()
+  expect(screen.getByText('历史计划，等待重新核验')).toBeInTheDocument()
+  expect(screen.getByText('来源尚未核验')).toBeInTheDocument()
+  expect(screen.getByText('保留 1 个目标 · 修订 1 个目标')).toBeInTheDocument()
+  expect(screen.getByText('请补充损坏位置和表现')).toBeInTheDocument()
+  expect(screen.queryByText('请求用户确认')).not.toBeInTheDocument()
+})

@@ -397,6 +397,10 @@ def execute_plan(intake, run_id, *, plan=None, source="deterministic", incomplet
                         )
                     contract = get_capability_registry().operation_contract(step.tool)
                     step.outcome = contract.outcome(step.result, step.args) if contract else "SATISFIED"
+                    if isinstance(step.result, dict) and step.result.get("data_source") == "AFTER_SALES_CASE_LEDGER":
+                        plans = (step.result.get("case") or {}).get("plans") or []
+                        if plans:
+                            recorder.record("case_plan_revised", step_id=step.step_id, plan=plans[-1])
             except AgentError as error:
                 step.status = "FAILED"
                 step.outcome = "FAILED"

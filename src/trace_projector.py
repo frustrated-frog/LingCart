@@ -3,6 +3,7 @@ from __future__ import annotations
 
 
 _PHASES = {
+    "case_plan_revised": "PLAN",
     "agent_status_changed": "RUNTIME",
     "response_started": "RESPONSE",
     "response_delta": "RESPONSE",
@@ -42,6 +43,7 @@ _PHASES = {
 }
 
 _LABELS = {
+    "case_plan_revised": "售后案件证据与行动计划已修订",
     "agent_status_changed": "Agent 状态变化",
     "response_started": "回答流开始",
     "response_delta": "回答流增量",
