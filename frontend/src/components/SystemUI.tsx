@@ -1,4 +1,19 @@
+import NumberFlow from '@number-flow/react'
+import { AnimatePresence, useReducedMotion } from 'motion/react'
+import * as m from 'motion/react-m'
+import type { ReactNode } from 'react'
 import type { HarnessProfile, RunEvent } from '../types'
+
+const SOFT_SPRING = { type: 'spring' as const, stiffness: 420, damping: 38, mass: 0.82 }
+const QUICK_SPRING = { type: 'spring' as const, stiffness: 520, damping: 42, mass: 0.68 }
+const STAGGER = {
+  hidden: {},
+  visible: { transition: { staggerChildren: 0.045, delayChildren: 0.04 } },
+}
+const RISE = {
+  hidden: { opacity: 0, y: 10, filter: 'blur(5px)' },
+  visible: { opacity: 1, y: 0, filter: 'blur(0px)', transition: SOFT_SPRING },
+}
 
 export const SLOT_ORDER = ['planning', 'context', 'memory', 'verification', 'steering', 'tool_protocol'] as const
 export const SLOT_LABELS: Record<string, string> = {
@@ -162,24 +177,79 @@ export function localizeEngineeringText(value: string): string {
 export function PageHeader({ code, title, subtitle, marker = '实时系统' }: {
   code: string; title: string; subtitle: string; marker?: string
 }) {
+  const reduceMotion = useReducedMotion()
   return (
-    <header className="page-header">
+    <m.header className="page-header" initial={reduceMotion ? { opacity: 0 } : { opacity: 0, y: 12 }}
+      animate={{ opacity: 1, y: 0 }} transition={SOFT_SPRING}>
+      <div className="header-signal-field" aria-hidden="true">
+        <svg viewBox="0 0 420 112" preserveAspectRatio="none">
+          <path className="signal-grid-line" d="M0 88H420M0 56H420M0 24H420" />
+          <m.path className="signal-trace" d="M0 78H72L92 78L112 39L138 90L164 62H221L241 24L266 75H310L328 51L350 68H420"
+            initial={{ pathLength: 0, opacity: 0 }} animate={{ pathLength: 1, opacity: 1 }}
+            transition={{ pathLength: { duration: reduceMotion ? 0 : 0.8, ease: [0.23, 1, 0.32, 1] }, opacity: { duration: 0.18 } }} />
+        </svg>
+      </div>
       <div className="eyebrow"><span>{code}</span><span className="live-marker"><i />{marker}</span></div>
-      <h1>{title}</h1>
-      <p>{subtitle}</p>
-    </header>
+      <m.h1 initial={reduceMotion ? false : { opacity: 0, y: 7 }} animate={{ opacity: 1, y: 0 }}
+        transition={{ ...SOFT_SPRING, delay: 0.04 }}>{title}</m.h1>
+      <m.p initial={reduceMotion ? false : { opacity: 0, y: 7 }} animate={{ opacity: 1, y: 0 }}
+        transition={{ ...SOFT_SPRING, delay: 0.08 }}>{subtitle}</m.p>
+    </m.header>
   )
 }
 
 export function SectionHeading({ index, title, note }: { index: string; title: string; note?: string }) {
-  return <div className="section-heading"><div><b>{index}</b><span>{title}</span></div>{note && <small>{note}</small>}</div>
+  return <m.div className="section-heading" initial={{ opacity: 0, y: 7 }} animate={{ opacity: 1, y: 0 }}
+    transition={SOFT_SPRING}>
+    <div><b>{index}</b><span>{title}</span></div>{note && <small>{note}</small>}
+    <m.i className="section-scanline" aria-hidden="true" initial={{ scaleX: 0 }} animate={{ scaleX: 1 }}
+      transition={{ duration: 0.55, ease: [0.23, 1, 0.32, 1] }} />
+  </m.div>
 }
 
 export function TelemetryStrip({ items }: { items: Array<{ label: string; value: string | number; note: string; tone?: string }> }) {
-  return <div className="telemetry-strip">{items.map((item) => (
-    <div className={`telemetry-cell ${item.tone ?? 'ink'}`} key={item.label}>
-      <span>{item.label}</span><strong>{item.value}</strong><small>{item.note}</small>
-    </div>
+  return <m.div className="telemetry-strip" variants={STAGGER} initial="hidden" animate="visible">{items.map((item, index) => (
+    <m.div className={`telemetry-cell ${item.tone ?? 'ink'}`} key={item.label} variants={RISE}
+      whileHover={{ y: -4, transition: QUICK_SPRING }}>
+      <span><i>{String(index + 1).padStart(2, '0')}</i>{item.label}</span>
+      <strong>{typeof item.value === 'number' ? <NumberFlow value={item.value} /> : item.value}</strong>
+      <small>{item.note}</small>
+      <i className="telemetry-glint" aria-hidden="true" />
+    </m.div>
+  ))}</m.div>
+}
+
+export function ViewTransition({ viewKey, children, className = '' }: {
+  viewKey: string; children: ReactNode; className?: string
+}) {
+  return (
+    <AnimatePresence mode="popLayout" initial={false}>
+      <m.div className={className} key={viewKey}
+        initial={{ opacity: 0, scale: 0.997, filter: 'blur(4px)' }}
+        animate={{ opacity: 1, scale: 1, filter: 'blur(0px)' }}
+        exit={{ opacity: 0, scale: 0.997, filter: 'blur(4px)' }}
+        transition={SOFT_SPRING}>
+        {children}
+      </m.div>
+    </AnimatePresence>
+  )
+}
+
+export function CoverageBar({ percent }: { percent: number }) {
+  const reduceMotion = useReducedMotion()
+  const width = `${Math.max(0, Math.min(100, percent))}%`
+  return <div className="coverage-track"><m.i initial={reduceMotion ? false : { width: 0 }} animate={{ width }} transition={SOFT_SPRING} /></div>
+}
+
+export function SegmentedTabs({ items, value, onChange, layoutId }: {
+  items: Array<[string, string]>; value: string; onChange: (value: string) => void; layoutId: string
+}) {
+  return <div className="tab-list" role="tablist">{items.map(([id, label]) => (
+    <m.button role="tab" aria-selected={value === id} className={value === id ? 'active' : ''}
+      onClick={() => onChange(id)} key={id} whileTap={{ scale: 0.97 }} transition={QUICK_SPRING}>
+      {value === id && <m.i className="tab-selection" layoutId={layoutId} transition={SOFT_SPRING} />}
+      <span>{label}</span>
+    </m.button>
   ))}</div>
 }
 
@@ -187,28 +257,32 @@ export function StatusBadge({ status }: { status: string }) {
   const tone = ['SUCCEEDED', 'delivered', 'paid', 'RESOLVED', 'ELIGIBLE', 'SUBMITTED', 'ACTIVE'].includes(status) ? 'ok'
     : ['FAILED', 'REJECTED', 'INELIGIBLE', 'CANCELLED'].includes(status) ? 'bad'
       : status.startsWith('WAITING') || ['INTERRUPTED', 'pending', 'OPEN', 'MANUAL_REVIEW', 'NEEDS_EVIDENCE'].includes(status) ? 'warn' : ''
-  return <span className={`status-badge ${tone}`}>{STATUS_LABELS[status] ?? status}</span>
+  return <m.span layout className={`status-badge ${tone}`} transition={QUICK_SPRING}>
+    <i aria-hidden="true" />{STATUS_LABELS[status] ?? status}
+  </m.span>
 }
 
 export function MechanismRail({ profile, reference }: { profile: HarnessProfile; reference?: HarnessProfile }) {
   return (
     <div>
       <div className="fingerprint-head"><span>{profile.profile_id}</span><span>{ENGINE_LABELS[profile.engine.id] ?? profile.engine.id} · {RESEARCH_STATUS_LABELS[profile.research.status] ?? profile.research.status}</span></div>
-      <div className="mechanism-rail">
+      <m.div className="mechanism-rail" variants={STAGGER} initial="hidden" animate="visible">
         {SLOT_ORDER.map((slot, index) => {
           const mechanism = profile.mechanisms[slot]
           const changed = reference !== undefined && JSON.stringify(mechanism) !== JSON.stringify(reference.mechanisms[slot])
           const mechanismLabel = mechanism ? MECHANISM_LABELS[mechanism.id] : undefined
           return (
-            <div className={`mechanism-cell ${!mechanism ? 'empty' : changed ? 'changed' : 'active'}`} key={slot}>
+            <m.div className={`mechanism-cell ${!mechanism ? 'empty' : changed ? 'changed' : 'active'}`} key={slot}
+              variants={RISE} whileHover={{ y: -3, transition: QUICK_SPRING }}>
               <span className="slot-index">{String(index + 1).padStart(2, '0')}</span>
               <span className="slot-label">{SLOT_LABELS[slot]}</span>
               <strong>{mechanismLabel ?? mechanism?.id ?? '未绑定'}</strong>
               <small>{mechanism ? `${mechanismLabel ? `${mechanism.id} · ` : ''}v${mechanism.version}` : '—'}</small>
-            </div>
+              {changed && <m.i className="mechanism-change-signal" layoutId={`changed-${profile.profile_id}-${slot}`} />}
+            </m.div>
           )
         })}
-      </div>
+      </m.div>
     </div>
   )
 }
@@ -226,25 +300,31 @@ export function ExecutionSpine({ events, selected, onSelect }: {
   events: RunEvent[]; selected?: number; onSelect?: (index: number) => void
 }) {
   if (events.length === 0) return <div className="empty-inline">暂未记录执行事件</div>
-  return <div className="execution-spine">{events.map((event, index) => {
+  return <m.div className="execution-spine" variants={STAGGER} initial="hidden" animate="visible">{events.map((event, index) => {
     const [code, label] = eventLabel(event)
     const tone = event.type === 'terminal' ? 'terminal' : ['error', 'verification_failed', 'hook_failed'].includes(event.type) ? 'error' : ''
     return (
-      <button type="button" className={`spine-node ${tone}${selected === index ? ' selected' : ''}`} key={`${event.sequence ?? index}-${event.type}`} onClick={() => onSelect?.(index)}>
+      <m.button type="button" className={`spine-node ${tone}${selected === index ? ' selected' : ''}`}
+        key={`${event.sequence ?? index}-${event.type}`} onClick={() => onSelect?.(index)} variants={RISE}
+        whileHover={{ y: -2 }} whileTap={{ scale: 0.985 }} transition={QUICK_SPRING}>
+        {selected === index && <m.span className="spine-selection" layoutId="execution-spine-selection" transition={SOFT_SPRING} />}
         <i /><span>{String(event.sequence ?? index + 1).padStart(2, '0')} / {code}</span><strong>{label}</strong>
-      </button>
+      </m.button>
     )
-  })}</div>
+  })}</m.div>
 }
 
 export function DefinitionGrid({ items }: { items: Array<[string, string | number]> }) {
-  return <dl className="definition-grid">{items.map(([label, value]) => (
-    <div key={label}><dt>{label}</dt><dd>{value}</dd></div>
-  ))}</dl>
+  return <m.dl className="definition-grid" variants={STAGGER} initial="hidden" animate="visible">{items.map(([label, value]) => (
+    <m.div key={label} variants={RISE}><dt>{label}</dt><dd>{typeof value === 'number' ? <NumberFlow value={value} /> : value}</dd></m.div>
+  ))}</m.dl>
 }
 
 export function Chips({ values }: { values: string[] }) {
-  return <div className="chip-row">{values.map((value) => <span key={value} title={value}>{CAPABILITY_LABELS[value] ?? value}</span>)}</div>
+  return <m.div className="chip-row" variants={STAGGER} initial="hidden" animate="visible">
+    {values.map((value) => <m.span variants={RISE} whileHover={{ y: -2 }} transition={QUICK_SPRING}
+      key={value} title={value}>{CAPABILITY_LABELS[value] ?? value}</m.span>)}
+  </m.div>
 }
 
 export function JsonBlock({ value }: { value: unknown }) {
@@ -252,11 +332,15 @@ export function JsonBlock({ value }: { value: unknown }) {
 }
 
 export function LoadingState({ label = '正在读取系统状态' }: { label?: string }) {
-  return <div className="loading-state"><i /><span>{label}</span></div>
+  return <m.div className="loading-state" initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
+    <span className="loading-orbit" aria-hidden="true"><i /><i /><i /></span><span>{label}</span>
+  </m.div>
 }
 
 export function ErrorState({ error, retry }: { error: unknown; retry?: () => void }) {
-  return <div className="error-state"><b>数据未加载</b><p>{error instanceof Error ? error.message : '发生未知错误'}</p>{retry && <button onClick={retry}>重新读取</button>}</div>
+  return <m.div className="error-state" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={SOFT_SPRING}>
+    <b>数据未加载</b><p>{error instanceof Error ? error.message : '发生未知错误'}</p>{retry && <button onClick={retry}>重新读取</button>}
+  </m.div>
 }
 
 export function formatTime(value: string): string {

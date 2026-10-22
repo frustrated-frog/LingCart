@@ -28,6 +28,37 @@ beforeEach(() => {
 })
 
 describe('SandboxPage durable session behavior', () => {
+  it('uses the selected execution mode when Enter submits a task', async () => {
+    vi.spyOn(api, 'conversation').mockResolvedValue({ active_run_id: null, messages: [], state: {} })
+    const start = vi.spyOn(api, 'startRun').mockImplementation(() => new Promise(() => undefined))
+    renderPage()
+
+    const mode = await screen.findByRole('switch', { name: '自适应规划' })
+    expect(mode).toHaveAttribute('aria-checked', 'false')
+    fireEvent.click(mode)
+    expect(mode).toHaveAttribute('aria-checked', 'true')
+
+    const input = screen.getByLabelText('消费需求')
+    fireEvent.change(input, { target: { value: '400 元以内选耳机和键盘' } })
+    fireEvent.keyDown(input, { key: 'Enter', code: 'Enter', shiftKey: true })
+    expect(start).not.toHaveBeenCalled()
+    fireEvent.keyDown(input, { key: 'Enter', code: 'Enter' })
+
+    await waitFor(() => expect(start).toHaveBeenCalledTimes(1))
+    expect(start.mock.calls[0][0]).toMatchObject({
+      message: '400 元以内选耳机和键盘', harness_profile: 'adaptive-v1', execution_mode: 'adaptive',
+    })
+  })
+
+  it('offers a retry when persisted conversation recovery fails', async () => {
+    vi.spyOn(api, 'conversation').mockRejectedValue(new Error('本地 API 暂时不可用'))
+    renderPage()
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('暂时无法恢复会话')
+    expect(screen.getByText('本地 API 暂时不可用')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '重新连接' })).toBeInTheDocument()
+  })
+
   it('shows an execution acknowledgement before the server accepts the run', async () => {
     vi.spyOn(api, 'conversation').mockResolvedValue({ active_run_id: null, messages: [], state: {} })
     vi.spyOn(api, 'startRun').mockImplementation(() => new Promise(() => undefined))

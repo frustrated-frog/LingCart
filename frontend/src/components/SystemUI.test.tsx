@@ -1,7 +1,7 @@
 import { fireEvent, render, screen } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import type { HarnessProfile } from '../types'
-import { ExecutionSpine, localizeEngineeringText, MechanismRail, StatusBadge } from './SystemUI'
+import { ExecutionSpine, localizeEngineeringText, MechanismRail, SegmentedTabs, StatusBadge } from './SystemUI'
 
 function profile(id: string, planning: string): HarnessProfile {
   return {
@@ -93,5 +93,16 @@ describe('StatusBadge', () => {
     const { container } = render(<StatusBadge status="WAITING_APPROVAL" />)
     expect(screen.getByText('等待确认')).toBeInTheDocument()
     expect(container.firstChild).toHaveClass('warn')
+  })
+})
+
+describe('SegmentedTabs', () => {
+  it('exposes the selected tab and changes views through a real button', () => {
+    const change = vi.fn()
+    render(<SegmentedTabs items={[["summary", "摘要"], ["evidence", "证据"]]} value="summary"
+      onChange={change} layoutId="test-tabs" />)
+    expect(screen.getByRole('tab', { name: '摘要' })).toHaveAttribute('aria-selected', 'true')
+    fireEvent.click(screen.getByRole('tab', { name: '证据' }))
+    expect(change).toHaveBeenCalledWith('evidence')
   })
 })
