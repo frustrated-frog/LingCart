@@ -1,0 +1,116 @@
+"""Stable contracts for after-sales cases and deterministic policy decisions."""
+
+from __future__ import annotations
+
+from datetime import datetime
+from enum import StrEnum
+from typing import Any
+
+from pydantic import BaseModel, ConfigDict, Field
+
+
+class CaseType(StrEnum):
+    RETURN = "RETURN"
+    REFUND = "REFUND"
+    EXCHANGE = "EXCHANGE"
+    REPAIR = "REPAIR"
+    DELIVERY_ISSUE = "DELIVERY_ISSUE"
+
+
+class RequestedResolution(StrEnum):
+    REFUND = "REFUND"
+    RETURN_AND_REFUND = "RETURN_AND_REFUND"
+    REPLACEMENT = "REPLACEMENT"
+    REPAIR = "REPAIR"
+    INFORMATION = "INFORMATION"
+
+
+class CaseStatus(StrEnum):
+    OPEN = "OPEN"
+    AWAITING_EVIDENCE = "AWAITING_EVIDENCE"
+    AWAITING_CONFIRMATION = "AWAITING_CONFIRMATION"
+    SUBMITTED = "SUBMITTED"
+    MANUAL_REVIEW = "MANUAL_REVIEW"
+    RESOLVED = "RESOLVED"
+    REJECTED = "REJECTED"
+    CANCELLED = "CANCELLED"
+
+    @property
+    def terminal(self) -> bool:
+        return self in {self.RESOLVED, self.REJECTED, self.CANCELLED}
+
+
+class PolicyOutcome(StrEnum):
+    ELIGIBLE = "ELIGIBLE"
+    NEEDS_EVIDENCE = "NEEDS_EVIDENCE"
+    INELIGIBLE = "INELIGIBLE"
+    MANUAL_REVIEW = "MANUAL_REVIEW"
+
+
+class ActorType(StrEnum):
+    CUSTOMER = "CUSTOMER"
+    AGENT = "AGENT"
+    SYSTEM = "SYSTEM"
+    HUMAN = "HUMAN"
+
+
+class CaseCreateCommand(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    request_key: str = Field(min_length=1, max_length=128)
+    case_type: CaseType
+    order_id: int = Field(gt=0)
+    order_item_id: str | None = Field(default=None, min_length=1, max_length=64)
+    requested_resolution: RequestedResolution
+    reason_code: str | None = Field(default=None, min_length=1, max_length=40)
+    reason_text: str = Field(min_length=1, max_length=2000)
+    origin_session_id: str | None = Field(default=None, min_length=1, max_length=64)
+    context: dict[str, Any] = Field(default_factory=dict)
+
+
+class EvidenceCommand(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    evidence_type: str = Field(min_length=1, max_length=48)
+    source_type: str = Field(min_length=1, max_length=32)
+    source_ref: str = Field(min_length=1, max_length=200)
+    payload: dict[str, Any]
+    observed_at: datetime
+
+
+class PolicyEvaluation(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    policy_version_id: str
+    policy_checksum: str
+    outcome: PolicyOutcome
+    reason_codes: tuple[str, ...]
+    facts: dict[str, Any]
+    evidence_refs: tuple[str, ...]
+    allowed_actions: tuple[str, ...]
+    evaluator_version: str
+    evaluated_at: datetime
+    input_hash: str
+
+
+class CaseProjection(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    case_id: str
+    request_key: str
+    case_type: CaseType
+    order_id: int
+    order_item_id: str | None
+    requested_resolution: RequestedResolution
+    reason_code: str | None
+    reason_text: str
+    status: CaseStatus
+    revision: int
+    origin_session_id: str | None
+    context: dict[str, Any]
+    opened_at: datetime
+    updated_at: datetime
+    closed_at: datetime | None
+    latest_decision: dict[str, Any] | None = None
+    evidence: tuple[dict[str, Any], ...] = ()
+    events: tuple[dict[str, Any], ...] = ()

@@ -2,7 +2,21 @@ import os
 from datetime import date, datetime
 from pathlib import Path
 
-from sqlalchemy import create_engine, Boolean, Date, DateTime, Float, ForeignKey, Integer, JSON, String, Text, UniqueConstraint, text
+from sqlalchemy import (
+    create_engine,
+    Boolean,
+    CheckConstraint,
+    Date,
+    DateTime,
+    Float,
+    ForeignKey,
+    Integer,
+    JSON,
+    String,
+    Text,
+    UniqueConstraint,
+    text,
+)
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -63,6 +77,161 @@ class ShipmentEvent(Base):
     order_id: Mapped[int] = mapped_column(ForeignKey("orders.order_id"), index=True)
     occurred_at: Mapped[datetime] = mapped_column(DateTime)
     description: Mapped[str] = mapped_column(String(200))
+
+
+class OrderItem(Base):
+    """Immutable order-line identity used by long-lived business cases."""
+
+    __tablename__ = "order_items"
+    __table_args__ = (
+        UniqueConstraint("order_id", "line_number", name="uq_order_item_line"),
+        CheckConstraint("quantity > 0", name="ck_order_item_quantity_positive"),
+        CheckConstraint("unit_price_minor >= 0", name="ck_order_item_price_non_negative"),
+    )
+
+    item_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    order_id: Mapped[int] = mapped_column(ForeignKey("orders.order_id"), index=True)
+    line_number: Mapped[int] = mapped_column(Integer)
+    product_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    name: Mapped[str] = mapped_column(String(200))
+    quantity: Mapped[int] = mapped_column(Integer, default=1)
+    unit_price_minor: Mapped[int] = mapped_column(Integer)
+    currency: Mapped[str] = mapped_column(String(8), default="CNY")
+    attributes: Mapped[dict] = mapped_column(JSON, default=dict)
+
+
+class PolicyVersion(Base):
+    """Versioned policy source. Existing decisions keep pointing at this row."""
+
+    __tablename__ = "policy_versions"
+    __table_args__ = (
+        UniqueConstraint("policy_id", "version", name="uq_policy_version"),
+        CheckConstraint("status IN ('DRAFT', 'ACTIVE', 'RETIRED')", name="ck_policy_version_status"),
+    )
+
+    policy_version_id: Mapped[str] = mapped_column(String(96), primary_key=True)
+    policy_id: Mapped[str] = mapped_column(String(64), index=True)
+    version: Mapped[str] = mapped_column(String(32))
+    policy_type: Mapped[str] = mapped_column(String(40), index=True)
+    status: Mapped[str] = mapped_column(String(16))
+    effective_from: Mapped[datetime] = mapped_column(DateTime, index=True)
+    effective_until: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    rules: Mapped[dict] = mapped_column(JSON)
+    source_ref: Mapped[str] = mapped_column(String(200))
+    checksum: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime)
+
+
+class AfterSalesCase(Base):
+    """A long-lived business case; deliberately separate from Run and Conversation."""
+
+    __tablename__ = "after_sales_cases"
+    __table_args__ = (
+        CheckConstraint("revision > 0", name="ck_after_sales_case_revision_positive"),
+    )
+
+    case_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    request_key: Mapped[str] = mapped_column(String(128), unique=True)
+    case_type: Mapped[str] = mapped_column(String(32), index=True)
+    order_id: Mapped[int] = mapped_column(ForeignKey("orders.order_id"), index=True)
+    order_item_id: Mapped[str | None] = mapped_column(ForeignKey("order_items.item_id"), nullable=True)
+    requested_resolution: Mapped[str] = mapped_column(String(40))
+    reason_code: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    reason_text: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(40), index=True)
+    revision: Mapped[int] = mapped_column(Integer, default=1)
+    origin_session_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    context: Mapped[dict] = mapped_column(JSON, default=dict)
+    opened_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime)
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class AfterSalesCaseRun(Base):
+    """Many-to-many audit link between a business case and execution attempts."""
+
+    __tablename__ = "after_sales_case_runs"
+    __table_args__ = (
+        UniqueConstraint("case_id", "run_id", name="uq_after_sales_case_run"),
+    )
+
+    link_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    case_id: Mapped[str] = mapped_column(ForeignKey("after_sales_cases.case_id"), index=True)
+    run_id: Mapped[str] = mapped_column(ForeignKey("agent_runs.run_id"), index=True)
+    session_id: Mapped[str] = mapped_column(String(64), index=True)
+    role: Mapped[str] = mapped_column(String(24))
+    linked_at: Mapped[datetime] = mapped_column(DateTime)
+
+
+class AfterSalesEvidence(Base):
+    """Immutable evidence envelope; payloads remain untrusted until policy evaluation."""
+
+    __tablename__ = "after_sales_evidence"
+    __table_args__ = (
+        UniqueConstraint("case_id", "source_ref", "checksum", name="uq_after_sales_evidence_content"),
+        CheckConstraint("status IN ('ACTIVE', 'STALE', 'REVOKED')", name="ck_after_sales_evidence_status"),
+    )
+
+    evidence_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    case_id: Mapped[str] = mapped_column(ForeignKey("after_sales_cases.case_id"), index=True)
+    evidence_type: Mapped[str] = mapped_column(String(48), index=True)
+    source_type: Mapped[str] = mapped_column(String(32))
+    source_ref: Mapped[str] = mapped_column(String(200))
+    payload: Mapped[dict] = mapped_column(JSON)
+    checksum: Mapped[str] = mapped_column(String(64))
+    status: Mapped[str] = mapped_column(String(16), default="ACTIVE")
+    observed_at: Mapped[datetime] = mapped_column(DateTime)
+    created_at: Mapped[datetime] = mapped_column(DateTime)
+
+
+class PolicyDecision(Base):
+    """Append-only policy verdict with the exact facts and policy identity used."""
+
+    __tablename__ = "policy_decisions"
+    __table_args__ = (
+        UniqueConstraint("case_id", "input_hash", name="uq_policy_decision_input"),
+        UniqueConstraint("case_id", "case_revision", name="uq_policy_decision_revision"),
+        CheckConstraint("case_revision > 0", name="ck_policy_decision_revision_positive"),
+    )
+
+    decision_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    case_id: Mapped[str] = mapped_column(ForeignKey("after_sales_cases.case_id"), index=True)
+    policy_version_id: Mapped[str] = mapped_column(ForeignKey("policy_versions.policy_version_id"), index=True)
+    case_revision: Mapped[int] = mapped_column(Integer)
+    input_hash: Mapped[str] = mapped_column(String(64))
+    outcome: Mapped[str] = mapped_column(String(32), index=True)
+    reason_codes: Mapped[list] = mapped_column(JSON)
+    facts: Mapped[dict] = mapped_column(JSON)
+    evidence_refs: Mapped[list] = mapped_column(JSON)
+    allowed_actions: Mapped[list] = mapped_column(JSON)
+    evaluator_version: Mapped[str] = mapped_column(String(32))
+    decided_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+    supersedes_decision_id: Mapped[str | None] = mapped_column(
+        ForeignKey("policy_decisions.decision_id"), nullable=True
+    )
+
+
+class AfterSalesCaseEvent(Base):
+    """Append-only case timeline; sequence and revision advance together."""
+
+    __tablename__ = "after_sales_case_events"
+    __table_args__ = (
+        UniqueConstraint("case_id", "sequence", name="uq_after_sales_case_event_sequence"),
+        UniqueConstraint("case_id", "idempotency_key", name="uq_after_sales_case_event_idempotency"),
+        CheckConstraint("sequence > 0", name="ck_after_sales_case_event_sequence_positive"),
+        CheckConstraint("case_revision > 0", name="ck_after_sales_case_event_revision_positive"),
+    )
+
+    event_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    case_id: Mapped[str] = mapped_column(ForeignKey("after_sales_cases.case_id"), index=True)
+    sequence: Mapped[int] = mapped_column(Integer)
+    case_revision: Mapped[int] = mapped_column(Integer)
+    event_type: Mapped[str] = mapped_column(String(48), index=True)
+    actor_type: Mapped[str] = mapped_column(String(24))
+    actor_id: Mapped[str | None] = mapped_column(String(96), nullable=True)
+    idempotency_key: Mapped[str] = mapped_column(String(128))
+    payload: Mapped[dict] = mapped_column(JSON)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime, index=True)
 
 
 class WorkspaceRun(Base):
