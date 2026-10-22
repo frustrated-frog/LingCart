@@ -18,6 +18,7 @@ from src import tools
 from src.catalog_metadata import CATALOG_FACETS_DEPENDENCY, CatalogMetadataProvider, CatalogMetadataSnapshot
 from src.catalog_query import CATALOG_QUERY_OPERATION, compile_catalog_query, query_catalog
 from src.errors import AgentError
+from src.grounding import number_is_grounded
 from src.intake import (
     FAQ,
     CATALOG_QUERY,
@@ -227,29 +228,33 @@ class CapabilityRegistry:
                        if parameters.get(name) in (None, "", []))
         return tuple(dict.fromkeys(missing))
 
-    def normalize_arguments(self, objective: Mapping[str, object], sources: tuple[str, ...]) -> tuple[dict, dict[str, dict]]:
+    def normalize_arguments(
+        self,
+        objective: Mapping[str, object],
+        sources: tuple[str, ...],
+        *,
+        trusted_provenance: Mapping[str, dict] | None = None,
+    ) -> tuple[dict, dict[str, dict]]:
         registration = self.registration(str(objective["kind"]))
         normalized = dict(objective)
-        provenance: dict[str, dict] = {}
+        provenance: dict[str, dict] = dict(trusted_provenance or {})
         if registration.normalizer is not None:
-            normalized, provenance = registration.normalizer(normalized, sources)
+            normalized, resolver_provenance = registration.normalizer(normalized, sources)
+            provenance.update(resolver_provenance)
         folded_sources = [source.casefold() for source in sources]
 
         def grounded(value: object) -> bool:
             if isinstance(value, str):
                 return bool(value) and any(value.casefold() in source for source in folded_sources)
             if isinstance(value, (int, float)) and not isinstance(value, bool):
-                variants = {str(value), f"{value:g}"}
-                return any(
-                    re.search(r"(?<![\d.])" + re.escape(candidate) + r"(?![\d.])", source)
-                    for source in folded_sources
-                    for candidate in variants
-                )
+                return number_is_grounded(value, sources)
             return False
 
         for field_name, safe_default in registration.spec.ungrounded_optional_defaults.items():
             value = normalized.get(field_name)
             if value in (None, "", [], {}):
+                continue
+            if field_name in provenance:
                 continue
             if isinstance(value, list):
                 kept = [item for item in value if grounded(item)]
@@ -401,6 +406,86 @@ class CapabilityRegistry:
 
 def _args(objective: Mapping[str, object], fields: tuple[str, ...]) -> dict:
     return {name: objective[name] for name in fields if objective.get(name) not in (None, "", [])}
+
+
+def normalize_catalog_objective(
+    objective: dict,
+    sources: tuple[str, ...],
+) -> tuple[dict, dict[str, dict]]:
+    """Normalize only aliases that are grounded in trusted catalog metadata and user text."""
+
+    normalized = dict(objective)
+    provenance: dict[str, dict] = {}
+    snapshot = get_capability_registry().metadata_snapshot(
+        str(objective["kind"]),
+        CATALOG_FACETS_DEPENDENCY,
+    )
+    facets = snapshot.facets
+    folded_sources = tuple(source.casefold() for source in sources)
+
+    def grounded(value: str) -> bool:
+        return bool(value) and any(value.casefold() in source for source in folded_sources)
+
+    raw_category = objective.get("category")
+    if isinstance(raw_category, str) and raw_category:
+        raw_folded = raw_category.casefold()
+        for canonical, aliases in facets.get("category_aliases", {}).items():
+            candidates = (str(canonical), *(str(alias) for alias in aliases))
+            if raw_folded not in {candidate.casefold() for candidate in candidates}:
+                continue
+            source_form = next((candidate for candidate in candidates if grounded(candidate)), None)
+            if source_form is None:
+                break
+            normalized["category"] = str(canonical)
+            if normalized["category"] != raw_category or not grounded(raw_category):
+                provenance["category"] = {
+                    "name": "category",
+                    "raw_text": raw_category,
+                    "normalized_value": normalized["category"],
+                    "normalized_terms": [str(canonical).casefold()],
+                    "resolver": "catalog_metadata_alias",
+                    "resolver_version": snapshot.version,
+                    "source_quote": str(objective.get("source_quote") or ""),
+                    "confidence": 1.0,
+                }
+            break
+
+    raw_query = objective.get("query")
+    if isinstance(raw_query, str) and raw_query:
+        normalized_query = raw_query
+        grounded_terms: set[str] = set()
+        aliases = {
+            str(alias): str(canonical)
+            for alias, canonical in facets.get("search_aliases", {}).items()
+        }
+        for alias, canonical in sorted(aliases.items(), key=lambda item: len(item[0]), reverse=True):
+            if alias.casefold() in normalized_query.casefold() and grounded(alias):
+                normalized_query = re.sub(
+                    re.escape(alias),
+                    canonical,
+                    normalized_query,
+                    flags=re.IGNORECASE,
+                )
+                grounded_terms.add(canonical.casefold())
+        for canonical in set(aliases.values()):
+            if canonical.casefold() not in normalized_query.casefold() or grounded(canonical):
+                continue
+            if any(grounded(alias) for alias, target in aliases.items() if target == canonical):
+                grounded_terms.add(canonical.casefold())
+        normalized_query = " ".join(normalized_query.split())
+        normalized["query"] = normalized_query
+        if normalized_query != raw_query or grounded_terms:
+            provenance["query"] = {
+                "name": "query",
+                "raw_text": raw_query,
+                "normalized_value": normalized_query,
+                "normalized_terms": sorted(grounded_terms),
+                "resolver": "catalog_metadata_alias",
+                "resolver_version": snapshot.version,
+                "source_quote": str(objective.get("source_quote") or ""),
+                "confidence": 1.0,
+            }
+    return normalized, provenance
 
 
 def _single(specialist: str, operation: str, fields: tuple[str, ...]) -> Compiler:
@@ -594,6 +679,7 @@ def _builtin_registrations() -> tuple[CapabilityRegistration, ...]:
         _spec(PRODUCT_SEARCH, "catalog.search", "按用户明确条件搜索真实商品目录", "product",
               "CATALOG", _search, accepted=("query", "category", "max_price", "excluded_terms"),
               under_specified=True, metadata_dependencies=(CATALOG_FACETS_DEPENDENCY,),
+              normalizer=normalize_catalog_objective, normalizer_version="catalog_metadata_alias/v1",
               handlers={"search_products": tools.search_products}),
         _spec(PRODUCT_DISCOVERY, "catalog.discover", "在偏好不完整时生成真实、差异化的探索候选并继续偏好获取",
               "product", "CATALOG", _discover,
@@ -603,6 +689,7 @@ def _builtin_registrations() -> tuple[CapabilityRegistration, ...]:
                   "soft_preferences": [], "excluded_terms": [],
               },
               under_specified=True, metadata_dependencies=(CATALOG_FACETS_DEPENDENCY,),
+              normalizer=normalize_catalog_objective, normalizer_version="catalog_metadata_alias/v1",
               handlers={"discover_products": tools.discover_products}),
         _spec(PRODUCT_COMPARE, "catalog.compare", "比较用户明确指定的两到三款真实商品", "product",
               "CATALOG", _compare, required=("product_ids",), accepted=("product_ids",),

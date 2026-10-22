@@ -145,6 +145,14 @@ def test_free_form_catalog_facets_require_semantic_contract_coverage():
     assert result.semantic_hazards == ("UNPROVEN_CATALOG_SCOPE",)
 
 
+def test_negative_catalog_budget_is_rejected_before_model_routing():
+    result = analyze_request("推荐预算 -5 元的耳机")
+
+    assert result.execution_mode == CLARIFICATION_REQUIRED
+    assert "负数" in result.reason
+    assert result.semantic_hazards == ("INVALID_NUMERIC_RANGE",)
+
+
 @pytest.mark.parametrize(
     "message",
     [

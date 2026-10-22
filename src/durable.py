@@ -123,11 +123,9 @@ def execute_claim(claim, *, store=None, runner=None):
                         context.context_engine = ContextEngine(effective, preferences=preferences,
                             observations=context.snapshot.get('context', {}).get('observations', []),
                             revision=context.snapshot.get('goal_revision', 0))
-                    from src.adaptive import run_adaptive
-                    # Autonomous mode receives the actual request plus separate
-                    # preference data. Rules must not inject a synthetic hard budget.
-                    adaptive_runner = runner is run_adaptive or getattr(runner, "execution_mode", None) == "adaptive"
-                    effective = context.context_engine.goal if adaptive_runner else context.context_engine.effective_request()
+                    # Every runtime receives the verbatim request. Confirmed preferences
+                    # remain a separate context channel and never masquerade as user text.
+                    effective = context.context_engine.goal
                     context.checkpoint(context=context.context_engine.payload())
                     if steering:
                         kwargs.pop("pending_action", None)

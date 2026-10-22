@@ -1,5 +1,9 @@
+import json
+
 import pytest
-from src import tools
+from langchain_core.messages import AIMessage
+
+from src import orchestrator, tools
 from src.backend.db import get_engine, get_session_factory
 from src.backend.seed import seed
 from src.context_engine import ContextEngine, LifecycleHooks, HookDecision
@@ -39,13 +43,42 @@ def test_explicit_memory_update_forget_and_cross_session_scope(database):
         store.bind('one', other)
 
 
-def test_saved_budget_fills_only_missing_current_constraint(database):
+def test_saved_budget_fills_only_missing_current_constraint(database, monkeypatch):
+    responses = iter((
+        {
+            "reason": "当前请求指定耳机品类，其余为探索偏好",
+            "commands": [],
+            "objectives": [{
+                "id": "headphones", "kind": "PRODUCT_DISCOVERY", "source_quote": "推荐耳机",
+                "category": "耳机",
+            }],
+        },
+        {
+            "reason": "当前请求明确指定了五百元预算",
+            "commands": [],
+            "objectives": [{
+                "id": "headphones", "kind": "PRODUCT_SEARCH", "source_quote": "推荐耳机，预算 500 元以内",
+                "category": "耳机", "max_price": 500,
+            }],
+        },
+    ))
+
+    class Model:
+        def json_mode(self):
+            return self
+
+        def invoke(self, _messages):
+            return AIMessage(content=json.dumps(next(responses), ensure_ascii=False))
+
+    model = Model()
+    monkeypatch.setattr(orchestrator, "get_llm", lambda **_kwargs: model)
     store = PreferenceStore()
     profile = store.create()
     store.remember(profile, 'max_price', 300, confirmed=True)
     store.bind('one', profile)
     result = run_conversation('推荐耳机', 'one')
     assert result['trace'][0]['args']['max_price'] == 300
+    assert any(event['type'] == 'preference_default_applied' for event in result['events'])
     explicit = run_conversation('推荐耳机，预算 500 元以内', 'one')
     assert explicit['trace'][0]['args']['max_price'] == 500
     assert all(t['tool'] != 'process_payment' for t in result['trace'])
@@ -60,6 +93,12 @@ def test_preference_is_not_order_evidence_and_context_does_not_mutate():
     messages = engine.model_messages('当前完整请求')
     assert messages[-1].content == '当前完整请求'
     assert '不能作为价格、库存或订单状态证据' in messages[0].content
+
+
+def test_effective_request_never_rewrites_shopping_goal_with_preferences():
+    engine = ContextEngine('推荐耳机', preferences=[{'key': 'max_price', 'value': {'value': 300}}])
+
+    assert engine.effective_request() == '推荐耳机'
 
 
 def test_hook_cannot_change_args_or_grant_approval(database):

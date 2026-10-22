@@ -208,14 +208,37 @@ class ContextEngine:
         return result
 
     def effective_request(self):
-        # 只给已明确属于选购的请求补缺省预算；不会改变订单、付款与售后动作。
-        from src.intake import analyze_request, PRODUCT_DISCOVERY, PRODUCT_SEARCH
-        intake = analyze_request(self.goal)
-        if not {PRODUCT_SEARCH, PRODUCT_DISCOVERY} & set(intake.intents):
-            return self.goal
-        preferences = {p['key']: p['value']['value'] for p in self.preferences}
-        suffix = []
-        explicit_budget = bool(re.search(r'预算|价格不限|不限价|不限制价格|无上限|budget|any price', self.goal, re.I))
-        if intake.entities.get('max_price') is None and not explicit_budget and 'max_price' in preferences:
-            suffix.append(f"预算 {preferences['max_price']} 元以内")
-        return self.goal + ('\n已确认的默认偏好：' + '，'.join(suffix) if suffix else '')
+        """Return the verbatim goal; trusted preferences travel on a separate channel."""
+
+        return self.goal
+
+    def preference_defaults(self, intake):
+        """Resolve safe, confirmed defaults without rewriting human-authored text."""
+
+        from src.intake import PRODUCT_DISCOVERY, PRODUCT_SEARCH
+
+        shopping_routes = {*intake.intents, *intake.route_hints}
+        if not {PRODUCT_SEARCH, PRODUCT_DISCOVERY} & shopping_routes:
+            return {}
+        explicit_budget = bool(re.search(
+            r'预算|价格不限|不限价|不限制价格|无上限|budget|any price|no price limit',
+            self.goal,
+            re.I,
+        ))
+        if intake.entities.get('max_price') is not None or explicit_budget:
+            return {}
+        preference = next((item for item in self.preferences if item.get('key') == 'max_price'), None)
+        value = ((preference or {}).get('value') or {}).get('value')
+        if type(value) not in (int, float) or not 0 < value <= 1_000_000:
+            return {}
+        provenance = {
+            'name': 'max_price',
+            'normalized_value': value,
+            'resolver': 'confirmed_preference',
+            'resolver_version': str((preference or {}).get('version') or 1),
+            'source': (preference or {}).get('source') or 'USER_CONFIRMED',
+            'confidence': 1.0,
+        }
+        if (preference or {}).get('preference_id'):
+            provenance['preference_id'] = preference['preference_id']
+        return {'max_price': {'value': value, 'provenance': provenance}}

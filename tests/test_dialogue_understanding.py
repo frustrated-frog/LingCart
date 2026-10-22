@@ -308,6 +308,33 @@ def test_ungrounded_model_entity_never_reaches_a_tool(monkeypatch):
     assert result["trace"] == []
 
 
+def test_numeric_grounding_accepts_sentence_punctuation_but_not_decimal_prefix(monkeypatch):
+    message = "Find 耳机 under CNY 500."
+    grounded = ScriptedModel(interpretation(objectives=[{
+        "id": "headphones", "kind": "PRODUCT_SEARCH", "source_quote": message,
+        "category": "耳机", "max_price": 500,
+    }]))
+    monkeypatch.setattr(orchestrator, "get_llm", lambda **_kwargs: grounded)
+
+    result = orchestrator.run_orchestrator(message)
+
+    assert result["status"] == "SUCCEEDED"
+    assert result["trace"][0]["args"]["max_price"] == 500
+
+    decimal_message = "Find 耳机 under CNY 500.5."
+    ungrounded = ScriptedModel(interpretation(objectives=[{
+        "id": "headphones", "kind": "PRODUCT_SEARCH", "source_quote": decimal_message,
+        "category": "耳机", "max_price": 500,
+    }]))
+    monkeypatch.setattr(orchestrator, "get_llm", lambda **_kwargs: ungrounded)
+
+    rejected = orchestrator.run_orchestrator(decimal_message)
+
+    assert rejected["status"] == "FAILED"
+    assert rejected["terminal_reason"] == "UNGROUNDED_PLAN_ENTITY"
+    assert rejected["trace"] == []
+
+
 def test_pending_action_does_not_block_an_unrelated_semantic_turn(monkeypatch, database):
     pending = orchestrator.run_orchestrator("帮我支付订单 1003")["pending_action"]
     message = "先等等，你具体能帮我做些什么"

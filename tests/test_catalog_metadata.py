@@ -85,6 +85,58 @@ def test_product_capabilities_declare_catalog_metadata_and_others_cannot_read_it
     assert error.value.code == "UNDECLARED_METADATA_DEPENDENCY"
 
 
+def test_semantic_catalog_aliases_are_normalized_with_auditable_provenance(monkeypatch):
+    facets = _facets("耳机")
+    facets["category_aliases"] = {"耳机": ["headphones"]}
+    facets["search_aliases"] = {"noise cancelling": "降噪"}
+    snapshot = CatalogMetadataProvider(
+        lambda: facets,
+        source="TEST_CATALOG",
+    ).get_snapshot()
+    registry = get_capability_registry()
+    monkeypatch.setattr(type(registry), "metadata_snapshot", lambda _self, _kind, _dependency: snapshot)
+
+    normalized, provenance = registry.normalize_arguments({
+        "id": "headphones",
+        "kind": PRODUCT_SEARCH,
+        "source_quote": "Find noise cancelling headphones under CNY 500.",
+        "category": "headphones",
+        "query": "noise cancelling",
+        "max_price": 500,
+    }, ("Find noise cancelling headphones under CNY 500.",))
+
+    assert normalized["category"] == "耳机"
+    assert normalized["query"] == "降噪"
+    assert provenance["category"]["resolver"] == "catalog_metadata_alias"
+    assert provenance["query"]["normalized_terms"] == ["降噪"]
+    assert provenance["query"]["resolver_version"] == snapshot.version
+
+
+def test_confirmed_preference_provenance_preserves_an_optional_catalog_default():
+    registry = get_capability_registry()
+    trusted = {
+        "max_price": {
+            "name": "max_price",
+            "normalized_value": 300,
+            "resolver": "confirmed_preference",
+            "resolver_version": "1",
+            "source": "USER_CONFIRMED",
+            "confidence": 1.0,
+        }
+    }
+
+    normalized, provenance = registry.normalize_arguments({
+        "id": "headphones",
+        "kind": PRODUCT_DISCOVERY,
+        "source_quote": "推荐耳机",
+        "category": "耳机",
+        "max_price": 300,
+    }, ("推荐耳机",), trusted_provenance=trusted)
+
+    assert normalized["max_price"] == 300
+    assert provenance["max_price"]["resolver"] == "confirmed_preference"
+
+
 def test_provider_cache_hit_and_explicit_invalidation_observe_data_change():
     state = _facets("耳机")
     loads = []

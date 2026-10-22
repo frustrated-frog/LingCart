@@ -18,6 +18,7 @@ from src.catalog_concepts import get_catalog_concept_registry
 from src.catalog_metadata import CATALOG_FACETS_DEPENDENCY
 from src.capability_registry import get_capability_registry
 from src.errors import AgentError
+from src.grounding import number_is_grounded
 from src.intake import (
     CLARIFICATION_REQUIRED,
     DIRECT,
@@ -152,7 +153,6 @@ _RESULT_SET_REFERENCE = re.compile(
     re.IGNORECASE,
 )
 
-
 def _human_sources(user_message: str, history: list | None) -> list[str]:
     return [
         user_message,
@@ -250,6 +250,25 @@ def _canonicalize_protocol(payload: object) -> object:
     return normalized
 
 
+def _apply_preference_defaults(understanding: TurnUnderstanding, defaults: dict | None) -> None:
+    if not defaults:
+        return
+    applied = []
+    budget = defaults.get("max_price")
+    for objective in understanding.objectives:
+        if (
+            objective.kind in {"PRODUCT_SEARCH", "PRODUCT_DISCOVERY"}
+            and objective.max_price is None
+            and isinstance(budget, dict)
+        ):
+            objective.max_price = budget["value"]
+            objective._argument_provenance["max_price"] = dict(budget["provenance"])
+            applied.append(objective.id)
+    context = current_runtime()
+    if context and applied:
+        context.record("preference_default_applied", field="max_price", objective_ids=applied)
+
+
 def _validate_grounding(understanding: TurnUnderstanding, user_message: str, history: list | None) -> None:
     sources = _human_sources(user_message, history)
     registry = get_capability_registry()
@@ -258,7 +277,12 @@ def _validate_grounding(understanding: TurnUnderstanding, user_message: str, his
     if any(quote not in user_message for quote in quoted):
         raise AgentError("UNGROUNDED_INTENT", "对话理解必须引用当前用户原文", retryable=False)
     for objective in understanding.objectives:
-        normalized, provenance = registry.normalize_arguments(objective.model_dump(), tuple(sources))
+        trusted_provenance = dict(objective._argument_provenance)
+        normalized, provenance = registry.normalize_arguments(
+            objective.model_dump(),
+            tuple(sources),
+            trusted_provenance=trusted_provenance,
+        )
         for name in type(objective).model_fields:
             if name in normalized:
                 value = normalized[name]
@@ -278,19 +302,23 @@ def _validate_grounding(understanding: TurnUnderstanding, user_message: str, his
             if not any(re.search(r"(?<![A-Za-z0-9])" + re.escape(product_id) + r"(?![A-Za-z0-9])",
                                  source, re.IGNORECASE) for source in sources):
                 raise AgentError("UNGROUNDED_PLAN_ENTITY", "商品编号必须来自用户或对话历史", retryable=False)
-        if objective.category is not None and not any(objective.category.casefold() in source.casefold()
-                                                      for source in sources):
+        category_terms = set((provenance.get("category") or {}).get("normalized_terms", []))
+        if (
+            objective.category is not None
+            and objective.category.casefold() not in category_terms
+            and not any(objective.category.casefold() in source.casefold() for source in sources)
+        ):
             raise AgentError("UNGROUNDED_PLAN_ENTITY", "商品品类必须来自用户或对话历史", retryable=False)
-        if objective.max_price is not None:
-            price_forms = {str(objective.max_price), f"{objective.max_price:g}"}
-            if not any(
-                re.search(r"(?<![\d.])" + re.escape(form) + r"(?![\d.])", source)
-                for source in sources
-                for form in price_forms
-            ):
+        if objective.max_price is not None and "max_price" not in provenance:
+            if not number_is_grounded(objective.max_price, sources):
                 raise AgentError("UNGROUNDED_PLAN_ENTITY", "商品预算必须来自用户或对话历史", retryable=False)
         query_terms = objective.query.casefold().split()
-        if any(not any(term in source.casefold() for source in sources) for term in query_terms):
+        normalized_query_terms = set((provenance.get("query") or {}).get("normalized_terms", []))
+        if any(
+            term not in normalized_query_terms
+            and not any(term in source.casefold() for source in sources)
+            for term in query_terms
+        ):
             raise AgentError("UNGROUNDED_PLAN_ENTITY", "商品查询条件必须来自用户或对话历史", retryable=False)
         if any(not any(preference.casefold() in source.casefold() for source in sources)
                for preference in objective.soft_preferences):
@@ -394,7 +422,8 @@ def _prompt(user_message: str, history: list | None, pending_action: dict | None
 
 
 def understand_turn(user_message: str, history: list | None, pending_action: dict | None, *, model,
-                    review_feedback: dict | None = None) -> TurnUnderstanding:
+                    review_feedback: dict | None = None,
+                    preference_defaults: dict | None = None) -> TurnUnderstanding:
     """Return a validated semantic interpretation without executing anything."""
 
     context = current_runtime()
@@ -415,6 +444,7 @@ def understand_turn(user_message: str, history: list | None, pending_action: dic
                 raise ValueError("Dialogue understanding cannot call tools")
             raw_payload = json.loads(as_text(response.content))
             understanding = TurnUnderstanding.model_validate(_canonicalize_protocol(raw_payload))
+            _apply_preference_defaults(understanding, preference_defaults)
             _validate_grounding(understanding, user_message, history)
             if context:
                 context.record(

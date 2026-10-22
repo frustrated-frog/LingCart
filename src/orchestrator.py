@@ -2,6 +2,7 @@ import logging
 import re
 import time
 import uuid
+from dataclasses import replace
 from datetime import UTC, datetime
 
 from src.agents.base import as_text, sum_usage
@@ -99,7 +100,16 @@ def _explicit_escalation(intake: TaskIntake, run_id: str, user_message: str) -> 
     return result
 
 
-def _execute_understanding(user_message, history, pending_action, intake, run_id, *, understanding=None):
+def _execute_understanding(
+    user_message,
+    history,
+    pending_action,
+    intake,
+    run_id,
+    *,
+    understanding=None,
+    preference_defaults=None,
+):
     """Interpret an open-set turn, then hand only validated goals to executors."""
 
     from src.dialogue_understanding import command_kinds, render_direct_commands, to_task_plan, understand_turn
@@ -111,6 +121,7 @@ def _execute_understanding(user_message, history, pending_action, intake, run_id
             history,
             pending_action,
             model=understanding_model,
+            preference_defaults=preference_defaults,
         )
         if any(
             objective.catalog_query is not None or objective.constraint_plan is not None
@@ -132,6 +143,7 @@ def _execute_understanding(user_message, history, pending_action, intake, run_id
                     pending_action,
                     model=understanding_model,
                     review_feedback={"issues": audit.get("issues"), "requirements": audit.get("requirements")},
+                    preference_defaults=preference_defaults,
                 )
                 audit = review_catalog_request(
                     user_message,
@@ -296,6 +308,18 @@ def _run_orchestrator(user_message: str, history: list | None = None, pending_ac
     intake = (TaskIntake(user_message, execution_mode=LLM_REQUIRED, confidence=0.0,
                          reason="继续完成先前的结构化语义澄清")
               if semantic_followup else analyze_request(user_message))
+    context = current_runtime()
+    preference_defaults = (
+        context.context_engine.preference_defaults(intake)
+        if context and context.context_engine and hasattr(context.context_engine, "preference_defaults")
+        else {}
+    )
+    if intake.execution_mode == DIRECT and preference_defaults:
+        entities = dict(intake.entities)
+        for field, default in preference_defaults.items():
+            entities.setdefault(field, default["value"])
+        intake = replace(intake, entities=entities)
+        context.record("preference_default_applied", fields=sorted(preference_defaults), path="deterministic")
 
     approval_decision = parse_approval_response(user_message, pending_action) if pending_action else None
     active_execution_mode = (
@@ -344,7 +368,14 @@ def _run_orchestrator(user_message: str, history: list | None = None, pending_ac
         result = _explicit_escalation(intake, run_id, user_message)
     elif intake.execution_mode == LLM_REQUIRED:
         try:
-            result = _execute_understanding(user_message, history, pending_action, intake, run_id)
+            result = _execute_understanding(
+                user_message,
+                history,
+                pending_action,
+                intake,
+                run_id,
+                preference_defaults=preference_defaults,
+            )
             result.setdefault("run_id", run_id)
             result.setdefault("status", "SUCCEEDED")
             result.setdefault("terminal_reason", "COMPLETED")

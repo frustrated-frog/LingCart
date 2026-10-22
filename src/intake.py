@@ -265,15 +265,27 @@ def analyze_request(user_message: str, *, _check_clause_coverage: bool = True) -
         if len(categories) > 1:
             shopping_entities["categories"] = categories
         if budget_match:
+            budget_value = float(budget_match.group(1))
             if len(categories) > 1:
-                shopping_entities["shared_budget"] = float(budget_match.group(1))
+                shopping_entities["shared_budget"] = budget_value
                 shared_catalog_budget = True
             else:
-                shopping_entities["max_price"] = float(budget_match.group(1))
+                shopping_entities["max_price"] = budget_value
         if product_ids:
             shopping_entities["product_ids"] = list(dict.fromkeys(value.upper() for value in product_ids))
         shopping_entities["query"] = " ".join(catalog_terms)
         entities.update(shopping_entities)
+        if budget_match and budget_value < 0:
+            entities.pop("order_id", None)
+            entities.pop("order_ids", None)
+            return TaskIntake(
+                request=request,
+                entities=entities,
+                execution_mode=CLARIFICATION_REQUIRED,
+                confidence=1.0,
+                reason="预算不能为负数，请提供大于或等于 0 的预算。",
+                semantic_hazards=("INVALID_NUMERIC_RANGE",),
+            )
         if product_ids and category and listing_action:
             intents.append(PRODUCT_SEARCH)
         elif not product_ids:
