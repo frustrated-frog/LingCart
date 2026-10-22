@@ -143,7 +143,7 @@ class ModelGraphRefiner:
                     "events": context.events, "budget": context.counters}
 
 
-def evolve(graph, spec, *, evaluator, refiner, output_dir: Path, execution_source="live_provider"):
+def evolve(graph, spec, *, evaluator, refiner, output_dir: Path, execution_source="live_provider", on_progress=None):
     """evaluator(graph, case_ids, label) 必须执行真实任务；测试替身明确标记来源。"""
     if execution_source not in {"live_provider", "test_harness"}:
         raise ValueError("无效演化执行来源")
@@ -207,6 +207,8 @@ def evolve(graph, spec, *, evaluator, refiner, output_dir: Path, execution_sourc
         record["retained_sha256"] = retained.fingerprint
         write_artifact(output_dir / f"{prefix}-selection.json", record)
         history.append(record)
+        if on_progress is not None:
+            on_progress(record)
         if record["status"] == "REJECTED":
             rejected.append(record)
     write_artifact(output_dir / "retained.json", retained.model_dump(mode="json"))

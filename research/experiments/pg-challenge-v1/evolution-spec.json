@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "experiment_id": "pg-challenge-v1",
+  "dataset": "eval/pg_challenge_tasks.json",
+  "train_cases": [
+    "PG01",
+    "PG02",
+    "PG03",
+    "PG04",
+    "PG05",
+    "PG06"
+  ],
+  "validation_cases": [
+    "PG07",
+    "PG08",
+    "PG09",
+    "PG10",
+    "PG11",
+    "PG12"
+  ],
+  "repeats": 3,
+  "iterations": 3,
+  "max_model_calls_per_run": 16,
+  "max_extra_model_attempts_per_sample": 2
+}

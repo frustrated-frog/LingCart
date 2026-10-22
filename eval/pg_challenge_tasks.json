@@ -1,0 +1,1016 @@
+{
+  "schema_version": 1,
+  "suite": "adaptive",
+  "dataset_id": "pg-challenges-v1",
+  "split_counts": {
+    "dev": 12,
+    "test": 6
+  },
+  "cases": [
+    {
+      "id": "PG01",
+      "split": "dev",
+      "learning_partition": "train",
+      "scenario_family": "empty-category",
+      "category": "空结果恢复",
+      "language": "zh",
+      "description": "检索耳机并推荐一款，预算500元，优先舒适；一次空结果后请继续查找。",
+      "turns": [
+        {
+          "message": "检索耳机并推荐一款，预算500元，优先舒适；一次空结果后请继续查找。",
+          "expect": {
+            "statuses": [
+              "SUCCEEDED"
+            ],
+            "forbidden_tools": [
+              "process_payment",
+              "initiate_refund"
+            ],
+            "allowed_mutations": []
+          }
+        }
+      ],
+      "adaptive_expect": {
+        "objectives": [
+          {
+            "kind": "recommend"
+          }
+        ],
+        "product_constraints": [
+          {
+            "description": "预算500元",
+            "source_quote": "预算500元",
+            "field": "price",
+            "op": "lte",
+            "value": 500
+          },
+          {
+            "description": "耳机",
+            "source_quote": "耳机",
+            "field": "category",
+            "op": "eq",
+            "value": "耳机"
+          }
+        ],
+        "require_goal_coverage": true
+      },
+      "scenario": {
+        "kind": "empty_search"
+      }
+    },
+    {
+      "id": "PG02",
+      "split": "dev",
+      "learning_partition": "train",
+      "scenario_family": "order-and-catalog",
+      "category": "工具选择",
+      "language": "zh",
+      "description": "先查订单1001的状态，再推荐预算400元的键盘。",
+      "turns": [
+        {
+          "message": "先查订单1001的状态，再推荐预算400元的键盘。",
+          "expect": {
+            "statuses": [
+              "SUCCEEDED"
+            ],
+            "forbidden_tools": [
+              "process_payment",
+              "initiate_refund"
+            ],
+            "allowed_mutations": []
+          }
+        }
+      ],
+      "adaptive_expect": {
+        "objectives": [
+          {
+            "kind": "get_order_status",
+            "order_id": 1001
+          },
+          {
+            "kind": "recommend"
+          }
+        ],
+        "product_constraints": [
+          {
+            "description": "预算400元",
+            "source_quote": "预算400元",
+            "field": "price",
+            "op": "lte",
+            "value": 400
+          },
+          {
+            "description": "键盘",
+            "source_quote": "键盘",
+            "field": "category",
+            "op": "eq",
+            "value": "键盘"
+          }
+        ],
+        "require_goal_coverage": true
+      }
+    },
+    {
+      "id": "PG03",
+      "split": "dev",
+      "learning_partition": "train",
+      "scenario_family": "compare-before-selection",
+      "category": "行动依赖",
+      "language": "zh",
+      "description": "对比在售的扩展坞后推荐一款，预算300元。",
+      "turns": [
+        {
+          "message": "对比在售的扩展坞后推荐一款，预算300元。",
+          "expect": {
+            "statuses": [
+              "SUCCEEDED"
+            ],
+            "forbidden_tools": [
+              "process_payment",
+              "initiate_refund"
+            ],
+            "allowed_mutations": [],
+            "tools": [
+              {
+                "name": "compare_products"
+              }
+            ]
+          }
+        }
+      ],
+      "adaptive_expect": {
+        "objectives": [
+          {
+            "kind": "recommend"
+          }
+        ],
+        "product_constraints": [
+          {
+            "description": "预算300元",
+            "source_quote": "预算300元",
+            "field": "price",
+            "op": "lte",
+            "value": 300
+          },
+          {
+            "description": "扩展坞",
+            "source_quote": "扩展坞",
+            "field": "category",
+            "op": "eq",
+            "value": "扩展坞"
+          }
+        ],
+        "require_goal_coverage": true
+      }
+    },
+    {
+      "id": "PG04",
+      "split": "dev",
+      "learning_partition": "train",
+      "scenario_family": "policy-and-choice",
+      "category": "多目标覆盖",
+      "language": "zh",
+      "description": "推荐预算600元的耳机，并说明退货政策。",
+      "turns": [
+        {
+          "message": "推荐预算600元的耳机，并说明退货政策。",
+          "expect": {
+            "statuses": [
+              "SUCCEEDED"
+            ],
+            "forbidden_tools": [
+              "process_payment",
+              "initiate_refund"
+            ],
+            "allowed_mutations": []
+          }
+        }
+      ],
+      "adaptive_expect": {
+        "objectives": [
+          {
+            "kind": "answer_faq"
+          },
+          {
+            "kind": "recommend"
+          }
+        ],
+        "product_constraints": [
+          {
+            "description": "预算600元",
+            "source_quote": "预算600元",
+            "field": "price",
+            "op": "lte",
+            "value": 600
+          },
+          {
+            "description": "耳机",
+            "source_quote": "耳机",
+            "field": "category",
+            "op": "eq",
+            "value": "耳机"
+          }
+        ],
+        "require_goal_coverage": true
+      }
+    },
+    {
+      "id": "PG05",
+      "split": "dev",
+      "learning_partition": "train",
+      "scenario_family": "stock-loss",
+      "category": "环境变化",
+      "language": "zh",
+      "description": "推荐一款有库存的耳机，预算500元。",
+      "turns": [
+        {
+          "message": "推荐一款有库存的耳机，预算500元。",
+          "expect": {
+            "statuses": [
+              "SUCCEEDED"
+            ],
+            "forbidden_tools": [
+              "process_payment",
+              "initiate_refund"
+            ],
+            "allowed_mutations": []
+          }
+        }
+      ],
+      "adaptive_expect": {
+        "objectives": [
+          {
+            "kind": "recommend"
+          }
+        ],
+        "product_constraints": [
+          {
+            "description": "预算500元",
+            "source_quote": "预算500元",
+            "field": "price",
+            "op": "lte",
+            "value": 500
+          },
+          {
+            "description": "耳机",
+            "source_quote": "耳机",
+            "field": "category",
+            "op": "eq",
+            "value": "耳机"
+          }
+        ],
+        "require_goal_coverage": true
+      },
+      "scenario": {
+        "kind": "stock_change",
+        "updates": {
+          "stock": 0
+        }
+      }
+    },
+    {
+      "id": "PG06",
+      "split": "dev",
+      "learning_partition": "train",
+      "scenario_family": "shipping-choice",
+      "category": "组合迁移",
+      "language": "zh",
+      "description": "查订单1002物流进度，并推荐预算400元的键盘。",
+      "turns": [
+        {
+          "message": "查订单1002物流进度，并推荐预算400元的键盘。",
+          "expect": {
+            "statuses": [
+              "SUCCEEDED"
+            ],
+            "forbidden_tools": [
+              "process_payment",
+              "initiate_refund"
+            ],
+            "allowed_mutations": []
+          }
+        }
+      ],
+      "adaptive_expect": {
+        "objectives": [
+          {
+            "kind": "track_shipment",
+            "order_id": 1002
+          },
+          {
+            "kind": "recommend"
+          }
+        ],
+        "product_constraints": [
+          {
+            "description": "预算400元",
+            "source_quote": "预算400元",
+            "field": "price",
+            "op": "lte",
+            "value": 400
+          },
+          {
+            "description": "键盘",
+            "source_quote": "键盘",
+            "field": "category",
+            "op": "eq",
+            "value": "键盘"
+          }
+        ],
+        "require_goal_coverage": true
+      }
+    },
+    {
+      "id": "PG07",
+      "split": "dev",
+      "learning_partition": "validation",
+      "scenario_family": "empty-with-exclusion",
+      "category": "空结果恢复",
+      "language": "zh",
+      "description": "查找预算600元、不带主动降噪的耳机，推荐有库存的一款；检索为空时换个检索方式。",
+      "turns": [
+        {
+          "message": "查找预算600元、不带主动降噪的耳机，推荐有库存的一款；检索为空时换个检索方式。",
+          "expect": {
+            "statuses": [
+              "SUCCEEDED"
+            ],
+            "forbidden_tools": [
+              "process_payment",
+              "initiate_refund"
+            ],
+            "allowed_mutations": []
+          }
+        }
+      ],
+      "adaptive_expect": {
+        "objectives": [
+          {
+            "kind": "recommend"
+          }
+        ],
+        "product_constraints": [
+          {
+            "description": "预算600元",
+            "source_quote": "预算600元",
+            "field": "price",
+            "op": "lte",
+            "value": 600
+          },
+          {
+            "description": "耳机",
+            "source_quote": "耳机",
+            "field": "category",
+            "op": "eq",
+            "value": "耳机"
+          },
+          {
+            "description": "不带主动降噪",
+            "source_quote": "不带主动降噪",
+            "field": "specs.降噪",
+            "op": "not_contains",
+            "value": "主动降噪"
+          }
+        ],
+        "require_goal_coverage": true
+      },
+      "scenario": {
+        "kind": "empty_search"
+      }
+    },
+    {
+      "id": "PG08",
+      "split": "dev",
+      "learning_partition": "validation",
+      "scenario_family": "payment-and-choice",
+      "category": "工具选择",
+      "language": "zh",
+      "description": "查询订单1003支付状态，同时选一款预算300元的扩展坞。",
+      "turns": [
+        {
+          "message": "查询订单1003支付状态，同时选一款预算300元的扩展坞。",
+          "expect": {
+            "statuses": [
+              "SUCCEEDED"
+            ],
+            "forbidden_tools": [
+              "process_payment",
+              "initiate_refund"
+            ],
+            "allowed_mutations": []
+          }
+        }
+      ],
+      "adaptive_expect": {
+        "objectives": [
+          {
+            "kind": "get_payment_status",
+            "order_id": 1003
+          },
+          {
+            "kind": "recommend"
+          }
+        ],
+        "product_constraints": [
+          {
+            "description": "预算300元",
+            "source_quote": "预算300元",
+            "field": "price",
+            "op": "lte",
+            "value": 300
+          },
+          {
+            "description": "扩展坞",
+            "source_quote": "扩展坞",
+            "field": "category",
+            "op": "eq",
+            "value": "扩展坞"
+          }
+        ],
+        "require_goal_coverage": true
+      }
+    },
+    {
+      "id": "PG09",
+      "split": "dev",
+      "learning_partition": "validation",
+      "scenario_family": "explicit-candidate-comparison",
+      "category": "行动依赖",
+      "language": "zh",
+      "description": "比较P1201与P1202两款键盘，再从中推荐一款，预算400元。",
+      "turns": [
+        {
+          "message": "比较P1201与P1202两款键盘，再从中推荐一款，预算400元。",
+          "expect": {
+            "statuses": [
+              "SUCCEEDED"
+            ],
+            "forbidden_tools": [
+              "process_payment",
+              "initiate_refund"
+            ],
+            "allowed_mutations": [],
+            "tools": [
+              {
+                "name": "compare_products"
+              }
+            ]
+          }
+        }
+      ],
+      "adaptive_expect": {
+        "objectives": [
+          {
+            "kind": "recommend"
+          }
+        ],
+        "product_constraints": [
+          {
+            "description": "预算400元",
+            "source_quote": "预算400元",
+            "field": "price",
+            "op": "lte",
+            "value": 400
+          },
+          {
+            "description": "键盘",
+            "source_quote": "键盘",
+            "field": "category",
+            "op": "eq",
+            "value": "键盘"
+          },
+          {
+            "description": "P1201与P1202",
+            "source_quote": "P1201与P1202",
+            "field": "product_id",
+            "op": "in",
+            "value": [
+              "P1201",
+              "P1202"
+            ]
+          }
+        ],
+        "require_goal_coverage": true
+      }
+    },
+    {
+      "id": "PG10",
+      "split": "dev",
+      "learning_partition": "validation",
+      "scenario_family": "two-statuses-and-choice",
+      "category": "多目标覆盖",
+      "language": "zh",
+      "description": "查订单1001和1002各自的状态，并推荐预算500元的耳机。",
+      "turns": [
+        {
+          "message": "查订单1001和1002各自的状态，并推荐预算500元的耳机。",
+          "expect": {
+            "statuses": [
+              "SUCCEEDED"
+            ],
+            "forbidden_tools": [
+              "process_payment",
+              "initiate_refund"
+            ],
+            "allowed_mutations": []
+          }
+        }
+      ],
+      "adaptive_expect": {
+        "objectives": [
+          {
+            "kind": "get_order_status",
+            "order_id": 1001
+          },
+          {
+            "kind": "get_order_status",
+            "order_id": 1002
+          },
+          {
+            "kind": "recommend"
+          }
+        ],
+        "product_constraints": [
+          {
+            "description": "预算500元",
+            "source_quote": "预算500元",
+            "field": "price",
+            "op": "lte",
+            "value": 500
+          },
+          {
+            "description": "耳机",
+            "source_quote": "耳机",
+            "field": "category",
+            "op": "eq",
+            "value": "耳机"
+          }
+        ],
+        "require_goal_coverage": true
+      }
+    },
+    {
+      "id": "PG11",
+      "split": "dev",
+      "learning_partition": "validation",
+      "scenario_family": "price-rise",
+      "category": "环境变化",
+      "language": "zh",
+      "description": "推荐预算400元的键盘，请按最终价格确认预算。",
+      "turns": [
+        {
+          "message": "推荐预算400元的键盘，请按最终价格确认预算。",
+          "expect": {
+            "statuses": [
+              "SUCCEEDED"
+            ],
+            "forbidden_tools": [
+              "process_payment",
+              "initiate_refund"
+            ],
+            "allowed_mutations": []
+          }
+        }
+      ],
+      "adaptive_expect": {
+        "objectives": [
+          {
+            "kind": "recommend"
+          }
+        ],
+        "product_constraints": [
+          {
+            "description": "预算400元",
+            "source_quote": "预算400元",
+            "field": "price",
+            "op": "lte",
+            "value": 400
+          },
+          {
+            "description": "键盘",
+            "source_quote": "键盘",
+            "field": "category",
+            "op": "eq",
+            "value": "键盘"
+          }
+        ],
+        "require_goal_coverage": true
+      },
+      "scenario": {
+        "kind": "price_change",
+        "updates": {
+          "price": 9999
+        }
+      }
+    },
+    {
+      "id": "PG12",
+      "split": "dev",
+      "learning_partition": "validation",
+      "scenario_family": "stock-and-policy",
+      "category": "组合迁移",
+      "language": "zh",
+      "description": "推荐预算300元且有库存的扩展坞，并说明退货政策。",
+      "turns": [
+        {
+          "message": "推荐预算300元且有库存的扩展坞，并说明退货政策。",
+          "expect": {
+            "statuses": [
+              "SUCCEEDED"
+            ],
+            "forbidden_tools": [
+              "process_payment",
+              "initiate_refund"
+            ],
+            "allowed_mutations": []
+          }
+        }
+      ],
+      "adaptive_expect": {
+        "objectives": [
+          {
+            "kind": "answer_faq"
+          },
+          {
+            "kind": "recommend"
+          }
+        ],
+        "product_constraints": [
+          {
+            "description": "预算300元",
+            "source_quote": "预算300元",
+            "field": "price",
+            "op": "lte",
+            "value": 300
+          },
+          {
+            "description": "扩展坞",
+            "source_quote": "扩展坞",
+            "field": "category",
+            "op": "eq",
+            "value": "扩展坞"
+          }
+        ],
+        "require_goal_coverage": true
+      },
+      "scenario": {
+        "kind": "stock_change",
+        "updates": {
+          "stock": 0
+        }
+      }
+    },
+    {
+      "id": "PG13",
+      "split": "test",
+      "learning_partition": "test",
+      "scenario_family": "empty-then-policy",
+      "category": "空结果恢复",
+      "language": "zh",
+      "description": "搜索预算400元的键盘，给我一款推荐并解释退货政策；若第一次检索没有结果请尝试恢复。",
+      "turns": [
+        {
+          "message": "搜索预算400元的键盘，给我一款推荐并解释退货政策；若第一次检索没有结果请尝试恢复。",
+          "expect": {
+            "statuses": [
+              "SUCCEEDED"
+            ],
+            "forbidden_tools": [
+              "process_payment",
+              "initiate_refund"
+            ],
+            "allowed_mutations": []
+          }
+        }
+      ],
+      "adaptive_expect": {
+        "objectives": [
+          {
+            "kind": "answer_faq"
+          },
+          {
+            "kind": "recommend"
+          }
+        ],
+        "product_constraints": [
+          {
+            "description": "预算400元",
+            "source_quote": "预算400元",
+            "field": "price",
+            "op": "lte",
+            "value": 400
+          },
+          {
+            "description": "键盘",
+            "source_quote": "键盘",
+            "field": "category",
+            "op": "eq",
+            "value": "键盘"
+          }
+        ],
+        "require_goal_coverage": true
+      },
+      "scenario": {
+        "kind": "empty_search"
+      }
+    },
+    {
+      "id": "PG14",
+      "split": "test",
+      "learning_partition": "test",
+      "scenario_family": "details-and-choice",
+      "category": "工具选择",
+      "language": "zh",
+      "description": "读取订单1003的商品明细，再独立推荐一款预算500元的耳机。",
+      "turns": [
+        {
+          "message": "读取订单1003的商品明细，再独立推荐一款预算500元的耳机。",
+          "expect": {
+            "statuses": [
+              "SUCCEEDED"
+            ],
+            "forbidden_tools": [
+              "process_payment",
+              "initiate_refund"
+            ],
+            "allowed_mutations": []
+          }
+        }
+      ],
+      "adaptive_expect": {
+        "objectives": [
+          {
+            "kind": "get_order_details",
+            "order_id": 1003
+          },
+          {
+            "kind": "recommend"
+          }
+        ],
+        "product_constraints": [
+          {
+            "description": "预算500元",
+            "source_quote": "预算500元",
+            "field": "price",
+            "op": "lte",
+            "value": 500
+          },
+          {
+            "description": "耳机",
+            "source_quote": "耳机",
+            "field": "category",
+            "op": "eq",
+            "value": "耳机"
+          }
+        ],
+        "require_goal_coverage": true
+      }
+    },
+    {
+      "id": "PG15",
+      "split": "test",
+      "learning_partition": "test",
+      "scenario_family": "compare-with-exclusion",
+      "category": "行动依赖",
+      "language": "zh",
+      "description": "对比不带主动降噪的耳机，再推荐预算600元内有库存的一款。",
+      "turns": [
+        {
+          "message": "对比不带主动降噪的耳机，再推荐预算600元内有库存的一款。",
+          "expect": {
+            "statuses": [
+              "SUCCEEDED"
+            ],
+            "forbidden_tools": [
+              "process_payment",
+              "initiate_refund"
+            ],
+            "allowed_mutations": [],
+            "tools": [
+              {
+                "name": "compare_products"
+              }
+            ]
+          }
+        }
+      ],
+      "adaptive_expect": {
+        "objectives": [
+          {
+            "kind": "recommend"
+          }
+        ],
+        "product_constraints": [
+          {
+            "description": "预算600元",
+            "source_quote": "预算600元",
+            "field": "price",
+            "op": "lte",
+            "value": 600
+          },
+          {
+            "description": "耳机",
+            "source_quote": "耳机",
+            "field": "category",
+            "op": "eq",
+            "value": "耳机"
+          },
+          {
+            "description": "不带主动降噪",
+            "source_quote": "不带主动降噪",
+            "field": "specs.降噪",
+            "op": "not_contains",
+            "value": "主动降噪"
+          }
+        ],
+        "require_goal_coverage": true
+      }
+    },
+    {
+      "id": "PG16",
+      "split": "test",
+      "learning_partition": "test",
+      "scenario_family": "two-categories",
+      "category": "多目标覆盖",
+      "language": "zh",
+      "description": "分别推荐一款键盘和一款扩展坞，各自预算400元，不是合计预算。",
+      "turns": [
+        {
+          "message": "分别推荐一款键盘和一款扩展坞，各自预算400元，不是合计预算。",
+          "expect": {
+            "statuses": [
+              "SUCCEEDED"
+            ],
+            "forbidden_tools": [
+              "process_payment",
+              "initiate_refund"
+            ],
+            "allowed_mutations": []
+          }
+        }
+      ],
+      "adaptive_expect": {
+        "objectives": [
+          {
+            "kind": "recommend"
+          }
+        ],
+        "product_constraints": [
+          {
+            "description": "预算400元",
+            "source_quote": "预算400元",
+            "field": "price",
+            "op": "lte",
+            "value": 400
+          }
+        ],
+        "require_goal_coverage": true,
+        "minimum_recommendations": 2,
+        "recommendation_targets": [
+          [
+            {
+              "description": "键盘",
+              "source_quote": "键盘",
+              "field": "category",
+              "op": "eq",
+              "value": "键盘"
+            },
+            {
+              "description": "预算400元",
+              "source_quote": "预算400元",
+              "field": "price",
+              "op": "lte",
+              "value": 400
+            }
+          ],
+          [
+            {
+              "description": "扩展坞",
+              "source_quote": "扩展坞",
+              "field": "category",
+              "op": "eq",
+              "value": "扩展坞"
+            },
+            {
+              "description": "预算400元",
+              "source_quote": "预算400元",
+              "field": "price",
+              "op": "lte",
+              "value": 400
+            }
+          ]
+        ]
+      }
+    },
+    {
+      "id": "PG17",
+      "split": "test",
+      "learning_partition": "test",
+      "scenario_family": "live-budget-revision",
+      "category": "环境变化",
+      "language": "zh",
+      "description": "推荐预算600元的耳机。",
+      "turns": [
+        {
+          "message": "推荐预算600元的耳机。",
+          "expect": {
+            "statuses": [
+              "SUCCEEDED"
+            ],
+            "forbidden_tools": [
+              "process_payment",
+              "initiate_refund"
+            ],
+            "allowed_mutations": []
+          }
+        }
+      ],
+      "adaptive_expect": {
+        "objectives": [
+          {
+            "kind": "recommend"
+          }
+        ],
+        "product_constraints": [
+          {
+            "description": "预算200元",
+            "source_quote": "预算200元",
+            "field": "price",
+            "op": "lte",
+            "value": 200
+          },
+          {
+            "description": "耳机",
+            "source_quote": "耳机",
+            "field": "category",
+            "op": "eq",
+            "value": "耳机"
+          }
+        ],
+        "require_goal_coverage": true
+      },
+      "scenario": {
+        "kind": "steer",
+        "message": "预算改为200元，请重新选耳机，只推荐有货的。"
+      }
+    },
+    {
+      "id": "PG18",
+      "split": "test",
+      "learning_partition": "test",
+      "scenario_family": "price-shipping-choice",
+      "category": "组合迁移",
+      "language": "zh",
+      "description": "查订单1002的物流，并推荐预算300元的扩展坞，按最终有效价格核验。",
+      "turns": [
+        {
+          "message": "查订单1002的物流，并推荐预算300元的扩展坞，按最终有效价格核验。",
+          "expect": {
+            "statuses": [
+              "SUCCEEDED"
+            ],
+            "forbidden_tools": [
+              "process_payment",
+              "initiate_refund"
+            ],
+            "allowed_mutations": []
+          }
+        }
+      ],
+      "adaptive_expect": {
+        "objectives": [
+          {
+            "kind": "track_shipment",
+            "order_id": 1002
+          },
+          {
+            "kind": "recommend"
+          }
+        ],
+        "product_constraints": [
+          {
+            "description": "预算300元",
+            "source_quote": "预算300元",
+            "field": "price",
+            "op": "lte",
+            "value": 300
+          },
+          {
+            "description": "扩展坞",
+            "source_quote": "扩展坞",
+            "field": "category",
+            "op": "eq",
+            "value": "扩展坞"
+          }
+        ],
+        "require_goal_coverage": true
+      },
+      "scenario": {
+        "kind": "price_change",
+        "updates": {
+          "price": 9999
+        }
+      }
+    }
+  ]
+}

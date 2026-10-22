@@ -89,9 +89,12 @@ def _validate_adaptive_cases(dataset):
         scenario = case.get('scenario')
         if scenario is None:
             continue
-        if not isinstance(scenario, dict) or scenario.get('kind') not in {'steer', 'price_change', 'stock_change'}:
+        if not isinstance(scenario, dict) or scenario.get('kind') not in {'steer', 'price_change', 'stock_change', 'empty_search'}:
             raise ValueError(f'{label}: scenario.kind 无效')
-        if scenario['kind'] == 'steer':
+        if scenario['kind'] == 'empty_search':
+            if set(scenario) != {'kind'}:
+                raise ValueError(f'{label}: empty_search 只能声明 kind')
+        elif scenario['kind'] == 'steer':
             if set(scenario) != {'kind', 'message'} or not isinstance(scenario['message'], str) or not scenario['message'].strip():
                 raise ValueError(f'{label}: steer 场景必须且只能声明非空 message')
         elif (set(scenario) != {'kind', 'updates'} or not isinstance(scenario['updates'], dict)
@@ -226,7 +229,7 @@ def summarize(samples, repeats):
 
 def evaluate(dataset, *, repeats=3, split='all', case_ids=(), execution_mode='auto', harness_profile=None,
              experiment_spec=None, dataset_path=DATASET, runner=None, readiness=None,
-             max_model_calls_per_run=6):
+             max_model_calls_per_run=6, on_sample=None):
     """runner 注入只用于基础设施测试，报告会明确标识为 test_harness。"""
     injected_runner = runner is not None
     if not 1 <= repeats <= 10:
@@ -374,6 +377,8 @@ def evaluate(dataset, *, repeats=3, split='all', case_ids=(), execution_mode='au
                                             'changed_db_paths': offline._diff(before, after)})
             sample['latency_ms'] = round((time.perf_counter() - started) * 1000, 3)
             report['samples'].append(sample)
+            if on_sample is not None:
+                on_sample(sample)
     report['metrics'] = summarize(report['samples'], repeats)
     if suite == 'adaptive':
         report['adaptive_verified_samples'] = sum(s.get('adaptive_verified') is True for s in report['samples'])

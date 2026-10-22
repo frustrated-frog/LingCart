@@ -634,6 +634,10 @@ def forget_preference(profile_id: str, key: str):
         raise _control_error(error) from error
 
 
+from src.pg_api import router as pg_router
+app.include_router(pg_router)
+
+
 # A production build is served by FastAPI so deployment has one process and
 # one origin.  Vite's development server is still used for local hot reload.
 _frontend_dist = Path(__file__).resolve().parent / 'frontend' / 'dist'

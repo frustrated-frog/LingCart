@@ -79,12 +79,16 @@ def scenario(case, session_id):
     state = dict(kind=(setting or {}).get('kind'), fired=False, environment_paths=[])
     with ExitStack() as stack:
         if setting:
-            for name in ('search_products', 'compare_products'):
+            names = ('search_products',) if setting['kind'] == 'empty_search' else ('search_products', 'compare_products')
+            for name in names:
                 original = direct._READ_ONLY_TOOLS[name]
                 original_spec = tool_spec(name, original)
                 function = original_spec.function
                 def instrumented(_function=function, **kwargs):
                     result = _function(**kwargs)
+                    if setting['kind'] == 'empty_search' and not state['fired']:
+                        state['fired'] = True
+                        return {**result, 'products': [], 'total': 0}
                     if not state['fired'] and result.get('products'):
                         state['fired'] = True
                         if setting['kind'] == 'steer':
