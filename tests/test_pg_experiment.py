@@ -135,6 +135,7 @@ def test_worker_three_arms_are_after_learning_and_test_never_reaches_refiner(tmp
     assert refinements == [job['frozen']['groups']['train']]
     assert saved['comparison']['conclusion'] == 'SMOKE_ONLY'
     assert saved['comparison']['evidence_valid'] is False
+    assert saved['comparison']['failures'] == []
     assert saved['history'][0]['status'] == ('ACCEPTED' if accept else 'REJECTED')
     assert set(saved['arms']) == {'baseline', 'seed', 'evolved'}
 

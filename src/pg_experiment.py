@@ -3,9 +3,9 @@ from collections import Counter
 from copy import deepcopy
 from pathlib import Path
 
-from eval.run_live_eval import load_dataset, summarize, evaluate_gate
+from eval.run_live_eval import load_dataset, summarize, evaluate_gate, fingerprint as evaluation_fingerprint
 from src.pg_learning import EvolutionSpec, comparable
-from src.procedural_graph import ProceduralGraph, canonical, fingerprint
+from src.procedural_graph import ProceduralGraph, canonical
 
 ROOT = Path(__file__).resolve().parents[1]
 DATASET = ROOT / 'eval/pg_challenge_tasks.json'
@@ -49,7 +49,7 @@ def plan(preset):
                          + 3 * len(groups['test']))
     return dict(preset=preset, spec=spec.model_dump(mode='json'), groups=groups,
                 max_samples=samples, max_model_attempts=samples * spec.max_model_calls_per_run + iterations * 2,
-                dataset_sha256=fingerprint(dataset), seed_sha256=ProceduralGraph.from_path(SEED).fingerprint,
+                dataset_sha256=evaluation_fingerprint(dataset), seed_sha256=ProceduralGraph.from_path(SEED).fingerprint,
                 cost_guard=dict(max_extra_model_attempts_per_sample=2, max_tool_call_regression=0))
 
 
@@ -98,7 +98,6 @@ def test_contract(candidate, baseline, repeats):
 
 def comparison(reports, frozen, contracts):
     """以原始样本重算指标。冒烟、替身、缺项或未演化均不宣称收益。"""
-    from eval.run_task_eval import dataset_fingerprint
     expected = Counter((case, repetition) for case in frozen['groups']['test']
                        for repetition in range(1, frozen['spec']['repeats'] + 1))
     failures = []
@@ -106,7 +105,7 @@ def comparison(reports, frozen, contracts):
         report = reports[arm]
         manifest = report.get('manifest', {})
         if (report.get('status') != 'COMPLETED' or manifest.get('split') != 'test'
-                or manifest.get('dataset_sha256') != dataset_fingerprint(challenge_dataset())
+                or manifest.get('dataset_sha256') != frozen['dataset_sha256']
                 or Counter((s.get('case_id'), s.get('repetition')) for s in report.get('samples', [])) != expected
                 or any(s.get('split') != 'test' or not s.get('adaptive_verified') for s in report.get('samples', []))):
             failures.append(f'{arm}: 样本不完整或数据身份不符')
