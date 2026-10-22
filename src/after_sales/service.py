@@ -434,6 +434,7 @@ class AfterSalesCaseService:
             .order_by(PolicyDecision.case_revision.desc())
             .limit(1)
         )
+        self._invalidate_evidence_dependencies(case)
         decision = PolicyDecision(
             decision_id=uuid.uuid4().hex,
             case_id=case_id,

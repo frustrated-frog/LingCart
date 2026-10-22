@@ -40,6 +40,7 @@ GENERAL_ANSWER = "GENERAL_ANSWER"
 SYSTEM_TIME = "SYSTEM_TIME"
 CALCULATE = "CALCULATE"
 AFTER_SALES_CASE = "AFTER_SALES_CASE"
+AFTER_SALES_CONTINUE = "AFTER_SALES_CONTINUE"
 MODEL_ANSWER_OPERATION = "__model_answer__"
 
 
@@ -620,12 +621,22 @@ def _after_sales_case(objective: Mapping[str, object], request: str) -> tuple[Co
     )
 
 
+def _continue_after_sales_case(objective: Mapping[str, object], request: str) -> tuple[CompiledOperation, ...]:
+    arguments = {"case_id": objective["case_id"], "expected_revision": objective["case_revision"]}
+    arguments.update(_args(objective, ("requirement_id", "evidence_text", "revoke_evidence_id")))
+    return (
+        CompiledOperation("case-assessment", "after_sales", "continue_after_sales_case", arguments),
+        CompiledOperation("case-proposal", "after_sales", "prepare_case_submission", {}, ("case-assessment",)),
+    )
+
+
 def _verify_after_sales_case(result: object, arguments: Mapping[str, object]) -> None:
     case = result.get("case") if isinstance(result, dict) else None
     decision = result.get("policy_decision") if isinstance(result, dict) else None
     valid = (
         isinstance(result, dict)
-        and result.get("order_id") == arguments.get("order_id")
+        and (result.get("order_id") == arguments.get("order_id") if arguments.get("order_id")
+             else result.get("case_id") == arguments.get("case_id"))
         and isinstance(result.get("case_id"), str)
         and bool(result["case_id"])
         and isinstance(result.get("revision"), int)
@@ -664,9 +675,12 @@ def _render_after_sales_case(result: object, _arguments: Mapping[str, object]) -
     }
     if result.get("case_status") == "SUBMITTED":
         return f"售后案件 {result['case_id']} 已经提交，无需重复确认。"
+    requirements = decision.get("facts", {}).get("evidence_requirements", [])
+    missing = [r["description"] for r in requirements if r["status"] != "SATISFIED"]
     return (
         f"售后案件 {result['case_id']}：{messages[decision['outcome']]}。"
         + (f"依据：{reasons}。" if reasons else "")
+        + ("待补充：" + "；".join(missing) if missing else "")
     )
 
 
@@ -787,6 +801,7 @@ def _builtin_registrations() -> tuple[CapabilityRegistration, ...]:
         REASON_TAXONOMY_VERSION,
     )
     from src.entity_resolution import normalize_clock_objective
+    from src.after_sales.context import normalize_case_continuation
     from src.constraint_planning import (
         CONSTRAINT_PLAN,
         CONSTRAINT_PLAN_OPERATION,
@@ -865,6 +880,21 @@ def _builtin_registrations() -> tuple[CapabilityRegistration, ...]:
                     renderer=_render_after_sales_case,
                 )
             },
+        ),
+        _spec(
+            AFTER_SALES_CONTINUE, "after_sales.case.continue",
+            "继续当前会话的售后案件：补充政策所需原文、撤回或替换证据、重新裁决；不得把补证当成退款授权",
+            "after_sales_case", "POLICY_DECISION", _continue_after_sales_case,
+            required=("case_id", "case_revision"),
+            accepted=("case_id", "case_revision", "order_id", "requirement_id", "evidence_text", "revoke_evidence_id"),
+            side_effect="REQUIRES_APPROVAL",
+            missing_question="请明确要继续的售后案件编号或订单号；存在多个案件时我不会猜测。",
+            normalizer=normalize_case_continuation, normalizer_version="session-case-ledger/v1",
+            operations={"continue_after_sales_case": OperationContract(
+                handler=tools.continue_after_sales_case,
+                required_result_fields=("case_id", "order_id", "case_status", "revision", "policy_decision", "case"),
+                result_verifier=_verify_after_sales_case, renderer=_render_after_sales_case,
+            )},
         ),
         _spec(PAYMENT_STATUS, "payment.status.read", "查询订单支付状态", "order", "BUSINESS_DATA",
               _single("payment", "get_payment_status", order_fields), required=order_fields,

@@ -571,6 +571,13 @@ _PRODUCTION_TOOL_POLICIES = {
             "replay_policy": ReplayPolicy.IDEMPOTENT_WRITE,
             "concurrency_policy": ConcurrencyPolicy.SERIAL_PER_RUN,
         },
+        "continue_after_sales_case": {
+            "transactional": True,
+            "effect": ToolEffect.WRITE,
+            "risk_level": ToolRiskLevel.GUARDED,
+            "replay_policy": ReplayPolicy.IDEMPOTENT_WRITE,
+            "concurrency_policy": ConcurrencyPolicy.SERIAL_PER_RUN,
+        },
         "process_payment": {"side_effect": True, "transactional": True, "approval_action": "PROCESS_PAYMENT"},
         "initiate_refund": {"side_effect": True, "transactional": True, "approval_action": "INITIATE_REFUND"},
         "submit_after_sales_case": {
