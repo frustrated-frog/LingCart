@@ -79,16 +79,21 @@ def scenario(case, session_id):
     state = dict(kind=(setting or {}).get('kind'), fired=False, environment_paths=[])
     with ExitStack() as stack:
         if setting:
-            names = ('search_products',) if setting['kind'] == 'empty_search' else ('search_products', 'compare_products')
+            names = ('search_products', 'discover_products') if setting['kind'] == 'empty_search' else (
+                'search_products', 'discover_products', 'compare_products')
             for name in names:
                 original = direct._READ_ONLY_TOOLS[name]
                 original_spec = tool_spec(name, original)
                 function = original_spec.function
-                def instrumented(_function=function, **kwargs):
+                def instrumented(_function=function, _name=name, **kwargs):
                     result = _function(**kwargs)
                     if setting['kind'] == 'empty_search' and not state['fired']:
                         state['fired'] = True
-                        return {**result, 'products': [], 'total': 0}
+                        injected = {**result, 'products': [], 'total': 0}
+                        # 保留真实返回与注入观察两者；独立判分必须核对转换的来源。
+                        state['tool_overrides'] = [{'tool': _name, 'args': deepcopy(kwargs),
+                            'original_result': deepcopy(result), 'injected_result': deepcopy(injected)}]
+                        return injected
                     if not state['fired'] and result.get('products'):
                         state['fired'] = True
                         if setting['kind'] == 'steer':
@@ -109,3 +114,25 @@ def scenario(case, session_id):
                     return result
                 stack.enter_context(patch.dict(direct._READ_ONLY_TOOLS, {name: ToolSpec(instrumented, original_spec.schema)}))
         yield state
+
+
+def observed_with_faults(observed, environment):
+    """只接受单次、预定义空结果变换，且必须匹配物理工具记录。"""
+    from eval.run_task_eval import _subset
+    overrides = environment.get('tool_overrides', [])
+    if not overrides:
+        return observed
+    if environment.get('kind') != 'empty_search' or len(overrides) != 1 or not environment.get('fired'):
+        raise ValueError('无效评测故障账本')
+    override = overrides[0]
+    original = override['original_result']
+    if (override['tool'] not in {'search_products', 'discover_products'} or not isinstance(original, dict)
+            or override['injected_result'] != {**original, 'products': [], 'total': 0}):
+        raise ValueError('评测故障超出声明范围')
+    checked = deepcopy(observed)
+    matches = [r for r in checked if r['tool'] == override['tool']
+               and _subset(override['args'], r['args']) and r['result'] == original]
+    if not matches:
+        raise ValueError('评测故障没有对应的物理工具证据')
+    matches[0]['result'] = override['injected_result']
+    return checked

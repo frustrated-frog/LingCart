@@ -353,7 +353,9 @@ def evaluate(dataset, *, repeats=3, split='all', case_ids=(), execution_mode='au
                         for path in environment['environment_paths']:
                             _, identity, field = path.split('.')
                             checked_after['products'][identity][field] = before['products'][identity][field]
-                    failures = offline.judge_turn(turn['expect'], result, before, checked_after, observed, attempts)
+                    from eval.adaptive_checks import observed_with_faults
+                    checked_observed = observed_with_faults(observed, environment)
+                    failures = offline.judge_turn(turn['expect'], result, before, checked_after, checked_observed, attempts)
                     if suite == 'adaptive':
                         from eval.adaptive_checks import judge
                         effective = turn['message'] + ('\n运行中补充要求：\n' + case['scenario']['message'] if case.get('scenario', {}).get('kind') == 'steer' else '')

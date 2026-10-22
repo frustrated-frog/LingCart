@@ -90,18 +90,23 @@ def test_worker_keeps_partial_samples_on_cancel_and_refuses_duplicate(tmp_path):
     assert list(store.directory(job['job_id']).glob('samples/**/*.json'))
 
 
-def test_worker_three_arms_are_after_learning_and_test_never_reaches_refiner(tmp_path):
+@pytest.mark.parametrize('accept', [False, True])
+def test_worker_three_arms_are_after_learning_and_test_never_reaches_refiner(tmp_path, accept):
     from eval.run_pg_lab import run_job
     from src.harness import get_runner
     from eval.run_live_eval import summarize, environment_manifest
     store = JobStore(tmp_path)
-    job = store.create(StartExperiment(request_id='complete-worker', preset='smoke'), launch=False)
+    job = store.create(StartExperiment(request_id=f'complete-worker-{accept}', preset='smoke'), launch=False)
     order, refinements = [], []
     class Refiner:
         def propose(self, graph, report, rejected):
             refinements.append([s['case_id'] for s in report['samples']])
             order.append('refine')
-            return dict(proposal=None, error='SCRIPTED_REJECTION', events=[])
+            from tests.test_pg_learning import proposal
+            patch = proposal()
+            patch['source_cases'] = ['PG01']
+            return dict(proposal=json.dumps(patch) if accept else None,
+                        error=None if accept else 'SCRIPTED_REJECTION', events=[])
     def evaluator(dataset, **kwargs):
         order.append(kwargs['split'])
         provenance = get_runner(kwargs['harness_profile']).provenance()
@@ -126,11 +131,11 @@ def test_worker_three_arms_are_after_learning_and_test_never_reaches_refiner(tmp
                 execution_source='test_harness', graph_root=Path(graphs))
     saved = store.get(job['job_id'])
     assert saved['status'] == 'COMPLETED', saved
-    assert order == ['dev', 'dev', 'refine', 'test', 'test', 'test']
+    assert order == ['dev', 'dev', 'refine', *(['dev'] if accept else []), 'test', 'test', 'test']
     assert refinements == [job['frozen']['groups']['train']]
     assert saved['comparison']['conclusion'] == 'SMOKE_ONLY'
     assert saved['comparison']['evidence_valid'] is False
-    assert saved['history'][0]['status'] == 'REJECTED'
+    assert saved['history'][0]['status'] == ('ACCEPTED' if accept else 'REJECTED')
     assert set(saved['arms']) == {'baseline', 'seed', 'evolved'}
 
 
@@ -146,7 +151,8 @@ def test_empty_search_fault_is_once_and_does_not_mutate_business_data(monkeypatc
         function = tool_spec('search_products', _READ_ONLY_TOOLS['search_products']).function
         assert function()['products'] == []
         assert function()['products'] == [product]
-        assert state == {'kind': 'empty_search', 'fired': True, 'environment_paths': []}
+        assert state['fired'] and not state['environment_paths']
+        assert state['tool_overrides'][0]['original_result']['products'] == [product]
 
 
 def test_spawn_failure_is_durable_and_cannot_rebill_retry(tmp_path, monkeypatch):
@@ -164,3 +170,41 @@ def test_spawn_failure_is_durable_and_cannot_rebill_retry(tmp_path, monkeypatch)
     assert first['error'] == 'PG_WORKER_START_FAILED' and first['status'] == 'FAILED'
     assert store.create(request)['job_id'] == first['job_id']
     assert sum('-m' in call[0] for call in calls) == 1 and 'sensitive' not in json.dumps(first)
+
+
+def test_fault_judging_requires_physical_source_and_rejects_arbitrary_rewrites():
+    from eval.adaptive_checks import observed_with_faults
+    raw = {'tool': 'search_products', 'args': {'query': '耳机', 'limit': 4},
+           'result': {'products': [{'product_id': 'P1101'}], 'total': 1}}
+    injected = {'products': [], 'total': 0}
+    environment = {'kind': 'empty_search', 'fired': True, 'tool_overrides': [{
+        'tool': 'search_products', 'args': {'query': '耳机'}, 'original_result': raw['result'],
+        'injected_result': injected}]}
+    checked = observed_with_faults([raw], environment)
+    assert checked[0]['result'] == injected and raw['result']['total'] == 1
+    with pytest.raises(ValueError, match='物理工具证据'):
+        observed_with_faults([], environment)
+    environment['tool_overrides'][0]['injected_result']['products'] = [{'product_id': 'P9999'}]
+    with pytest.raises(ValueError, match='声明范围'):
+        observed_with_faults([raw], environment)
+
+
+def test_empty_fault_keeps_real_backend_trace_judge_valid():
+    from eval import run_task_eval as offline
+    from eval.adaptive_checks import scenario, observed_with_faults
+    from src.direct_executor import _READ_ONLY_TOOLS
+    from src.runtime import tool_spec
+    runtime = offline._runtime()
+    with offline._isolated_db(runtime, {}):
+        before = offline._snapshot(runtime, runtime['tools']._engine)
+        with offline._observe_tools(runtime) as observed:
+            with scenario({'scenario': {'kind': 'empty_search'}}, 'fault-source') as environment:
+                result = tool_spec('search_products', _READ_ONLY_TOOLS['search_products']).function(category='耳机')
+        assert result['products'] == [] and observed[0]['result']['products']
+        trace = {'status': 'SUCCEEDED', 'reply': '本次检索为空', 'run_id': 'fault-test',
+                 'events': [{'type': 'terminal', 'run_id': 'fault-test', 'sequence': 1}], 'trace': [
+            {'tool': 'search_products', 'args': {'category': '耳机'}, 'result': result}]}
+        checked = observed_with_faults(observed, environment)
+        assert offline.judge_turn({'statuses': ['SUCCEEDED']}, trace, before, before, checked, 0) == []
+        assert any('physical backend evidence' in f for f in
+                   offline.judge_turn({'statuses': ['SUCCEEDED']}, trace, before, before, observed, 0))

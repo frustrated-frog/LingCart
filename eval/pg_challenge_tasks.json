@@ -14,10 +14,10 @@
       "scenario_family": "empty-category",
       "category": "空结果恢复",
       "language": "zh",
-      "description": "检索耳机并推荐一款，预算500元，优先舒适；一次空结果后请继续查找。",
+      "description": "检索耳机并推荐一款，预算500元，优先舒适。",
       "turns": [
         {
-          "message": "检索耳机并推荐一款，预算500元，优先舒适；一次空结果后请继续查找。",
+          "message": "检索耳机并推荐一款，预算500元，优先舒适。",
           "expect": {
             "statuses": [
               "SUCCEEDED"
@@ -327,10 +327,10 @@
       "scenario_family": "empty-with-exclusion",
       "category": "空结果恢复",
       "language": "zh",
-      "description": "查找预算600元、不带主动降噪的耳机，推荐有库存的一款；检索为空时换个检索方式。",
+      "description": "查找预算600元、不带主动降噪的耳机，推荐有库存的一款。",
       "turns": [
         {
-          "message": "查找预算600元、不带主动降噪的耳机，推荐有库存的一款；检索为空时换个检索方式。",
+          "message": "查找预算600元、不带主动降噪的耳机，推荐有库存的一款。",
           "expect": {
             "statuses": [
               "SUCCEEDED"
@@ -667,10 +667,10 @@
       "scenario_family": "empty-then-policy",
       "category": "空结果恢复",
       "language": "zh",
-      "description": "搜索预算400元的键盘，给我一款推荐并解释退货政策；若第一次检索没有结果请尝试恢复。",
+      "description": "搜索预算400元的键盘，给我一款推荐并解释退货政策。",
       "turns": [
         {
-          "message": "搜索预算400元的键盘，给我一款推荐并解释退货政策；若第一次检索没有结果请尝试恢复。",
+          "message": "搜索预算400元的键盘，给我一款推荐并解释退货政策。",
           "expect": {
             "statuses": [
               "SUCCEEDED"
