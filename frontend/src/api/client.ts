@@ -1,4 +1,7 @@
 import type {
+  AfterSalesCaseDetail,
+  AfterSalesCaseStatus,
+  AfterSalesCaseSummary,
   ChatResponse,
   Conversation,
   DatasetDetail,
@@ -148,6 +151,11 @@ export const api = {
     request<{ products: Product[]; total: number }>(`/business/products${query(filters)}`),
   orders: (filters: { query?: string; status?: string }) =>
     request<{ orders: Order[] }>(`/business/orders${query(filters)}`),
+  afterSalesCases: (filters: { order_id?: number; session_id?: string; status?: AfterSalesCaseStatus; limit?: number } = {}) =>
+    request<{ cases: AfterSalesCaseSummary[] }>(`/business/after-sales/cases${query(filters)}`),
+  afterSalesCase: (caseId: string) => request<AfterSalesCaseDetail>(
+    `/business/after-sales/cases/${encodeURIComponent(caseId)}`,
+  ),
   conversation: (sessionId: string) => request<Conversation>(`/conversations/${encodeURIComponent(sessionId)}`),
   chat: (payload: { message: string; session_id?: string; request_id?: string; action_id?: string; harness_profile?: string }) =>
     request<ChatResponse>('/chat', { method: 'POST', body: JSON.stringify(payload) }),

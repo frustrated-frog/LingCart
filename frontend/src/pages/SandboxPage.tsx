@@ -318,9 +318,13 @@ function ApprovalPanel({ action, paymentMethod, setPaymentMethod, onConfirm, onC
   action: PendingAction; paymentMethod: string; setPaymentMethod: (value: string) => void
   onConfirm: () => void; onCancel: () => void; disabled: boolean
 }) {
-  const title = action.type === 'PROCESS_PAYMENT' ? '支付' : '退款'
-  return <div className="approval-panel"><div><span>APPROVAL REQUIRED</span><h3>确认订单 #{action.order_id} 的{title}操作</h3><p>审批状态已持久化；刷新后仍会恢复，只有明确确认才会修改本地演示数据库。</p></div>
+  const caseSubmission = action.type === 'SUBMIT_AFTER_SALES_CASE'
+  const title = action.type === 'PROCESS_PAYMENT' ? '支付' : caseSubmission ? '售后退款提交' : '退款'
+  const confirmLabel = caseSubmission ? '确认提交退款申请' : `确认${title}`
+  return <div className="approval-panel"><div><span>APPROVAL REQUIRED</span><h3>确认订单 #{action.order_id} 的{title}操作</h3><p>{caseSubmission
+    ? `案件 ${action.case_id ?? '—'} 已通过政策核验；确认后才会创建退款申请。`
+    : '审批状态已持久化；刷新后仍会恢复，只有明确确认才会修改本地演示数据库。'}</p></div>
     {action.type === 'PROCESS_PAYMENT' && <label>支付方式<select value={paymentMethod} onChange={(event) => setPaymentMethod(event.target.value)}><option value="card">银行卡</option><option value="paypal">PayPal</option></select></label>}
-    <div className="approval-actions"><button className="primary" onClick={onConfirm} disabled={disabled}><Check size={14} />确认{title}</button><button onClick={onCancel} disabled={disabled}><CircleStop size={14} />取消操作</button></div>
+    <div className="approval-actions"><button className="primary" onClick={onConfirm} disabled={disabled}><Check size={14} />{confirmLabel}</button><button onClick={onCancel} disabled={disabled}><CircleStop size={14} />取消操作</button></div>
   </div>
 }

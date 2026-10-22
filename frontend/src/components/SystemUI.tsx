@@ -12,6 +12,10 @@ export const STATUS_LABELS: Record<string, string> = {
   PENDING: '待执行', SKIPPED: '已跳过', UNKNOWN: '状态未知',
   placed: '已下单', shipped: '运输中', delivered: '已送达', cancelled: '已取消',
   pending: '待支付', paid: '已支付', refunded: '已退款', none: '暂无退款', requested: '退款申请中',
+  OPEN: '已开案', AWAITING_EVIDENCE: '等待补充材料', AWAITING_CONFIRMATION: '等待确认',
+  SUBMITTED: '已提交', MANUAL_REVIEW: '人工审核', RESOLVED: '已解决', REJECTED: '不符合政策',
+  ELIGIBLE: '符合政策', NEEDS_EVIDENCE: '需要证据', INELIGIBLE: '不符合政策',
+  ACTIVE: '有效', SUPERSEDED: '已替代',
 }
 
 export const TERMINAL_REASON_LABELS: Record<string, string> = {
@@ -54,6 +58,8 @@ export const TOOL_LABELS: Record<string, string> = {
   answer_faq: '查询服务规则', escalate_to_human: '转交人工客服', get_catalog_facets: '读取目录分类',
   search_products: '搜索商品目录', discover_products: '发现商品候选', compare_products: '对比商品参数',
   query_catalog: '执行结构化目录查询',
+  prepare_after_sales_case: '建立并核验售后案件', prepare_case_submission: '准备售后提交',
+  submit_after_sales_case: '提交售后案件',
   select_product: '核验并选择商品', read_clock: '读取当前时间', calculate: '执行计算',
   __model_answer__: '生成知识回答',
 }
@@ -84,7 +90,7 @@ export const ENGINE_LABELS: Record<string, string> = {
 
 export const SPECIALIST_LABELS: Record<string, string> = {
   order: '订单专员', refund: '退款专员', payment: '支付专员', faq: '规则问答',
-  shopping: '商品选购', knowledge: '知识回答', utility: '通用工具', runtime: '运行时',
+  after_sales: '售后案件', shopping: '商品选购', knowledge: '知识回答', utility: '通用工具', runtime: '运行时',
   orchestrator: '任务编排', intake: '请求接入', human: '人工客服',
 }
 
@@ -178,9 +184,9 @@ export function TelemetryStrip({ items }: { items: Array<{ label: string; value:
 }
 
 export function StatusBadge({ status }: { status: string }) {
-  const tone = status === 'SUCCEEDED' || status === 'delivered' || status === 'paid' ? 'ok'
-    : status === 'FAILED' ? 'bad'
-      : status.startsWith('WAITING') || status === 'INTERRUPTED' || status === 'pending' ? 'warn' : ''
+  const tone = ['SUCCEEDED', 'delivered', 'paid', 'RESOLVED', 'ELIGIBLE', 'SUBMITTED', 'ACTIVE'].includes(status) ? 'ok'
+    : ['FAILED', 'REJECTED', 'INELIGIBLE', 'CANCELLED'].includes(status) ? 'bad'
+      : status.startsWith('WAITING') || ['INTERRUPTED', 'pending', 'OPEN', 'MANUAL_REVIEW', 'NEEDS_EVIDENCE'].includes(status) ? 'warn' : ''
   return <span className={`status-badge ${tone}`}>{STATUS_LABELS[status] ?? status}</span>
 }
 

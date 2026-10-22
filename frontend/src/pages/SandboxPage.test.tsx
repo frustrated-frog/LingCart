@@ -200,6 +200,27 @@ describe('SandboxPage durable session behavior', () => {
     expect(screen.getByText(/审批状态已持久化/)).toBeInTheDocument()
   })
 
+  it('distinguishes a policy-approved case submission from a generic refund', async () => {
+    vi.spyOn(api, 'conversation').mockResolvedValue({
+      active_run_id: null,
+      messages: [
+        { role: 'user', content: '订单 1001 的耳机有异响', run_id: 'run-case' },
+        { role: 'assistant', content: '案件已通过政策核验，请确认是否提交。', run_id: 'run-case' },
+      ],
+      state: { pending_action: {
+        action_id: 'approval-case-1', type: 'SUBMIT_AFTER_SALES_CASE', order_id: 1001,
+        case_id: 'case-audit-001', policy_version_id: 'standard-after-sales:2026-01',
+        policy_decision_id: 'decision-001',
+      } },
+    })
+
+    renderPage()
+
+    expect(await screen.findByText('确认订单 #1001 的售后退款提交操作')).toBeInTheDocument()
+    expect(screen.getByText(/案件 case-audit-001 已通过政策核验/)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '确认提交退款申请' })).toBeInTheDocument()
+  })
+
   it('shows persisted machine-readable failure evidence', async () => {
     vi.spyOn(api, 'conversation').mockResolvedValue({
       active_run_id: null,
