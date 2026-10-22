@@ -609,6 +609,10 @@ button:disabled { opacity: .5; cursor: not-allowed !important; }
 .case-record-list article > div > span:not(.status-badge) { color: var(--muted); font: 8px/1 var(--mono); }
 .case-record-list p { overflow: hidden; margin: 6px 0; color: var(--muted); font-size: 8px; white-space: nowrap; text-overflow: ellipsis; }
 .case-record-list code { display: block; overflow: hidden; color: var(--blue); font-size: 8px; white-space: nowrap; text-overflow: ellipsis; }
+.case-semantic-assessment { margin-top: 12px; padding-top: 8px; border-top: 1px dashed var(--line); }
+.case-semantic-assessment p, .case-record-list .case-plan-question { overflow: visible; white-space: normal; overflow-wrap: anywhere; font-size: 11px; line-height: 1.65; color: var(--ink-2); }
+.case-semantic-assessment blockquote { margin: 10px 0; padding-left: 10px; border-left: 2px solid var(--line-strong); overflow-wrap: anywhere; font-size: 11px; line-height: 1.65; color: var(--ink-2); }
+.case-semantic-assessment small { display: block; margin-top: 4px; font: 9px/1.4 var(--mono); color: var(--muted); }
 .evidence-reference-list { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 10px; }
 .evidence-reference-list code { padding: 4px 6px; background: var(--surface-2); color: var(--ink-2); font-size: 8px; }
 .case-action-list { padding: 11px 0 3px; }

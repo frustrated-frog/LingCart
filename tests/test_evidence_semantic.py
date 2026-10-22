@@ -90,6 +90,16 @@ def test_oversized_input_is_not_silently_truncated_or_sent_to_model():
     assert model.calls == 0
 
 
+def test_kernel_hook_failure_is_not_downgraded_to_missing_evidence():
+    from src.errors import AgentError
+    class Blocked:
+        limits = BudgetLimits()
+        def model_call(self, *_a, **_kw):
+            raise AgentError('HOOK_FAILED', '内核阻止继续执行', retryable=False)
+    with pytest.raises(AgentError, match='内核阻止'):
+        assess(inputs(), model=SemanticModel(), runtime=Blocked())
+
+
 @pytest.mark.parametrize('status', ['INCOMPLETE', 'IRRELEVANT', 'CONFLICT', 'UNKNOWN'])
 def test_non_sufficient_material_is_persisted_but_never_approved(database, monkeypatch, status):
     case_id = start_case(monkeypatch)

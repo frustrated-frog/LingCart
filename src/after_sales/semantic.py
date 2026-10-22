@@ -11,7 +11,7 @@ from sqlalchemy import select
 
 from src.after_sales.service import AfterSalesDomainError, _checksum
 from src.backend.db import AgentRun, AfterSalesEvidence, AfterSalesSemanticAssessment
-from src.errors import AgentError
+from src.errors import AgentError, ErrorCode
 
 VERSION = "evidence-semantic-v1"
 MAX_INPUT_CHARS = 24000
@@ -126,7 +126,7 @@ def assess(inputs: dict, *, model, runtime) -> dict:
         return abstention(inputs, "SEMANTIC_PROTOCOL_INVALID")
     except AgentError as exc:
         # 控制流错误不能伪装为材料不足。
-        if any(token in str(exc.code) for token in ("BUDGET", "CANCEL", "DEADLINE", "CHECKPOINT", "LEASE", "CONTROL")):
+        if exc.code not in {code.value for code in ErrorCode if code.name.startswith('MODEL_')}:
             raise
         return abstention(inputs, "SEMANTIC_MODEL_UNAVAILABLE")
 

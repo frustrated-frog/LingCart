@@ -13,6 +13,7 @@ LingCart 是一个面向消费决策与售后任务的 Agent 工程项目。它�
 - Dataset Coverage：浏览固定离线回归、真实模型消费任务和自主 Agent 专项任务的类别、分组、轮次与机器断言。
 - 消费业务沙盒：商品发现、订单与售后、支付/退款确认、任务记录和用户主动控制的长期偏好。
 - 证据驱动售后案件：跨轮补证、来源核验、版本化政策要求、证据撤回与计划修订；材料变化会关闭旧授权，提交仍需明确确认。
+- 独立证据语义核验：区分充分、缺失、无关、冲突与未知，保留原文引用并提出具体追问；来源核验不替代充分性判断，语义核验不代表客观鉴定。
 - Durable Runtime：对话串行化、请求幂等、Checkpoint、工具账本、恢复、运行中调整、取消和排队追问。
 - Model Gateway：Gemini、Groq、OpenAI 与 OpenAI-compatible，支持按职责选模、超时、降级和熔断。
 
@@ -213,6 +214,7 @@ venv/bin/python -m eval.run_ace_adaptation \
 - [Adaptive Planning](docs/adaptive-planning.md)
 - [Session Control and Memory](docs/session-control-memory.md)
 - [证据驱动售后规划](docs/证据驱动售后规划设计.md)
+- [证据语义核验与组件评测](docs/证据语义核验设计.md)
 - [Research Infrastructure](docs/research-infrastructure-v1.md)
 
 ## Docker

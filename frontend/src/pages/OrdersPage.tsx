@@ -23,6 +23,7 @@ const RESOLUTION_LABELS: Record<string, string> = {
 
 const CASE_EVENT_LABELS: Record<string, string> = {
   CASE_OPENED: '案件建立', RUN_LINKED: '运行关联', EVIDENCE_ADDED: '证据入账', POLICY_DECIDED: '政策裁决',
+  EVIDENCE_SEMANTIC_ASSESSED: '材料语义核验',
   CASE_SUBMITTED: '退款申请已提交', CASE_CANCELLED: '案件取消', CASE_RESOLVED: '案件解决', CASE_REJECTED: '案件拒绝',
   EVIDENCE_REVOKED: '证据已撤回',
 }
@@ -199,7 +200,7 @@ function CaseDossier({ detail }: { detail: AfterSalesCaseDetail }) {
             </article>
             {plan.valid && plan.next_actions.map((action, index) => <article key={`${action.goal_id}-${index}`}>
               <strong>{planActions[action.kind] ?? action.kind}</strong>
-              {action.question && <p>{action.question}</p>}
+              {action.question && <p className="case-plan-question">{action.question}</p>}
               {action.requires_approval && <p>补证不会授权退款，提交前必须再次明确确认。</p>}
             </article>)}
           </div> : <div className="case-inline-state">尚无持久化案件计划。</div>}
@@ -207,6 +208,16 @@ function CaseDossier({ detail }: { detail: AfterSalesCaseDetail }) {
             <div><strong>{requirement.description}</strong><span>{stale ? '待重新核验' : requirement.status === 'SATISFIED' ? '要求已满足' : '要求未满足'}</span></div>
             <p>接受来源：{requirement.accepted_sources.map(source => source === 'CUSTOMER_STATEMENT' ? '用户原始陈述' : source === 'ORDER_RECORD' ? '权威订单记录' : source).join('、') || '尚未定义'}</p>
             <p>采用 {requirement.evidence_refs.length} 条证据 · 未采用 {Object.keys(requirement.rejected_evidence).length} 条</p>
+            {requirement.validation_condition === 'CUSTOMER_ATTESTATION' && (requirement.semantic_assessment ? <section className="case-semantic-assessment" aria-label="材料语义核验">
+              <p>语义核验：{{ SUFFICIENT: '陈述充分', INCOMPLETE: '信息不足', IRRELEVANT: '材料无关', CONFLICT: '陈述冲突', UNKNOWN: '无法判断' }[requirement.semantic_assessment.status]}{stale ? '（历史结果）' : ''}</p>
+              <p>{requirement.semantic_assessment.explanation}</p>
+              {requirement.semantic_assessment.question && <p>待澄清：{requirement.semantic_assessment.question}</p>}
+              {requirement.semantic_assessment.citations.map((citation, index) => <blockquote key={index}>
+                {citation.quote}<small> · {compactId(citation.evidence_id)}</small>
+              </blockquote>)}
+              {requirement.semantic_assessment.error_code && <p>核验暂不可用：{requirement.semantic_assessment.error_code}</p>}
+              <p>语义核验只判断陈述是否回答要求，不代表客观鉴定。</p>
+            </section> : <p className="case-plan-question">语义尚未核验，来源通过不能替代充分性判断。</p>)}
           </article>)}</div> : <div className="case-inline-state">当前裁决没有结构化补证要求。</div>}
           {plans.length > 1 && <details><summary>查看 {plans.length} 次计划修订</summary><div className="case-record-list">{plans.map(item => <article key={item.plan_id}>
             <strong>PLAN {item.revision} · {STATUS_LABELS[item.status] ?? item.status}</strong><p>案件版本 {item.case_revision} · {formatTimestamp(item.created_at)}</p>

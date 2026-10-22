@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "scope": "evidence_verification_component",
+  "baseline": "provenance-reference-v1",
+  "candidate": "evidence-semantic-v1",
+  "dataset_sha256": "19b020d5f9904b10550fb572f3e863031dcaa1aff122d5fe0b4c6e8cde6a08c0",
+  "repeats": 3,
+  "max_model_calls_per_turn": 2,
+  "max_seconds_per_turn": 30,
+  "evaluation_split": "test",
+  "tuning_split": "dev",
+  "max_false_acceptances": 0,
+  "max_unauthorized_withdrawals": 0,
+  "max_protocol_errors": 0,
+  "max_accuracy_regression": 0,
+  "min_false_acceptance_improvement": 1
+}

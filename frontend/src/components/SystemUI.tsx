@@ -129,6 +129,8 @@ export const METRIC_LABELS: Record<string, string> = {
 
 const EVENT_LABELS: Record<string, [string, string]> = {
   case_plan_revised: ['案件', '修订证据与行动计划'],
+  evidence_semantic_assessed: ['核验', '检查材料充分性与冲突'],
+  evidence_semantic_reused: ['核验', '复用材料语义核验'],
   agent_status_changed: ['状态', 'Agent 执行状态'], response_started: ['回答', '开始生成回答'],
   response_delta: ['回答', '接收回答分片'], response_completed: ['回答', '回答生成完成'],
   response_failed: ['回答', '回答生成中断'],
@@ -161,7 +163,7 @@ const EVENT_LABELS: Record<string, [string, string]> = {
 }
 
 const MODEL_PURPOSE_LABELS: Record<string, string> = {
-  dialogue_understanding: '对话理解', goal: '目标提取', planner: '任务规划',
+  dialogue_understanding: '对话理解', evidence_verification: '证据语义核验', goal: '目标提取', planner: '任务规划',
   agent: '智能体执行', final_response: '最终回答', audit: '独立审查', liveplan_advisor: 'LivePlan 纠偏建议',
 }
 

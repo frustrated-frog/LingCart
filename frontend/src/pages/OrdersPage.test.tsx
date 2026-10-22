@@ -102,6 +102,31 @@ function renderPage() {
 
 beforeEach(() => vi.restoreAllMocks())
 
+it.each([
+  ['SUFFICIENT', '陈述充分'], ['INCOMPLETE', '信息不足'], ['IRRELEVANT', '材料无关'],
+  ['CONFLICT', '陈述冲突'], ['UNKNOWN', '无法判断'],
+] as const)('renders semantic %s separately from provenance and objective truth', async (status, label) => {
+  const detail = structuredClone(caseDetail)
+  detail.case.latest_decision!.facts.evidence_requirements = [{
+    requirement_id: 'r1', policy_version_id: 'p1', policy_checksum: 'hash', target_case_id: caseSummary.case_id,
+    evidence_type: 'DAMAGE_DESCRIPTION', description: '说明商品本身的损坏情况', accepted_sources: ['CUSTOMER_STATEMENT'],
+    validation_condition: 'CUSTOMER_ATTESTATION', max_age_days: 30, status: 'UNSATISFIED', evidence_refs: [], rejected_evidence: {},
+    semantic_assessment: { assessment_id: 'review1', verifier_version: 'evidence-semantic-v1', status,
+      explanation: '目前两条陈述需要核对', question: status === 'SUFFICIENT' ? '' : '请确认破损的是包装还是商品？',
+      missing_information: [], citations: [{ evidence_id: 'e1', quote: '只是外包装破了' }],
+      error_code: status === 'UNKNOWN' ? 'SEMANTIC_MODEL_UNAVAILABLE' : null },
+  }]
+  vi.spyOn(api, 'orders').mockResolvedValue({ orders: [order] })
+  vi.spyOn(api, 'afterSalesCases').mockResolvedValue({ cases: [caseSummary] })
+  vi.spyOn(api, 'afterSalesCase').mockResolvedValue(detail)
+  renderPage()
+  expect(await screen.findByText(`语义核验：${label}`)).toBeInTheDocument()
+  expect(screen.getByText('语义核验只判断陈述是否回答要求，不代表客观鉴定。')).toBeInTheDocument()
+  expect(screen.getByText('只是外包装破了')).toBeInTheDocument()
+  if (status !== 'SUFFICIENT') expect(screen.getByText(/待澄清：请确认破损的是包装还是商品/)).toBeInTheDocument()
+  if (status === 'UNKNOWN') expect(screen.getByText(/核验暂不可用：SEMANTIC_MODEL_UNAVAILABLE/)).toBeInTheDocument()
+})
+
 describe('OrdersPage after-sales case ledger', () => {
   it('renders persisted policy, evidence, run and side-effect records', async () => {
     vi.spyOn(api, 'orders').mockResolvedValue({ orders: [order] })
