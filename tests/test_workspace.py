@@ -1,4 +1,7 @@
+import json
+
 import pytest
+from langchain_core.messages import AIMessage
 from sqlalchemy import select
 
 from src import tools
@@ -9,7 +12,7 @@ from src.agents.refund_agent import REFUND_TOOLS
 from src.backend.catalog import seed_catalog
 from src.backend.db import Order, Payment, Product, Refund, get_engine, get_session_factory
 from src.backend.seed import seed
-from src.intake import PRODUCT_SEARCH, analyze_request
+from src.intake import LLM_REQUIRED, PRODUCT_SEARCH, analyze_request
 from src.orchestrator import run_orchestrator
 from src.persistence import RunStore
 from src.workspace import list_orders, list_runs, save_run
@@ -110,16 +113,41 @@ def test_invalid_budget_and_comparison_are_explicit():
 
 def test_shopping_ignores_previous_order_context_and_retains_budget():
     intake = analyze_request("(Context: the customer was last discussing order 1002.)\n推荐通勤降噪耳机，预算 500 元以内")
-    assert intake.intents == (PRODUCT_SEARCH,)
+    assert intake.execution_mode == LLM_REQUIRED
+    assert intake.intents == ()
+    assert intake.route_hints == (PRODUCT_SEARCH,)
     assert intake.entities["max_price"] == 500
     assert "order_id" not in intake.entities
 
 
-def test_shopping_request_returns_verified_zero_token_results():
-    result = run_orchestrator("推荐通勤降噪耳机，预算 500 元以内")
+def test_shopping_request_uses_semantic_contract_before_catalog_execution(monkeypatch):
+    message = "推荐通勤降噪耳机，预算 500 元以内"
+
+    class Model:
+        def json_mode(self):
+            return self
+
+        def invoke(self, _prompt):
+            return AIMessage(content=json.dumps({
+                "reason": "需要保留商品目标、用途、属性和预算范围",
+                "commands": [],
+                "objectives": [{
+                    "id": "headphones",
+                    "kind": PRODUCT_SEARCH,
+                    "source_quote": message,
+                    "category": "耳机",
+                    "query": "通勤 降噪",
+                    "max_price": 500,
+                }],
+            }, ensure_ascii=False))
+
+    monkeypatch.setattr(orchestrator, "get_llm", lambda **_kwargs: Model())
+
+    result = run_orchestrator(message)
+
     assert result["status"] == "SUCCEEDED"
     assert result["agent"] == "shopping"
-    assert result["usage"]["total_tokens"] == 0
+    assert result["budget"]["consumed"]["model_calls"] == 1
     assert result["trace"][0]["tool"] == "search_products"
     assert all(p["price"] <= 500 for p in result["trace"][0]["result"]["products"])
 

@@ -13,6 +13,8 @@ from src.intake import (
     PAYMENT_PROCESS,
     PAYMENT_STATUS,
     PRODUCT_DISCOVERY,
+    PRODUCT_COMPARE,
+    PRODUCT_SEARCH,
     REFUND_ELIGIBILITY,
     REFUND_REQUEST,
     SHIPMENT_TRACKING,
@@ -121,6 +123,50 @@ def test_multiple_catalog_targets_without_shared_constraints_require_semantic_un
     assert result.intents == ()
     assert result.entities["categories"] == ["耳机", "键盘"]
     assert result.semantic_hazards == ("MULTI_ITEM_CATALOG_SCOPE",)
+
+
+def test_known_and_unregistered_catalog_targets_cannot_enter_fast_path():
+    result = analyze_request("推荐一个耳机和一台咖啡机")
+
+    assert result.execution_mode == LLM_REQUIRED
+    assert result.intents == ()
+    assert result.entities["category"] == "耳机"
+    assert result.route_hints == (PRODUCT_DISCOVERY,)
+    assert result.semantic_hazards == ("UNPROVEN_CATALOG_SCOPE",)
+
+
+def test_free_form_catalog_facets_require_semantic_contract_coverage():
+    result = analyze_request("推荐 500 元以内的通勤降噪耳机")
+
+    assert result.execution_mode == LLM_REQUIRED
+    assert result.intents == ()
+    assert result.entities == {"category": "耳机", "query": "通勤 降噪", "max_price": 500.0}
+    assert result.route_hints == (PRODUCT_SEARCH,)
+    assert result.semantic_hazards == ("UNPROVEN_CATALOG_SCOPE",)
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "推荐咖啡产品",
+        "对比商品 P1101 和一台咖啡机",
+    ],
+)
+def test_generic_words_or_product_ids_do_not_prove_a_partially_parsed_scope(message):
+    result = analyze_request(message)
+
+    assert result.execution_mode == LLM_REQUIRED
+    assert result.intents == ()
+    assert result.route_hints
+    assert result.semantic_hazards == ("UNPROVEN_CATALOG_SCOPE",)
+
+
+def test_exact_product_identifier_comparison_keeps_the_zero_token_contract():
+    result = analyze_request("对比商品 P1101 和 P1102")
+
+    assert result.execution_mode == DIRECT
+    assert result.intents == (PRODUCT_COMPARE,)
+    assert result.entities["product_ids"] == ["P1101", "P1102"]
 
 
 def test_out_of_domain_request_uses_open_set_model_fallback():

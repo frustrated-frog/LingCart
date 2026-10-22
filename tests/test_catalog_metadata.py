@@ -11,7 +11,7 @@ from src.catalog_metadata import (
 from src.capability_registry import get_capability_registry
 from src.errors import AgentError
 from src.intake import (
-    DIRECT,
+    LLM_REQUIRED,
     ORDER_STATUS,
     PRODUCT_COMPARE,
     PRODUCT_DISCOVERY,
@@ -65,8 +65,10 @@ def test_product_intake_resolves_declared_metadata_dependency(monkeypatch):
 
     result = analyze_request("推荐 500 元以内的通勤降噪耳机")
 
-    assert result.execution_mode == DIRECT
-    assert result.intents == (PRODUCT_SEARCH,)
+    assert result.execution_mode == LLM_REQUIRED
+    assert result.intents == ()
+    assert result.route_hints == (PRODUCT_SEARCH,)
+    assert result.semantic_hazards == ("UNPROVEN_CATALOG_SCOPE",)
     assert result.entities == {"category": "耳机", "query": "通勤 降噪", "max_price": 500.0}
     assert reads == [(PRODUCT_SEARCH, CATALOG_FACETS_DEPENDENCY)]
 

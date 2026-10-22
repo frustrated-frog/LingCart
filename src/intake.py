@@ -38,6 +38,19 @@ _ORDER_ID = re.compile(
     r"(?:订单|order)\s*(?:号|号码|id|number|no\.?|#)?\s*[:：#-]?\s*(\d{4,})",
     re.IGNORECASE,
 )
+_GENERIC_CATALOG_SCOPE = re.compile(
+    r"(?:推荐|搜索|查找|找)(?:一下)?(?:商品|产品)"
+    r"|(?:recommend|search|find)(?:\s+(?:some|the))?\s+(?:products?|catalog)",
+    re.IGNORECASE,
+)
+_IDENTIFIER_CATALOG_SCOPE = re.compile(
+    r"(?:对比|比较)(?:商品|产品)?\s*p\d{4}s?"
+    r"(?:\s*(?:和|与|及|、|,)\s*(?:商品|产品)?\s*p\d{4}s?)+"
+    r"(?:的?(?:区别|差异))?"
+    r"|compare(?:\s+(?:products?))?\s+p\d{4}s?"
+    r"(?:\s*(?:and|,|versus|vs\.?)\s*p\d{4}s?)+",
+    re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True)
@@ -63,6 +76,14 @@ class TaskIntake:
 
 def _has_any(text: str, phrases: tuple[str, ...]) -> bool:
     return any(phrase in text for phrase in phrases)
+
+
+def _catalog_fast_path_scope_is_explicit(text: str, *, has_product_ids: bool) -> bool:
+    """Accept only catalog grammars whose complete target scope is deterministic."""
+
+    stripped = text.strip().strip("，,。.!！?？ ")
+    pattern = _IDENTIFIER_CATALOG_SCOPE if has_product_ids else _GENERIC_CATALOG_SCOPE
+    return pattern.fullmatch(stripped) is not None
 
 
 def _extract_order_id(text: str) -> int | None:
@@ -226,7 +247,11 @@ def analyze_request(user_message: str, *, _check_clause_coverage: bool = True) -
             categories, catalog_terms = [], []
     category = categories[0] if len(categories) == 1 else None
     shared_catalog_budget = False
-    if shopping_action and (categories or product_ids or "商品" in shopping_text):
+    if shopping_action and (
+        categories
+        or product_ids
+        or _has_any(shopping_text, ("商品", "产品", "product", "catalog"))
+    ):
         budget_match = re.search(r"(?:预算\s*(?:为|是|不超过)?\s*[¥￥]?\s*)(-?\d+(?:\.\d+)?)", shopping_text)
         if not budget_match:
             budget_match = re.search(r"(\d+(?:\.\d+)?)\s*元?\s*(?:以内|以下|不超过)", shopping_text)
@@ -254,7 +279,7 @@ def analyze_request(user_message: str, *, _check_clause_coverage: bool = True) -
         elif not product_ids:
             if recommendation_action and not catalog_terms and "max_price" not in shopping_entities:
                 intents.append(PRODUCT_DISCOVERY)
-            elif categories or "商品" in shopping_text:
+            elif categories or _has_any(shopping_text, ("商品", "产品", "product", "catalog")):
                 intents.append(PRODUCT_SEARCH)
         if product_ids:
             intents.append(PRODUCT_COMPARE)
@@ -358,6 +383,28 @@ def analyze_request(user_message: str, *, _check_clause_coverage: bool = True) -
             reason="请求包含否定、修正或例外作用域，禁止确定性快路径直接解释",
             route_hints=tuple(dict.fromkeys(intents)),
             semantic_hazards=hazards,
+        )
+    catalog_intents = {PRODUCT_SEARCH, PRODUCT_DISCOVERY, PRODUCT_COMPARE, CATALOG_QUERY}
+    has_catalog_intent = any(intent in catalog_intents for intent in intents)
+    explicit_catalog_scope = _catalog_fast_path_scope_is_explicit(
+        shopping_text,
+        has_product_ids=bool(product_ids),
+    )
+    if has_catalog_intent and not explicit_catalog_scope:
+        if not any(intent in {
+            ORDER_STATUS, ORDER_DETAILS, SHIPMENT_TRACKING, REFUND_ELIGIBILITY,
+            REFUND_REQUEST, PAYMENT_STATUS, PAYMENT_PROCESS,
+        } for intent in intents):
+            entities.pop("order_id", None)
+            entities.pop("order_ids", None)
+        return TaskIntake(
+            request=request,
+            entities=entities,
+            execution_mode=LLM_REQUIRED,
+            confidence=0.0,
+            reason="自然语言商品请求的目标范围无法由确定性层证明完整，交由结构化理解",
+            route_hints=tuple(dict.fromkeys(intents)),
+            semantic_hazards=("UNPROVEN_CATALOG_SCOPE",),
         )
     order_intents = {
         ORDER_STATUS,
