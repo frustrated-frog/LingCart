@@ -71,3 +71,31 @@ def test_projection_preserves_v2_abstention_and_shadow_difference_without_callin
     assert projection['summary']['failure_stage'] == 'LOCALIZATION_ABSTAINED'
     assert projection['summary']['localization_abstentions'] == 1
     assert projection['summary']['shadow_fallbacks'] == 1
+
+
+def test_projection_uses_persisted_contract_review_and_counts_blocked_repeat():
+    value = sample(passed=False)
+    events = value['turns'][0]['result']['events']
+    guidance = events[0]
+    guidance.update(
+        generation={'mode': 'deterministic-contract-v1', 'model_calls': 0},
+        guidance_contract={'contract_id': 'contract-1', 'recommended_actions': ['inspect'],
+                           'policy': 'ADVISORY_EXCEPT_EXACT_NO_PROGRESS_REPEAT'},
+    )
+    value['turns'][0]['result']['events'] = [guidance, events[1], events[2], {
+        'type': 'pg_decision_reviewed', 'sequence': 4, 'decision_key': 'decision-1',
+        'review_id': 'review-1', 'contract_id': 'contract-1', 'status': 'BLOCKED',
+        'blocked': True, 'reason': 'EXACT_NO_PROGRESS_REPEAT', 'actual_action': 'search_products',
+        'recommended_actions': ['inspect'], 'matched_edge_ids': [],
+    }]
+
+    projection = project_sample_evidence(value)
+    intervention = projection['turns'][0]['interventions'][0]
+    assert projection['schema_version'] == 3
+    assert intervention['guidance']['generation_mode'] == 'deterministic-contract-v1'
+    assert intervention['action_alignment']['status'] == 'BLOCKED'
+    assert intervention['action_alignment']['blocked'] is True
+    assert projection['summary']['blocked_repeats'] == 1
+    assert projection['summary']['deterministic_contracts'] == 1
+    assert projection['summary']['guidance_model_calls'] == 0
+    assert projection['summary']['failure_stage'] == 'NO_PROGRESS_REPEAT_BLOCKED'

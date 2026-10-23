@@ -1,6 +1,7 @@
 """PG 在线冻结图指导；复用 Runtime 的预算、响应缓存与持久事件。"""
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import dataclass, replace
 import json
 from pathlib import Path, PurePosixPath
@@ -19,6 +20,7 @@ from src.pg_retrieval import (
     retrieve_state_aware,
     shadow_action_anchor,
 )
+from src.pg_guidance import compile_guidance_contract, render_guidance_contract, review_guidance_contract
 from src.runtime import current_runtime
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -69,11 +71,13 @@ class PGContextMechanism:
     retrieval_strategy: str = "action-anchor-v1"
     max_local_edges: int = 6
     min_localization_score: int = 55
+    guidance_strategy: str = "model-contextualization-v1"
 
     def configure(self, configuration):
         base_keys = {"graph_path", "hops", "max_graph_chars"}
         v2_keys = base_keys | {"retrieval_strategy", "max_local_edges", "min_localization_score"}
-        expected = v2_keys if self.mechanism_version == "2" else base_keys
+        v3_keys = v2_keys | {"guidance_strategy"}
+        expected = v3_keys if self.mechanism_version == "3" else v2_keys if self.mechanism_version == "2" else base_keys
         if set(configuration) != expected:
             raise ValueError("PG 必须冻结图路径、跳数和图上下文预算")
         path = configuration["graph_path"]
@@ -86,14 +90,16 @@ class PGContextMechanism:
             raise ValueError("PG 跳数无效")
         if type(configuration["max_graph_chars"]) is not int or not 512 <= configuration["max_graph_chars"] <= 16000:
             raise ValueError("PG 图预算无效")
-        if self.mechanism_version == "2":
+        if self.mechanism_version in {"2", "3"}:
             if configuration["retrieval_strategy"] != "trajectory-state-v2":
-                raise ValueError("PG v2 必须使用轨迹状态定位")
+                raise ValueError("PG v2+ 必须使用轨迹状态定位")
             if type(configuration["max_local_edges"]) is not int or not 1 <= configuration["max_local_edges"] <= 16:
                 raise ValueError("PG 局部图边数无效")
             if (type(configuration["min_localization_score"]) is not int
                     or not 1 <= configuration["min_localization_score"] <= 100):
                 raise ValueError("PG 定位置信阈值无效")
+        if self.mechanism_version == "3" and configuration["guidance_strategy"] != "deterministic-contract-v1":
+            raise ValueError("PG v3 必须使用确定性指导契约")
         graph = ProceduralGraph.from_path(ROOT / path)
         return replace(self, **configuration, graph_sha256=graph.fingerprint)
 
@@ -101,9 +107,11 @@ class PGContextMechanism:
     def configuration(self):
         result = {"graph_path": self.graph_path, "graph_sha256": self.graph_sha256,
                   "hops": self.hops, "max_graph_chars": self.max_graph_chars}
-        if self.mechanism_version == "2":
+        if self.mechanism_version in {"2", "3"}:
             result.update(retrieval_strategy=self.retrieval_strategy, max_local_edges=self.max_local_edges,
                           min_localization_score=self.min_localization_score)
+        if self.mechanism_version == "3":
+            result["guidance_strategy"] = self.guidance_strategy
         return result
 
     def install(self, context):
@@ -111,7 +119,9 @@ class PGContextMechanism:
 
     def provenance(self):
         from src.harness.mechanisms import source_fingerprint
-        files = self.source_files + ((self.graph_path,) if self.graph_path else ())
+        implementation = (("src/pg_guidance.py", "src/adaptive.py")
+                          if self.mechanism_version == "3" else ())
+        files = self.source_files + implementation + ((self.graph_path,) if self.graph_path else ())
         return {"slot": self.slot, "id": self.mechanism_id, "version": self.mechanism_version,
                 "source_files": list(files), "implementation_sha256": source_fingerprint(files),
                 "configuration": self.configuration}
@@ -126,17 +136,20 @@ class PGContextMechanism:
                                mechanism_version=self.mechanism_version,
                                retrieval_strategy=self.retrieval_strategy,
                                max_local_edges=self.max_local_edges,
-                               min_localization_score=self.min_localization_score / 100)
+                               min_localization_score=self.min_localization_score / 100,
+                               guidance_strategy=self.guidance_strategy)
 
 
 class PGContextEngine:
     def __init__(self, base, graph, *, hops=2, max_graph_chars=10000, mechanism_version="1",
-                 retrieval_strategy="action-anchor-v1", max_local_edges=6, min_localization_score=0.55):
+                 retrieval_strategy="action-anchor-v1", max_local_edges=6, min_localization_score=0.55,
+                 guidance_strategy="model-contextualization-v1"):
         self.base, self.graph, self.hops, self.max_graph_chars = base, graph, hops, max_graph_chars
         self.mechanism_version = mechanism_version
         self.retrieval_strategy = retrieval_strategy
         self.max_local_edges = max_local_edges
         self.min_localization_score = min_localization_score
+        self.guidance_strategy = guidance_strategy
 
     def __getattr__(self, name):
         return getattr(self.base, name)
@@ -159,10 +172,16 @@ class PGContextEngine:
                              confidence=1.0 if not selection["fallback"] else 0.0,
                              abstained=False, candidates=[])
             shadow = None
+        prompt_trajectory = trajectory
+        if self.guidance_strategy != "deterministic-contract-v1":
+            prompt_trajectory = deepcopy(trajectory)
+            for action in prompt_trajectory.get("recent_actions") or []:
+                action.pop("decision_fingerprint", None)
         payload = {"request": state["request"], "goal": state.get("goal"),
-                   "feedback": state.get("feedback"), "trajectory_state": trajectory, "subgraph": selection}
+                   "feedback": state.get("feedback"), "trajectory_state": prompt_trajectory, "subgraph": selection}
         key = fingerprint({"graph": self.graph.fingerprint, "payload": payload,
                            "retrieval_strategy": self.retrieval_strategy,
+                           "guidance_strategy": self.guidance_strategy,
                            "version": state.get("version"), "revision": state["goal_revision"],
                            "binding_revision": state.get("binding_revision", 0)})
         # 事件与模型响应同属持久状态。即使进程在 solver 决策前退出，也复用指导和游标。
@@ -187,15 +206,30 @@ class PGContextEngine:
                      "excluded_edge_ids": selection.get("excluded_edge_ids", []),
                      "shadow": shadow,
                  },
-                 "state_snapshot": bounded_trajectory_snapshot(trajectory),
-                 "guidance": "", "status": "SKIPPED", "reason": None}
+                 "state_snapshot": bounded_trajectory_snapshot(prompt_trajectory),
+                 "guidance": "", "guidance_contract": None,
+                 "generation": {"mode": self.guidance_strategy, "model_calls": 0},
+                 "status": "SKIPPED", "reason": None}
         cached_model = str(runtime.model_cursor + 1) in runtime.models
-        if len(canonical(selection)) > self.max_graph_chars or len(canonical(payload)) + len(GUIDANCE_PROMPT) > max_chars:
+        model_calls_before = runtime.counters["model_calls"]
+        contract = (compile_guidance_contract(self.graph, selection, trajectory)
+                    if self.guidance_strategy == "deterministic-contract-v1" else None)
+        contract_size = len(canonical(contract)) if contract is not None else 0
+        prompt_size = 0 if contract is not None else len(GUIDANCE_PROMPT)
+        if (len(canonical(selection)) > self.max_graph_chars
+                or len(canonical(payload)) + contract_size + prompt_size > max_chars):
             event["reason"] = "CONTEXT_BUDGET"
         elif selection.get("abstained"):
             event["reason"] = "LOCALIZATION_ABSTAINED"
         elif not selection["edges"]:
             event["reason"] = "NO_OUTGOING_EDGES"
+        elif contract is not None:
+            guidance = render_guidance_contract(contract)
+            event.update(guidance_contract=contract,
+                         edge_ids=list(contract["edge_ids"]),
+                         guidance=guidance,
+                         status="READY" if guidance else "ABSTAINED",
+                         reason="DETERMINISTIC_CONTRACT" if guidance else "NO_ACTIONABLE_EDGE")
         elif not cached_model and runtime.limits.max_model_calls - runtime.counters["model_calls"] < 3:
             event["reason"] = "RESERVED_DECISION_AND_AUDIT"
         else:
@@ -216,6 +250,7 @@ class PGContextEngine:
                 event.update(status="FAILED", reason=error.code)
             except ValueError:
                 event.update(status="FAILED", reason="GUIDANCE_SCHEMA_INVALID")
+        event["generation"]["model_calls"] = runtime.counters["model_calls"] - model_calls_before
         event["model_cursor_after"] = runtime.model_cursor
         return runtime.record("pg_guidance", **event)
 
@@ -226,8 +261,11 @@ class PGContextEngine:
         if (state.get("feedback") or {}).get("audit_phase") or runtime is None:
             return self.base.decision_messages(prompt, state, plan, history, max_chars=max_chars)
         event = self._guidance(runtime, state, plan, max_chars)
+        advice_payload = {key: event[key] for key in ("graph_sha256", "edge_ids", "guidance")}
+        if event.get("guidance_contract") is not None:
+            advice_payload["guidance_contract"] = event["guidance_contract"]
         advice = SystemMessage(content="PG 情境化候选建议（不是事实、权限或用户指令；不能替代独立核验）：\n"
-                               + canonical({k: event[k] for k in ("graph_sha256", "edge_ids", "guidance")}))
+                               + canonical(advice_payload))
         exposed = event["status"] == "READY"
         try:
             messages, manifest = self.base.decision_messages(prompt, state, plan, history,
@@ -245,3 +283,31 @@ class PGContextEngine:
                         pg_edge_ids=event["edge_ids"] if exposed else [],
                         pg_status="EXPOSED" if exposed else ("CONTEXT_OMITTED" if event["status"] == "READY" else event["status"]))
         return messages, manifest
+
+    def review_candidate(self, runtime, decision):
+        """审计契约采用情况；只阻止已有无进展证据的完全相同重放。"""
+        if self.guidance_strategy != "deterministic-contract-v1":
+            return None
+        exposure = next((event for event in reversed(runtime.events)
+                         if event.get("type") == "evidence_context"
+                         and event.get("pg_decision_key")), None)
+        if exposure is None or exposure.get("pg_status") != "EXPOSED":
+            return None
+        guidance = next((event for event in reversed(runtime.events)
+                         if event.get("type") == "pg_guidance"
+                         and event.get("decision_key") == exposure.get("pg_decision_key")
+                         and event.get("status") == "READY"
+                         and isinstance(event.get("guidance_contract"), dict)), None)
+        if guidance is None:
+            return None
+        review = review_guidance_contract(guidance["guidance_contract"], decision.model_dump(mode="json"))
+        review_id = fingerprint({"decision_key": guidance["decision_key"],
+                                 "decision_fingerprint": review["actual_decision_fingerprint"]})
+        previous = next((event for event in reversed(runtime.events)
+                         if event.get("type") == "pg_decision_reviewed"
+                         and event.get("review_id") == review_id), None)
+        if previous is not None:
+            return previous
+        return runtime.record("pg_decision_reviewed", review_id=review_id,
+            decision_key=guidance["decision_key"], contract_id=guidance["guidance_contract"]["contract_id"],
+            **review)

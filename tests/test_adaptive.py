@@ -1,6 +1,7 @@
 """Scripted model protocol tests with real tools; these do not measure LLM quality."""
 from copy import deepcopy
 import json
+from pathlib import Path
 
 from langchain_core.messages import AIMessage
 import pytest
@@ -186,6 +187,42 @@ def test_adaptive_search_normalizes_grounded_catalog_alias_with_provenance(monke
     normalized = next(event for event in result['events'] if event['type'] == 'tool_arguments_normalized')
     assert normalized['raw_args']['category'] == 'keyboard'
     assert normalized['normalized_args']['category'] == '键盘'
+
+
+def test_pg_contract_blocks_exact_empty_result_replay_before_second_tool_call(monkeypatch):
+    from src.context_engine import ContextEngine
+    from src.pg_context import PGContextEngine
+    from src.procedural_graph import ProceduralGraph
+    from src.runtime import RunRuntime, runtime_scope
+
+    calls = []
+    def empty_search(**kwargs):
+        calls.append(kwargs)
+        return {'products': [], 'total': 0, 'filters': kwargs, 'data_source': 'TEST_CATALOG'}
+    install(monkeypatch, 'search_products', empty_search)
+    first = search(first=True)
+    repeated = search()
+    model(monkeypatch, first, repeated, clarification)
+    monkeypatch.setattr('src.pg_context.get_llm',
+                        lambda **_: pytest.fail('确定性指导契约不得调用指导模型'))
+    context = RunRuntime('pg-contract-integration', BudgetLimits(max_model_calls=8))
+    context.context_engine = PGContextEngine(ContextEngine('推荐预算500的耳机'),
+        ProceduralGraph.from_path(Path('research/graphs/pg-seed-v1.json')),
+        mechanism_version='3', retrieval_strategy='trajectory-state-v2',
+        guidance_strategy='deterministic-contract-v1')
+
+    with runtime_scope(context):
+        result = run_adaptive('推荐预算500的耳机')
+
+    assert result['status'] == 'WAITING_CLARIFICATION', result
+    assert len(calls) == 1
+    reviews = [event for event in result['events'] if event['type'] == 'pg_decision_reviewed']
+    assert any(event['status'] == 'BLOCKED' and event['reason'] == 'EXACT_NO_PROGRESS_REPEAT'
+               for event in reviews)
+    assert any(event['type'] == 'decision_rejected'
+               and event['code'] == 'PG_GUIDANCE_CONTRACT_REJECTED' for event in result['events'])
+    assert not any(event['type'] == 'model_call' and event.get('purpose') == 'pg_guidance'
+                   for event in result['events'])
 
 
 def test_repeated_refreshes_do_not_create_artificial_dependency_depth():

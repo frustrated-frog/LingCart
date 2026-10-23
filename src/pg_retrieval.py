@@ -5,6 +5,8 @@ from collections import deque
 from copy import deepcopy
 from typing import Any
 
+from src.pg_guidance import decision_fingerprint
+
 
 DONE_STATUSES = {"SUCCEEDED", "REUSED", "REJECTED", "FAILED", "SKIPPED", "CANCELLED"}
 FAILED_STATUSES = {"FAILED", "REJECTED", "SKIPPED", "CANCELLED"}
@@ -51,6 +53,7 @@ def build_trajectory_state(state: dict, plan, events: list[dict], *, recent_limi
             "step_id": event.get("step_id"),
             "step_status": getattr(step, "status", None),
             "outcome": _result_outcome(step),
+            "decision_fingerprint": decision_fingerprint(decision),
         })
 
     goal = _record(state.get("goal"))

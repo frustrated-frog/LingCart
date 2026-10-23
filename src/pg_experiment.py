@@ -116,6 +116,12 @@ def behavior_metrics(report):
             'pg_interventions': len(interventions),
             'pg_action_aligned': sum(item['action_alignment']['status'] == 'ALIGNED' for item in interventions),
             'pg_action_diverged': sum(item['action_alignment']['status'] == 'DIVERGED' for item in interventions),
+            'pg_no_progress_repeats_blocked': sum(item['action_alignment']['status'] == 'BLOCKED'
+                                                   for item in interventions),
+            'pg_deterministic_contracts': sum(item['guidance'].get('generation_mode') == 'deterministic-contract-v1'
+                                              for item in interventions),
+            'pg_guidance_model_calls': sum(item['guidance'].get('generation_model_calls') or 0
+                                           for item in interventions),
             'pg_localization_fallbacks': sum(item['localization']['fallback'] for item in interventions),
             'pg_localization_abstentions': sum(item['localization']['abstained'] for item in interventions),
             'pg_shadow_disagreements': sum(item['localization']['shadow_changed'] for item in interventions),

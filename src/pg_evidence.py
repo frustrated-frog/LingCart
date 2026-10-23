@@ -36,7 +36,17 @@ def _invalid_tool_result(event):
     return bool(result.get("error") or result.get("success") is False or result.get("products") == [])
 
 
-def _alignment(guidance, decision):
+def _alignment(guidance, decision, review=None):
+    if review:
+        return {
+            "status": review.get("status") or "UNKNOWN",
+            "matched_edge_ids": list(review.get("matched_edge_ids") or []),
+            "expected_actions": list(review.get("recommended_actions") or []),
+            "actual_action": review.get("actual_action"),
+            "reason": review.get("reason"),
+            "blocked": bool(review.get("blocked")),
+            "review_id": review.get("review_id"),
+        }
     if not decision:
         return {"status": "NO_DECISION", "matched_edge_ids": []}
     subgraph = _record(guidance.get("subgraph"))
@@ -71,6 +81,8 @@ def project_turn(turn, turn_index=0):
                          and event.get("pg_decision_key") == guidance.get("decision_key")), None)
         applied = next((event for event in window if event.get("type") == "mechanism_applied"
                         and event.get("decision_key") == guidance.get("decision_key")), None)
+        review = next((event for event in window if event.get("type") == "pg_decision_reviewed"
+                       and event.get("decision_key") == guidance.get("decision_key")), None)
         decision = next((event for event in window if event.get("type") == "adaptive_decision"), None)
         decision_sequence = _sequence(decision, -1) if decision else -1
         action = _record(_record(decision).get("decision"))
@@ -120,11 +132,14 @@ def project_turn(turn, turn_index=0):
                 "reason": guidance.get("reason"),
                 "content": guidance.get("guidance") or "",
                 "exposed": bool(applied) and _record(exposure).get("pg_status") == "EXPOSED",
+                "generation_mode": _record(guidance.get("generation")).get("mode") or "model-contextualization-v1",
+                "generation_model_calls": _record(guidance.get("generation")).get("model_calls"),
+                "contract": guidance.get("guidance_contract"),
                 "sequence": start,
             },
             "decision": ({"sequence": _sequence(decision, decision["_order"]),
                           "source": decision.get("source"), "payload": action} if decision else None),
-            "action_alignment": _alignment(guidance, decision),
+            "action_alignment": _alignment(guidance, decision, review),
             "tool": ({"name": tool_result.get("tool"), "args": tool_result.get("args"),
                       "status": tool_result.get("status"), "sequence": _sequence(tool_result, tool_result["_order"]),
                       "result": _bounded(tool_result.get("result")),
@@ -160,6 +175,8 @@ def _failure_stage(turns):
     if any(not item["guidance"]["exposed"] for item in interventions):
         return "GUIDANCE_NOT_EXPOSED"
     if any(item["decision"] is None for item in interventions):
+        if any(item["action_alignment"].get("blocked") for item in interventions):
+            return "NO_PROGRESS_REPEAT_BLOCKED"
         return "NO_FOLLOWUP_DECISION"
     if any(_record(item.get("tool")).get("invalid_result") for item in interventions):
         return "TOOL_OUTCOME_FAILURE"
@@ -177,7 +194,7 @@ def project_sample_evidence(sample):
     fired = any(turn["environment"]["fired"] for turn in turns)
     passed = bool(sample.get("passed"))
     return {
-        "schema_version": 2,
+        "schema_version": 3,
         "case_id": sample.get("case_id"),
         "repetition": sample.get("repetition"),
         "passed": passed,
@@ -187,6 +204,11 @@ def project_sample_evidence(sample):
             "aligned": alignments["ALIGNED"],
             "diverged": alignments["DIVERGED"],
             "unknown_alignment": alignments["UNKNOWN"] + alignments["NO_DECISION"],
+            "blocked_repeats": alignments["BLOCKED"],
+            "deterministic_contracts": sum(
+                item["guidance"]["generation_mode"] == "deterministic-contract-v1" for item in interventions),
+            "guidance_model_calls": sum(
+                item["guidance"]["generation_model_calls"] or 0 for item in interventions),
             "localization_fallbacks": sum(item["localization"]["fallback"] for item in interventions),
             "localization_abstentions": sum(item["localization"]["abstained"] for item in interventions),
             "shadow_differences": sum(item["localization"]["shadow_changed"] for item in interventions),

@@ -6,6 +6,7 @@ from langchain_core.messages import AIMessage
 import pytest
 
 from src.context_engine import ContextEngine
+from src.adaptive_decision import Decision
 from src.errors import AgentError
 from src.harness import get_product_runner, get_runner
 from src.pg_context import PGContextEngine
@@ -223,6 +224,71 @@ def test_v2_low_confidence_abstention_skips_guidance_model(monkeypatch):
     assert model.inputs == [] and context.counters["model_calls"] == 0
 
 
+def test_v3_compiles_guidance_contract_without_spending_a_model_call(monkeypatch):
+    model = Guide()
+    monkeypatch.setattr("src.pg_context.get_llm", lambda **_: model)
+    context = RunRuntime("pg-v3", BudgetLimits(max_model_calls=2))
+    engine = PGContextEngine(ContextEngine("推荐耳机"), graph(), mechanism_version="3",
+        retrieval_strategy="trajectory-state-v2", guidance_strategy="deterministic-contract-v1")
+
+    with runtime_scope(context):
+        messages, manifest = engine.decision_messages("系统", state(), TaskPlan([], []), [], max_chars=10000)
+        context.record("evidence_context", **manifest)
+        review = engine.review_candidate(context, Decision(action="clarify", message="请补充关键信息"))
+
+    event = next(item for item in context.events if item["type"] == "pg_guidance")
+    assert event["generation"] == {"mode": "deterministic-contract-v1", "model_calls": 0}
+    assert event["guidance_contract"]["policy"] == "ADVISORY_EXCEPT_EXACT_NO_PROGRESS_REPEAT"
+    assert "set_goal" in event["guidance_contract"]["recommended_actions"]
+    assert event["guidance_contract"]["contract_id"] in str(messages[1].content)
+    assert manifest["pg_status"] == "EXPOSED"
+    assert review["status"] == "DIVERGED" and review["blocked"] is False
+    assert model.inputs == [] and context.counters["model_calls"] == 0
+
+
+def test_v3_blocks_only_exact_replay_after_no_progress_result(monkeypatch):
+    model = Guide()
+    monkeypatch.setattr("src.pg_context.get_llm", lambda **_: model)
+    context = RunRuntime("pg-v3-repeat", BudgetLimits(max_model_calls=2))
+    original = Decision(action="tool", tool="search_products",
+                        args={"query": "耳机", "category": "耳机", "limit": 4})
+    context.record("adaptive_decision", goal_revision=0,
+                   decision=original.model_dump(mode="json"), step_id="s1")
+    plan = TaskPlan([], [TaskStep("s1", "shopping", "search_products", original.args,
+                                 status="SUCCEEDED", result={"products": []})])
+    current = {**state(), "goal": {"objectives": [{"id": "choice", "kind": "recommend"}]},
+               "objective_ledger": [{"objective_id": "choice", "status": "PENDING",
+                                      "evidence_refs": [], "failures": []}]}
+    engine = PGContextEngine(ContextEngine("推荐耳机"), graph(), mechanism_version="3",
+        retrieval_strategy="trajectory-state-v2", guidance_strategy="deterministic-contract-v1")
+
+    with runtime_scope(context):
+        _, manifest = engine.decision_messages("系统", current, plan, [], max_chars=10000)
+        context.record("evidence_context", **manifest)
+        repeated = engine.review_candidate(context, original)
+        changed = engine.review_candidate(context, original.model_copy(update={
+            "args": {"query": "", "category": "耳机", "limit": 4},
+        }))
+
+    assert repeated["status"] == "BLOCKED" and repeated["reason"] == "EXACT_NO_PROGRESS_REPEAT"
+    assert changed["blocked"] is False
+    assert changed["status"] in {"ALIGNED", "DIVERGED"}
+    assert model.inputs == [] and context.counters["model_calls"] == 0
+
+
+def test_v3_does_not_review_a_contract_that_was_not_exposed():
+    context = RunRuntime("pg-v3-omitted", BudgetLimits(max_model_calls=2))
+    engine = PGContextEngine(ContextEngine("推荐耳机"), graph(), mechanism_version="3",
+        retrieval_strategy="trajectory-state-v2", guidance_strategy="deterministic-contract-v1")
+    context.record("pg_guidance", decision_key="omitted", status="READY",
+                   guidance_contract={"contract_id": "contract", "recommended_actions": [],
+                                      "forbidden_repeats": [], "instructions": []})
+    context.record("evidence_context", pg_decision_key="omitted", pg_status="CONTEXT_OMITTED")
+
+    assert engine.review_candidate(context, Decision(action="clarify", message="请补充")) is None
+    assert not any(event["type"] == "pg_decision_reviewed" for event in context.events)
+
+
 def test_profile_is_research_only_and_binds_immutable_artifact():
     runner = get_runner("adaptive-pg-context-v1")
     assert runner.build_context("推荐耳机").graph.fingerprint == graph().fingerprint
@@ -242,3 +308,17 @@ def test_v2_profile_changes_only_localization_strategy_and_remains_research_only
     assert v2.provenance()["research"]["status"] == "candidate"
     with pytest.raises(AgentError, match="仅限研究"):
         get_product_runner("adaptive-pg-context-v2")
+
+
+def test_v3_profile_freezes_v2_localization_and_changes_only_guidance_strategy():
+    v2 = get_runner("adaptive-pg-context-v2")
+    v3 = get_runner("adaptive-pg-context-v3")
+    v2_context = v2.build_context("推荐耳机")
+    v3_context = v3.build_context("推荐耳机")
+    assert v3_context.graph.fingerprint == v2_context.graph.fingerprint == graph().fingerprint
+    assert v3_context.retrieval_strategy == v2_context.retrieval_strategy == "trajectory-state-v2"
+    assert v2_context.guidance_strategy == "model-contextualization-v1"
+    assert v3_context.guidance_strategy == "deterministic-contract-v1"
+    assert v3.provenance()["research"]["status"] == "candidate"
+    with pytest.raises(AgentError, match="仅限研究"):
+        get_product_runner("adaptive-pg-context-v3")

@@ -151,6 +151,31 @@ def _review_liveplan_candidate(context, recorder, state, plan, decision):
     return True
 
 
+def _review_context_candidate(context, recorder, state, plan, decision):
+    engine = context.context_engine
+    if engine is None or not hasattr(engine, 'review_candidate'):
+        return False
+    review = engine.review_candidate(context, decision)
+    if not review or not review.get('blocked'):
+        return False
+    _discard_native_queue(context, state, 'PG_GUIDANCE_CONTRACT_REJECTED')
+    state['feedback'] = {
+        'code': 'PG_GUIDANCE_CONTRACT_REJECTED',
+        'message': '该决策与已有空结果或错误调用完全相同，继续执行不会增加证据。',
+        'instruction': '修改有依据的参数、推进其他未完成目标，或如实说明无法继续；不得放宽用户约束。',
+        'contract_id': review.get('contract_id'),
+        'review_id': review.get('review_id'),
+    }
+    state['model_cursor'] = context.model_cursor
+    state['pending'] = None
+    _save(context, state, plan)
+    if not any(event.get('type') == 'decision_rejected'
+               and event.get('review_id') == review.get('review_id') for event in context.events):
+        recorder.record('decision_rejected', code='PG_GUIDANCE_CONTRACT_REJECTED',
+                        action=decision.action, review_id=review.get('review_id'))
+    return True
+
+
 def _apply_binding_transaction(context, recorder, state, plan, history, transaction, *, reject_as_error):
     """Independently audit and atomically apply one content-addressed proposal."""
     from src.request_audit import review_request
@@ -788,6 +813,8 @@ def _run(context, user_message, history, pending_action):
                     # 插话也使审查中的旧目标失效，执行任何动作前再次检查。
                     apply_controls(context)
                     if _review_liveplan_candidate(context, recorder, state, plan, decision):
+                        continue
+                    if _review_context_candidate(context, recorder, state, plan, decision):
                         continue
                     _accept(context, recorder, state, plan, decision, history)
                     apply_controls(context)
