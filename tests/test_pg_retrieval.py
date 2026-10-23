@@ -100,6 +100,28 @@ def test_unrepresented_goal_and_unknown_action_abstain_instead_of_guessing_from_
     assert selected["edges"] == [] and selected["fallback"] is False
 
 
+def test_unrepresented_remaining_goal_abstains_even_when_latest_action_is_in_graph():
+    selected = retrieve_state_aware(graph(), {
+        "goal_defined": True,
+        "recent_actions": [{"action": "recommend", "outcome": "SUCCESS"}],
+        "unresolved_objective_kinds": ["answer_faq"],
+        "pending_steps": [],
+        "all_objectives_verified": False,
+    })
+    assert selected["status"] == "ABSTAINED" and selected["anchor"] is None
+
+
+def test_goal_with_only_unrepresented_objective_abstains_before_first_action():
+    selected = retrieve_state_aware(graph(), {
+        "goal_defined": True,
+        "recent_actions": [],
+        "unresolved_objective_kinds": ["answer_faq"],
+        "pending_steps": [],
+        "all_objectives_verified": False,
+    })
+    assert selected["status"] == "ABSTAINED" and selected["edges"] == []
+
+
 def test_verified_objectives_localize_completion_and_retrieval_is_bounded():
     selected = retrieve_state_aware(graph(), {
         "goal_defined": True,

@@ -91,6 +91,19 @@
       },
       "expected_anchor": null,
       "required_edge_ids": []
+    },
+    {
+      "id": "PGL07",
+      "description": "目标已建立但当前图不覆盖唯一待办目标",
+      "trajectory": {
+        "goal_defined": true,
+        "recent_actions": [],
+        "unresolved_objective_kinds": ["answer_faq"],
+        "pending_steps": [],
+        "all_objectives_verified": false
+      },
+      "expected_anchor": null,
+      "required_edge_ids": []
     }
   ]
 }

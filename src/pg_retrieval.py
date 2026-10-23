@@ -132,10 +132,11 @@ def retrieve_state_aware(graph, trajectory: dict, *, hops: int = 2, max_edges: i
     open_kinds = set(trajectory.get("unresolved_objective_kinds") or [])
     target_nodes = open_kinds & set(nodes)
     target_distances = _distances_to_targets(graph, target_nodes)
+    graph_covers_open_objective = not open_kinds or bool(target_nodes)
 
     if not goal_defined:
         add("Start", 1.2, "goal_missing")
-    elif not actions:
+    elif not actions and graph_covers_open_objective:
         add("set_goal" if "set_goal" in nodes else "Start", 1.15, "goal_defined_without_action")
 
     if trajectory.get("all_objectives_verified"):
@@ -149,6 +150,8 @@ def retrieve_state_aware(graph, trajectory: dict, *, hops: int = 2, max_edges: i
             continue
         reaches_open_goal = action in target_distances
         recovering = item.get("outcome") in {"EMPTY", "ERROR"}
+        if not graph_covers_open_objective:
+            continue
         # 未知动作之后不能仅凭久远历史猜锚点；只有仍关联未完成目标或明确失败恢复时保留。
         if distance and not latest_known and not reaches_open_goal and not recovering:
             continue
@@ -157,7 +160,8 @@ def retrieve_state_aware(graph, trajectory: dict, *, hops: int = 2, max_edges: i
             add(action, 0.3, f"recover_from:{item.get('outcome')}")
 
     for item in trajectory.get("pending_steps") or []:
-        add(item.get("tool"), 0.55, "pending_plan_step")
+        if graph_covers_open_objective:
+            add(item.get("tool"), 0.55, "pending_plan_step")
 
     for target in target_nodes:
         add(target, 0.5, "unresolved_objective")
