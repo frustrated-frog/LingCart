@@ -42,7 +42,7 @@ def plan(preset):
     dataset = challenge_dataset()
     groups = {part: [c['id'] for c in dataset['cases'] if c['learning_partition'] == part]
               for part in ('train', 'validation', 'test')}
-    spec = EvolutionSpec.model_validate_json((ROOT / 'research/experiments/pg-challenge-v1/evolution-spec.json').read_text())
+    spec = EvolutionSpec.model_validate_json((ROOT / 'research/experiments/pg-localization-v2/evolution-spec.json').read_text())
     spec.validate_dataset(dataset)
     if (list(spec.train_cases) != groups['train'] or list(spec.validation_cases) != groups['validation']
             or spec.dataset != DATASET.relative_to(ROOT).as_posix()):
@@ -117,12 +117,16 @@ def behavior_metrics(report):
             'pg_action_aligned': sum(item['action_alignment']['status'] == 'ALIGNED' for item in interventions),
             'pg_action_diverged': sum(item['action_alignment']['status'] == 'DIVERGED' for item in interventions),
             'pg_localization_fallbacks': sum(item['localization']['fallback'] for item in interventions),
+            'pg_localization_abstentions': sum(item['localization']['abstained'] for item in interventions),
+            'pg_shadow_disagreements': sum(item['localization']['shadow_changed'] for item in interventions),
+            'pg_shadow_full_graph_fallbacks': sum(bool((item['localization'].get('shadow') or {}).get('fallback'))
+                                                   for item in interventions),
             'failure_stages': dict(sorted(failure_stages.items()))}
 
 
 def test_contract(candidate, baseline, repeats):
     import json
-    contract = json.loads((ROOT / 'research/experiments/pg-context-v1/experiment-spec.json').read_text())
+    contract = json.loads((ROOT / 'research/experiments/pg-localization-v2/experiment-spec.json').read_text())
     contract.update(experiment_id='pg-challenge-' + candidate['profile_id'][-24:],
         candidate_profile=candidate['profile_id'], baseline_profile=baseline['profile_id'],
         dataset=DATASET.relative_to(ROOT).as_posix(), repeats=repeats)

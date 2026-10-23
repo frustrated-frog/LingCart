@@ -85,6 +85,8 @@ def project_turn(turn, turn_index=0):
         verification = next((event for event in reversed(window)
                              if event.get("type") in {"verification", "verification_failed"}), None)
         status = _record(exposure).get("pg_status") or guidance.get("status")
+        localization = _record(guidance.get("localization"))
+        shadow = _record(localization.get("shadow"))
         interventions.append({
             "intervention_id": guidance.get("decision_key"),
             "turn_index": turn_index,
@@ -92,6 +94,17 @@ def project_turn(turn, turn_index=0):
             "localization": {
                 "anchor": guidance.get("anchor"),
                 "fallback": bool(guidance.get("fallback")),
+                "abstained": bool(guidance.get("abstained")),
+                "algorithm": localization.get("algorithm") or "action-anchor-v1",
+                "status": localization.get("status"),
+                "reason": localization.get("reason"),
+                "confidence": localization.get("confidence"),
+                "candidates": list(localization.get("candidates") or []),
+                "shadow": shadow or None,
+                "shadow_changed": bool(shadow) and (
+                    shadow.get("anchor") != guidance.get("anchor")
+                    or bool(shadow.get("fallback")) != bool(guidance.get("fallback"))
+                ),
                 "node_ids": list(guidance.get("node_ids") or []),
                 "state_snapshot": guidance.get("state_snapshot"),
                 "sequence": start,
@@ -99,6 +112,7 @@ def project_turn(turn, turn_index=0):
             "retrieval": {
                 "retrieved_edge_ids": list(guidance.get("retrieved_edge_ids") or []),
                 "selected_edge_ids": list(guidance.get("edge_ids") or []),
+                "excluded_edge_ids": list(localization.get("excluded_edge_ids") or []),
                 "subgraph": guidance.get("subgraph"),
             },
             "guidance": {
@@ -137,6 +151,8 @@ def _failure_stage(turns):
     interventions = [item for turn in turns for item in turn["interventions"]]
     if not interventions:
         return "BASELINE_TASK_FAILURE"
+    if any(item["localization"]["abstained"] for item in interventions):
+        return "LOCALIZATION_ABSTAINED"
     if any(item["localization"]["fallback"] for item in interventions):
         return "LOCALIZATION_FALLBACK"
     if any(item["guidance"]["status"] in {"FAILED", "SKIPPED", "ABSTAINED"} for item in interventions):
@@ -161,7 +177,7 @@ def project_sample_evidence(sample):
     fired = any(turn["environment"]["fired"] for turn in turns)
     passed = bool(sample.get("passed"))
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "case_id": sample.get("case_id"),
         "repetition": sample.get("repetition"),
         "passed": passed,
@@ -172,6 +188,10 @@ def project_sample_evidence(sample):
             "diverged": alignments["DIVERGED"],
             "unknown_alignment": alignments["UNKNOWN"] + alignments["NO_DECISION"],
             "localization_fallbacks": sum(item["localization"]["fallback"] for item in interventions),
+            "localization_abstentions": sum(item["localization"]["abstained"] for item in interventions),
+            "shadow_differences": sum(item["localization"]["shadow_changed"] for item in interventions),
+            "shadow_fallbacks": sum(bool(_record(item["localization"].get("shadow")).get("fallback"))
+                                    for item in interventions),
             "environment_triggered": fired,
             "recovered": passed and fired,
             "failure_stage": _failure_stage(turns),

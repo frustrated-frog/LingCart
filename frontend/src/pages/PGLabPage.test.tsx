@@ -109,12 +109,15 @@ it('renders the persisted intervention chain instead of only raw json', async ()
   vi.mocked(api.pgSamples).mockResolvedValue({ samples: [{ stage: 'test-seed', case_id: 'PG13', repetition: 1,
     passed: true, failures: [], interventions: 1, failure_stage: null }] })
   vi.spyOn(api, 'pgSample').mockResolvedValue({ case_id: 'PG13', repetition: 1, passed: true, pg_evidence: {
-    schema_version: 1, summary: { interventions: 1, exposed: 1, aligned: 1, diverged: 0,
-      unknown_alignment: 0, localization_fallbacks: 0, environment_triggered: true, recovered: true, failure_stage: null },
+    schema_version: 2, summary: { interventions: 1, exposed: 1, aligned: 1, diverged: 0,
+      unknown_alignment: 0, localization_fallbacks: 0, localization_abstentions: 0,
+      shadow_differences: 1, shadow_fallbacks: 1, environment_triggered: true, recovered: true, failure_stage: null },
     turns: [{ turn_index: 0, request: '推荐耳机', passed: true, failures: [], interventions: [{
       intervention_id: 'decision-1', graph: { graph_id: 'pg', graph_version: 1, graph_sha256: 'a' },
-      localization: { anchor: 'Start', fallback: false, node_ids: ['Start', 'search_products'], state_snapshot: {}, sequence: 1 },
-      retrieval: { retrieved_edge_ids: ['start-search'], selected_edge_ids: ['start-search'], subgraph: null },
+      localization: { anchor: 'Start', fallback: false, abstained: false, algorithm: 'trajectory-state-v2',
+        confidence: 0.91, shadow_changed: true, shadow: { anchor: 'answer_faq', fallback: true },
+        node_ids: ['Start', 'search_products'], state_snapshot: {}, sequence: 1 },
+      retrieval: { retrieved_edge_ids: ['start-search'], selected_edge_ids: ['start-search'], excluded_edge_ids: ['other'], subgraph: null },
       guidance: { status: 'READY', reason: null, content: '先查询真实目录', exposed: true, sequence: 1 },
       decision: { sequence: 4, source: 'model', payload: { action: 'tool', tool: 'search_products' } },
       action_alignment: { status: 'ALIGNED', matched_edge_ids: ['start-search'] },
@@ -126,5 +129,8 @@ it('renders the persisted intervention chain instead of only raw json', async ()
   fireEvent.click(await screen.findByRole('button', { name: '查看 PG13 证据' }))
   expect(await screen.findByText('先查询真实目录')).toBeInTheDocument()
   expect(screen.getByText('01 · 状态定位')).toBeInTheDocument()
+  expect(screen.getByText(/置信度 91%/)).toBeInTheDocument()
+  expect(screen.getByText(/v1 影子：查询服务规则 · 全图回退/)).toBeInTheDocument()
+  expect(screen.getByText(/定位器结果有差异/)).toBeInTheDocument()
   expect(screen.getByText('对齐判定：ALIGNED')).toBeInTheDocument()
 })

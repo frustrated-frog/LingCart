@@ -641,8 +641,11 @@ export interface PGSample {
 }
 export interface PGIntervention {
   intervention_id: string; graph: { graph_id: string; graph_version: number; graph_sha256: string }
-  localization: { anchor: string; fallback: boolean; node_ids: string[]; state_snapshot: Record<string, unknown>; sequence: number }
-  retrieval: { retrieved_edge_ids: string[]; selected_edge_ids: string[]; subgraph: { edges?: PGEdge[] } | null }
+  localization: { anchor: string | null; fallback: boolean; abstained?: boolean; algorithm?: string; status?: string
+    reason?: string; confidence?: number | null; candidates?: Record<string, unknown>[]
+    shadow?: { algorithm?: string; anchor?: string | null; fallback?: boolean; node_ids?: string[]; edge_ids?: string[] } | null
+    shadow_changed?: boolean; node_ids: string[]; state_snapshot: Record<string, unknown>; sequence: number }
+  retrieval: { retrieved_edge_ids: string[]; selected_edge_ids: string[]; excluded_edge_ids?: string[]; subgraph: { edges?: PGEdge[] } | null }
   guidance: { status: string; reason: string | null; content: string; exposed: boolean; sequence: number }
   decision: { sequence: number; source: string; payload: Record<string, unknown> } | null
   action_alignment: { status: string; matched_edge_ids: string[]; expected_actions?: string[]; actual_action?: string; reason?: string }
@@ -652,7 +655,9 @@ export interface PGIntervention {
 export interface PGSampleDetail {
   case_id: string; repetition: number; passed: boolean; [key: string]: unknown
   pg_evidence?: { schema_version: number; summary: { interventions: number; exposed: number; aligned: number; diverged: number
-    unknown_alignment: number; localization_fallbacks: number; environment_triggered: boolean; recovered: boolean; failure_stage: string | null }
+    unknown_alignment: number; localization_fallbacks: number; localization_abstentions?: number
+    shadow_differences?: number; shadow_fallbacks?: number
+    environment_triggered: boolean; recovered: boolean; failure_stage: string | null }
     turns: { turn_index: number; request: string; passed: boolean; failures: string[]; interventions: PGIntervention[] }[] }
 }
 export interface PGSelection {
@@ -665,6 +670,8 @@ export interface PGArmResult {
   profile: { profile_id: string }; execution_source: string; live_verified: boolean
   metrics: { samples: number; mean_success_rate: number | null; recovery_rate: number | null
     triggered_samples: number; pg_exposure_rate: number | null; repeated_ineffective_calls: number; model_attempts: number
+    pg_localization_fallbacks?: number; pg_localization_abstentions?: number
+    pg_shadow_disagreements?: number; pg_shadow_full_graph_fallbacks?: number
     tool_calls: number; tokens: { total_tokens: number | null }; latency_ms: { p95: number | null } }
 }
 export interface PGJobSummary {

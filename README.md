@@ -16,7 +16,7 @@ LingCart 是一个面向消费决策与售后任务的 Agent 工程项目。它�
 - 独立证据语义核验：区分充分、缺失、无关、冲突与未知，保留原文引用并提出具体追问；来源核验不替代充分性判断，语义核验不代表客观鉴定。
 - Durable Runtime：对话串行化、请求幂等、Checkpoint、工具账本、恢复、运行中调整、取消和排队追问。
 - Model Gateway：Gemini、Groq、OpenAI 与 OpenAI-compatible，支持按职责选模、超时、降级和熔断。
-- PG 研究候选：冻结程序图的局部检索与情境指导，dev 轨迹驱动的离线结构演化、验证选择和拒绝记忆；尚无真实模型收益结论。
+- PG 研究候选：冻结程序图的轨迹状态定位、有界局部检索与情境指导，dev 轨迹驱动的离线结构演化、验证选择和拒绝记忆；尚无真实模型收益结论。
 
 所有品牌、价格、库存、客户、订单和物流都是本地演示数据。支付与退款只修改演示 SQLite 数据库，并且必须经过明确确认。
 
@@ -194,7 +194,7 @@ python eval/run_live_eval.py --harness-profile adaptive-v1 --split test --repeat
 
 第一版 ACE（Agentic Context Engineering）纵向切片已经接入：现有 adaptive Agent 产生真实执行轨迹，离线 Reflector/Curator 只从 `dev` 环境反馈增量构建不可变 Playbook，候选 Profile 在 `test` 时只读加载固定版本。它与用户偏好、业务事实和权限分仓，独立审查不会接收 Playbook；代码门禁拒绝具体商品/订单事实和放宽硬约束的策略。
 
-PG（Procedural Graphs）通过 `adaptive-pg-context-v1` 候选装配。它根据最近行动读取两跳局部图，用独立指导模型影响下一次决策；离线 Refiner 从训练轨迹提出图修改，在互斥 dev 验证案例上决定保留或拒绝。运行检查的“程序图指导”页展示冻结版本、关系条件、实际暴露状态和后续行动。`venv/bin/python -m eval.run_pg_evolution` 默认仅验证配置；真实学习须显式 `--live`。流程和种子/演化/无 PG 对照见 [论文机制与实验说明](research/experiments/pg-context-v1/论文机制与实验说明.md)。
+PG（Procedural Graphs）当前通过 `adaptive-pg-context-v2` 候选装配。它从持久化目标账本、最近行动、工具结果和未完成目标定位有界局部图；低置信时主动弃权，并以不参与决策的 v1 影子结果记录定位差异。独立指导模型只读取检索后的关系；离线 Refiner 仍从训练轨迹提出图修改，并在互斥 dev 验证案例上决定保留或拒绝。运行检查的“程序图指导”页展示冻结版本、定位置信度、影子差异、关系条件、实际暴露状态和后续行动。`venv/bin/python eval/run_pg_localization_eval.py --gate` 可零调用验证定位契约；`venv/bin/python -m eval.run_pg_evolution` 默认只验证演化配置，真实学习须显式 `--live`。设计与研究边界见 [轨迹状态感知程序图检索设计](docs/轨迹状态感知程序图检索设计.md)。
 
 论文实验室新增 [PG 挑战实验台](docs/程序图挑战实验台设计.md)（`/experiments/pg`）：18 个独立情境分为训练、验证、测试各 6 项；支持有预算的真实实验启动、停止、图修改审查、无 PG／种子图／演化图对照和逐样本证据。低成本冒烟只从三个分组各取一个冻结情境，共最多 6 个样本，并把“定位→检索→指导→行动→工具与核验”投影为持久证据；预算和失败分类见 [程序图真实模型闭环设计](docs/程序图真实模型闭环设计.md)。实验状态与失败结果均持久化，冒烟及脚本测试结果不作为收益结论。
 

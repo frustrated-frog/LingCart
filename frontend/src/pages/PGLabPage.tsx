@@ -87,15 +87,21 @@ function SampleEvidence({ jobId, sample }: { jobId: string; sample: PGSample }) 
   return <div className="pg-sample-evidence"><div className="pg-evidence-heading"><div><b>{sample.case_id} · 第 {sample.repetition} 次 · {phase(sample.stage)}</b>
     <p>{evidence.summary.failure_stage ? `失败阶段：${evidence.summary.failure_stage}` : evidence.summary.recovered ? '扰动后已恢复' : '样本未记录失败阶段'}</p></div>
     <dl><div><dt>干预</dt><dd>{evidence.summary.interventions}</dd></div><div><dt>已暴露</dt><dd>{evidence.summary.exposed}</dd></div>
-      <div><dt>行动对齐</dt><dd>{evidence.summary.aligned}</dd></div><div><dt>行动分歧</dt><dd>{evidence.summary.diverged}</dd></div></dl></div>
+      <div><dt>行动对齐</dt><dd>{evidence.summary.aligned}</dd></div><div><dt>行动分歧</dt><dd>{evidence.summary.diverged}</dd></div>
+      <div><dt>定位弃权</dt><dd>{evidence.summary.localization_abstentions ?? 0}</dd></div>
+      <div><dt>影子差异</dt><dd>{evidence.summary.shadow_differences ?? 0}</dd></div></dl></div>
     {evidence.turns.flatMap(turn => turn.interventions.map((item, index) => {
       const decision = item.decision?.payload ?? {}
       const action = String(decision.tool ?? decision.action ?? '没有后续决策')
+      const confidence = item.localization.confidence == null ? '未记录' : `${Math.round(item.localization.confidence * 100)}%`
+      const shadow = item.localization.shadow
+      const localizationState = item.localization.abstained ? '低置信，主动弃权'
+        : item.localization.fallback ? '未知行动，回退全图' : '命中有界局部锚点'
       return <article className="pg-intervention-chain" key={`${turn.turn_index}-${item.intervention_id}-${index}`}>
-        <header><span>干预 {index + 1} · 事件 {item.guidance.sequence}</span><b>{item.guidance.exposed ? '已进入模型决策上下文' : '未暴露给决策'}</b></header>
+        <header><span>干预 {index + 1} · 事件 {item.guidance.sequence}</span><b>{item.guidance.exposed ? '已进入模型决策上下文' : '未暴露给决策'}{item.localization.shadow_changed ? ' · 定位器结果有差异' : ''}</b></header>
         <div className="pg-chain-grid">
-          <section><small>01 · 状态定位</small><strong>{node(item.localization.anchor)}</strong><p>{item.localization.fallback ? '未知行动，回退全图' : '命中局部锚点'}</p><em>{item.localization.node_ids.length} 个局部节点</em></section>
-          <section><small>02 · 子图检索</small><strong>{item.retrieval.selected_edge_ids.join(' / ') || '未选择关系'}</strong><p>候选 {item.retrieval.retrieved_edge_ids.length} 条 · 采用 {item.retrieval.selected_edge_ids.length} 条</p></section>
+          <section><small>01 · 状态定位</small><strong>{item.localization.anchor ? node(item.localization.anchor) : '主动弃权'}</strong><p>{localizationState}</p><em>置信度 {confidence} · {item.localization.node_ids.length} 个局部节点</em>{shadow && <em>v1 影子：{node(shadow.anchor ?? '未知')} · {shadow.fallback ? '全图回退' : '局部图'}</em>}</section>
+          <section><small>02 · 子图检索</small><strong>{item.retrieval.selected_edge_ids.join(' / ') || '未选择关系'}</strong><p>候选 {item.retrieval.retrieved_edge_ids.length} 条 · 采用 {item.retrieval.selected_edge_ids.length} 条</p><em>裁剪 {(item.retrieval.excluded_edge_ids ?? []).length} 条</em></section>
           <section><small>03 · 情境指导</small><strong>{item.guidance.status}</strong><p>{item.guidance.content || item.guidance.reason || '指导器选择弃权'}</p></section>
           <section><small>04 · 实际行动</small><strong>{node(action)}</strong><p>对齐判定：{item.action_alignment.status}</p><em>{item.decision ? `决策事件 ${item.decision.sequence}` : '没有已提交行动'}</em></section>
           <section><small>05 · 工具与核验</small><strong>{item.tool ? node(item.tool.name) : '未调用工具'}</strong><p>{item.tool ? `${item.tool.status ?? '已返回'}${item.tool.invalid_result ? ' · 无效结果' : ''}` : item.verification ? '已进入目标核验' : '尚无后续结果'}</p></section>
@@ -113,6 +119,9 @@ function Comparison({ job }: { job?: PGJob }) {
     { label: '扰动后恢复率', value: id => percent(job?.arms[id]?.metrics.recovery_rate) },
     { label: '重复无效调用', value: id => number(job?.arms[id]?.metrics.repeated_ineffective_calls) },
     { label: 'PG 指导暴露率', value: id => id === 'baseline' ? '不适用' : percent(job?.arms[id]?.metrics.pg_exposure_rate) },
+    { label: '定位全图回退', value: id => id === 'baseline' ? '不适用' : number(job?.arms[id]?.metrics.pg_localization_fallbacks) },
+    { label: '低置信定位弃权', value: id => id === 'baseline' ? '不适用' : number(job?.arms[id]?.metrics.pg_localization_abstentions) },
+    { label: 'v1 影子全图回退', value: id => id === 'baseline' ? '不适用' : number(job?.arms[id]?.metrics.pg_shadow_full_graph_fallbacks) },
     { label: '模型调用次数', value: id => number(job?.arms[id]?.metrics.model_attempts) },
     { label: '总 Token', value: id => number(job?.arms[id]?.metrics.tokens.total_tokens) },
     { label: 'P95 延迟 / 秒', value: id => { const ms = job?.arms[id]?.metrics.latency_ms.p95; return number(ms == null ? null : ms / 1000) } },

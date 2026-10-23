@@ -37,6 +37,8 @@ def test_projection_links_localization_guidance_action_tool_and_verification():
     assert intervention['tool']['result']['products'][0]['product_id'] == 'P1'
     assert intervention['verification']['all_goals_satisfied'] is True
     assert projection['summary']['recovered'] is True
+    assert projection['summary']['localization_abstentions'] == 0
+    assert projection['summary']['shadow_differences'] == 0
 
 
 def test_projection_classifies_failed_guidance_action_divergence_without_claiming_reasoning():
@@ -49,3 +51,23 @@ def test_baseline_failure_is_distinguished_from_missing_pg_evidence():
     projection = project_sample_evidence({'case_id': 'PG13', 'repetition': 1, 'passed': False,
         'turns': [{'message': '推荐耳机', 'passed': False, 'failures': ['失败'], 'result': {'events': []}}]})
     assert projection['summary']['failure_stage'] == 'BASELINE_TASK_FAILURE'
+
+
+def test_projection_preserves_v2_abstention_and_shadow_difference_without_calling_it_fallback():
+    value = sample(passed=False)
+    guidance = value['turns'][0]['result']['events'][0]
+    guidance.update(anchor=None, fallback=False, abstained=True, node_ids=[], retrieved_edge_ids=[], edge_ids=[],
+                    guidance='', status='SKIPPED', reason='LOCALIZATION_ABSTAINED', subgraph=None,
+                    localization={'algorithm': 'trajectory-state-v2', 'status': 'ABSTAINED',
+                                  'reason': 'NO_CANDIDATE', 'confidence': 0,
+                                  'candidates': [], 'excluded_edge_ids': [],
+                                  'shadow': {'algorithm': 'action-anchor-v1', 'anchor': 'answer_faq',
+                                             'fallback': True, 'node_ids': [], 'edge_ids': []}})
+    value['turns'][0]['result']['events'] = [guidance]
+    projection = project_sample_evidence(value)
+    localization = projection['turns'][0]['interventions'][0]['localization']
+    assert localization['abstained'] is True and localization['fallback'] is False
+    assert localization['shadow_changed'] is True
+    assert projection['summary']['failure_stage'] == 'LOCALIZATION_ABSTAINED'
+    assert projection['summary']['localization_abstentions'] == 1
+    assert projection['summary']['shadow_fallbacks'] == 1

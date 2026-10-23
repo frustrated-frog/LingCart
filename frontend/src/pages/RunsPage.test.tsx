@@ -112,4 +112,21 @@ describe('RunsPage PG evidence', () => {
     expect(screen.getByText('上下文不足，未送入决策')).toBeInTheDocument()
     expect(screen.queryByText('已送入决策')).not.toBeInTheDocument()
   })
+
+  it('shows v2 low-confidence abstention and the non-acting v1 shadow result', async () => {
+    vi.spyOn(api, 'runs').mockResolvedValue({ runs: [summary] })
+    vi.spyOn(api, 'run').mockResolvedValue({ ...detail, checkpoint: { context: { procedural_graph: {
+      graph_id: 'lingcart-pg', version: 1, sha256: 'frozen-graph',
+    } } }, result: { trace: [], events: [
+      { type: 'pg_guidance', sequence: 1, decision_key: 'abstained', status: 'SKIPPED',
+        anchor: null, fallback: false, abstained: true, guidance: '', edge_ids: [], reason: 'LOCALIZATION_ABSTAINED',
+        localization: { algorithm: 'trajectory-state-v2', confidence: 0,
+          shadow: { anchor: 'answer_faq', fallback: true } } },
+    ] } })
+    renderPage()
+    fireEvent.click(await screen.findByRole('tab', { name: '程序图指导' }))
+    expect(screen.getAllByText(/主动弃权/).length).toBeGreaterThan(0)
+    expect(screen.getByText('轨迹证据不足，定位器主动弃权')).toBeInTheDocument()
+    expect(screen.getByText(/v1 影子：answer_faq（全图回退）/)).toBeInTheDocument()
+  })
 })

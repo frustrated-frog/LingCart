@@ -12,7 +12,7 @@ from src.pg_learning import EvolutionSpec, ModelGraphRefiner, evolve, write_arti
 from src.procedural_graph import ProceduralGraph, fingerprint
 
 ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_SPEC = ROOT / "research/experiments/pg-context-v1/evolution-spec.json"
+DEFAULT_SPEC = ROOT / "research/experiments/pg-localization-v2/evolution-spec.json"
 DEFAULT_GRAPH = ROOT / "research/graphs/pg-seed-v1.json"
 PROFILE_TEMPLATE = ROOT / "configs/harness/adaptive-pg-context-v2.json"
 
@@ -68,7 +68,7 @@ def main(argv=None):
     retained, report = evolve(graph, spec, evaluator=evaluator, refiner=ModelGraphRefiner(), output_dir=output)
     write_artifact(output / "retained-profile.json", profiles[retained.fingerprint].model_dump(mode="json"))
     # 冻结后的 test 对照契约：区分 PG 指导效果与图演化效果。
-    template = json.loads((ROOT / "research/experiments/pg-context-v1/experiment-spec.json").read_text())
+    template = json.loads((ROOT / "research/experiments/pg-localization-v2/experiment-spec.json").read_text())
     for label, baseline in (("baseline", "adaptive-v1"), ("static", "adaptive-pg-context-v1")):
         contract = json.loads(json.dumps(template))
         contract.update(experiment_id=f"pg-evolved-vs-{label}", baseline_profile=baseline,
