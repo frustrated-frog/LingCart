@@ -349,7 +349,70 @@ def _validate_tool(decision, state, plan, history):
         sources = [state['request'], *(str(m.content) for m in history or [] if getattr(m, 'type', None) == 'human')]
         if not any(re.search(r'(?<!\d)' + str(args['order_id']) + r'(?!\d)', source) for source in sources):
             raise AgentError('UNGROUNDED_PLAN_ENTITY', '订单编号必须来自用户', retryable=False)
-    return args
+    provenance = {}
+    if decision.tool in {'search_products', 'discover_products'}:
+        from src.capability_registry import get_capability_registry
+
+        kind = PRODUCT_SEARCH if decision.tool == 'search_products' else PRODUCT_DISCOVERY
+        sources = tuple([state['request'], *(str(message.content) for message in history or []
+                                             if getattr(message, 'type', None) == 'human')])
+        registry = get_capability_registry()
+        accepted = set(registry.registration(kind).spec.accepted_fields)
+        normalizable = {name: value for name, value in args.items() if name in accepted}
+        normalized, provenance = registry.normalize_arguments({
+            'id': f'adaptive-{decision.tool}',
+            'kind': kind,
+            'source_quote': state['request'],
+            **normalizable,
+        }, sources)
+        args = {**args, **{name: normalized[name] for name in normalizable}}
+    return args, provenance
+
+
+def _normalize_goal_catalog_aliases(goal, request, history):
+    """Resolve category aliases through trusted catalog metadata, never model guesswork."""
+    from src.capability_registry import get_capability_registry
+
+    payload = goal_payload(goal)
+    sources = tuple([request, *(str(message.content) for message in history or []
+                               if getattr(message, 'type', None) == 'human')])
+    registry = get_capability_registry()
+    provenance = {}
+    rows = [(f'global:{index}', constraint)
+            for index, constraint in enumerate(payload.get('hard_constraints', []))]
+    rows.extend((f"objective:{objective['id']}:{index}", constraint)
+                for objective in payload.get('objectives', [])
+                for index, constraint in enumerate(objective.get('hard_constraints', [])))
+    for reference, constraint in rows:
+        value = constraint.get('value')
+        if constraint.get('field') != 'category' or constraint.get('catalog_concept') is not None:
+            continue
+        values = value if isinstance(value, list) else [value]
+        normalized_values = []
+        entries = []
+        for item in values:
+            if not isinstance(item, str) or not item:
+                normalized_values.append(item)
+                continue
+            normalized, resolved = registry.normalize_arguments({
+                'id': f'adaptive-goal-{reference}',
+                'kind': PRODUCT_SEARCH,
+                'source_quote': constraint['source_quote'],
+                'category': item,
+            }, sources)
+            normalized_values.append(normalized['category'])
+            if 'category' in resolved:
+                entries.append(resolved['category'])
+        normalized_value = normalized_values if isinstance(value, list) else normalized_values[0]
+        constraint['value'] = normalized_value
+        if entries:
+            provenance[reference] = {
+                'field': 'category',
+                'raw_value': deepcopy(value),
+                'normalized_value': deepcopy(normalized_value),
+                'resolutions': entries,
+            }
+    return payload, provenance
 
 
 def _accept(context, recorder, state, plan, decision, history):
@@ -371,9 +434,13 @@ def _accept(context, recorder, state, plan, decision, history):
             validate_command_grounding(decision.commands, state['request'], history)
             state['dialogue_commands'] = [command.model_dump() for command in decision.commands]
         validate_goal(decision.goal, state['request'], history)
+        accepted_goal, goal_provenance = _normalize_goal_catalog_aliases(
+            decision.goal, state['request'], history)
+        if goal_provenance:
+            recorder.record('goal_arguments_normalized', provenance=deepcopy(goal_provenance))
         if decision.action != 'clarify':
             from src.request_audit import review_request
-            proposed = {**state, 'goal': goal_payload(decision.goal)}
+            proposed = {**state, 'goal': accepted_goal}
             audit = review_request(context, proposed, plan, history, phase='goal')
             state['audit_attempts'] = [*state.get('audit_attempts', []), audit]
             if audit['verdict'] != 'APPROVED':
@@ -382,11 +449,13 @@ def _accept(context, recorder, state, plan, decision, history):
                 raise AgentError('REQUEST_AUDIT_REJECTED', '独立审查未确认需求覆盖与语义，不能执行当前目标', retryable=False)
             state['request_audit'] = audit
             state.pop('audit_format_feedback', None)
-        state['goal'] = goal_payload(decision.goal)
+        state['goal'] = accepted_goal
         state['objective_ledger'] = new_ledger(state['goal'])
         plan.goals = [o['id'] for o in state['goal']['objectives']]
-    elif decision.goal is not None and goal_payload(decision.goal) != state['goal']:
-        raise AgentError('GOAL_CHANGE_REQUIRES_USER', '没有新用户指令时不能修改目标或硬约束', retryable=False)
+    elif decision.goal is not None:
+        normalized_goal, _ = _normalize_goal_catalog_aliases(decision.goal, state['request'], history)
+        if normalized_goal != state['goal']:
+            raise AgentError('GOAL_CHANGE_REQUIRES_USER', '没有新用户指令时不能修改目标或硬约束', retryable=False)
     surface = state.get('decision_surface') or {}
     if surface.get('mode') != 'full' and surface.get('allowed_actions'):
         if decision.action not in set(surface['allowed_actions']):
@@ -419,8 +488,13 @@ def _accept(context, recorder, state, plan, decision, history):
         state['next_steps'] = decision.next_steps
     step = None
     if decision.action == 'tool':
-        args = _validate_tool(decision, state, plan, history)
-        step = TaskStep(f'step-{len(plan.steps) + 1}', 'shopping', decision.tool, args)
+        args, argument_provenance = _validate_tool(decision, state, plan, history)
+        step = TaskStep(f'step-{len(plan.steps) + 1}', 'shopping', decision.tool, args,
+                        argument_provenance=argument_provenance)
+        if argument_provenance:
+            recorder.record('tool_arguments_normalized', tool=decision.tool,
+                raw_args=deepcopy(decision.args), normalized_args=deepcopy(args),
+                argument_provenance=deepcopy(argument_provenance))
     elif decision.action == 'inspect':
         step = TaskStep(f'step-{len(plan.steps) + 1}', 'shopping', 'read_evidence',
                         dict(reference=decision.evidence_ref, offset=decision.offset, limit=decision.limit))

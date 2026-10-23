@@ -163,6 +163,31 @@ def test_missing_explanatory_reason_does_not_block_a_valid_read(monkeypatch):
     assert result['status'] == 'SUCCEEDED', result
 
 
+def test_adaptive_search_normalizes_grounded_catalog_alias_with_provenance(monkeypatch):
+    keyboard_goal = goal(
+        summary='选购键盘',
+        objectives=[dict(id='shopping', description='推荐键盘', source_quote='键盘', kind='recommend')],
+        hard_constraints=[
+            dict(description='键盘品类', source_quote='键盘', field='category', op='eq', value='keyboard'),
+            dict(description='预算上限400', source_quote='预算400', field='price', op='lte', value=400),
+        ],
+    )
+    first = dict(action='tool', reason='查询真实目录', goal=keyboard_goal, tool='search_products',
+                 args=dict(query='键盘', category='keyboard', max_price=400, limit=2))
+    model(monkeypatch, first, recommendation)
+
+    result = run_adaptive('推荐预算400的键盘')
+
+    assert result['status'] == 'SUCCEEDED', result
+    search_step = next(step for step in result['plan']['steps'] if step['tool'] == 'search_products')
+    assert search_step['args']['category'] == '键盘'
+    assert search_step['argument_provenance']['category']['raw_text'] == 'keyboard'
+    assert search_step['argument_provenance']['category']['normalized_value'] == '键盘'
+    normalized = next(event for event in result['events'] if event['type'] == 'tool_arguments_normalized')
+    assert normalized['raw_args']['category'] == 'keyboard'
+    assert normalized['normalized_args']['category'] == '键盘'
+
+
 def test_repeated_refreshes_do_not_create_artificial_dependency_depth():
     from src.adaptive import _selection_step
     from src.adaptive_decision import Decision
