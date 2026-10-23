@@ -1,0 +1,74 @@
+{
+  "schema_version": 1,
+  "experiment_id": "pg-challenge-v1-live-smoke-2026-10-24",
+  "dataset_sha256": "4c5fef11e60664d7ca61ca3f98c9111d3b8971e6e3a55ccb17e2d799a14fc2f0",
+  "seed_graph_sha256": "1a809550753df75be2ecfb3b9ec7edce38f3bd3ac5acf90982728e3768615d81",
+  "execution_source": "live_provider",
+  "provider_role": "openai_compatible",
+  "model": "deepseek-flash",
+  "claim_scope": "流程冒烟，不构成收益结论",
+  "runs": [
+    {
+      "job_id": "pg-ce04a14e218b4d19873d16f002542cc9",
+      "source_revision": "7139a3e",
+      "status": "COMPLETED",
+      "completed_samples": 5,
+      "model_attempts": 27,
+      "token_units": 72870,
+      "evolution": {
+        "status": "REJECTED",
+        "reason": "INVALID_PROPOSAL_OR_REPORT",
+        "error_type": "ValidationError",
+        "root_cause": "否定式安全要求被错误识别为放宽硬约束",
+        "retained_graph_sha256": "1a809550753df75be2ecfb3b9ec7edce38f3bd3ac5acf90982728e3768615d81"
+      },
+      "test_arms": {
+        "baseline": {"success_rate": 0.0, "model_attempts": 3, "tool_calls": 2, "total_tokens": 10014},
+        "seed": {"success_rate": 0.0, "model_attempts": 8, "tool_calls": 5, "total_tokens": 22567},
+        "evolved": {"success_rate": 0.0, "model_attempts": 3, "tool_calls": 1, "total_tokens": 8064}
+      },
+      "gate_passed": false,
+      "conclusion": "SMOKE_ONLY"
+    },
+    {
+      "job_id": "pg-8a23a199fb32480fb8526556a7794a95",
+      "source_revision": "d8c8b11",
+      "status": "COMPLETED",
+      "completed_samples": 6,
+      "model_attempts": 34,
+      "token_units": 87599,
+      "evolution": {
+        "status": "ACCEPTED",
+        "reason": "VALIDATION_NON_REGRESSION",
+        "validation_success_rate_before": 0.0,
+        "validation_success_rate_after": 0.0,
+        "validation_model_attempts_before": 8,
+        "validation_model_attempts_after": 3,
+        "retained_graph_sha256": "89e674186a063edfa4f816ae4b4d724401bc51b1d0404ed41116dd2c2c8a06e6"
+      },
+      "test_arms": {
+        "baseline": {"success_rate": 0.0, "model_attempts": 2, "tool_calls": 1, "total_tokens": 8385},
+        "seed": {"success_rate": 0.0, "model_attempts": 6, "tool_calls": 2, "total_tokens": 13342},
+        "evolved": {"success_rate": 0.0, "model_attempts": 7, "tool_calls": 4, "total_tokens": 16878}
+      },
+      "failure_stages": {
+        "baseline": "BASELINE_TASK_FAILURE",
+        "seed": "NO_FOLLOWUP_DECISION",
+        "evolved": "LOCALIZATION_FALLBACK"
+      },
+      "gate_passed": false,
+      "gate_failures": {
+        "seed": ["tool_calls 退化", "模型尝试成本超过预设上限"],
+        "evolved": ["tool_calls 退化"]
+      },
+      "conclusion": "SMOKE_ONLY"
+    }
+  ],
+  "final_assessment": {
+    "pipeline_closed": true,
+    "behavior_changed": true,
+    "benefit_demonstrated": false,
+    "promotion_status": "candidate",
+    "next_single_variable": "轨迹状态感知的节点定位与局部子图检索"
+  }
+}
