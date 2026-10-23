@@ -194,7 +194,7 @@ python eval/run_live_eval.py --harness-profile adaptive-v1 --split test --repeat
 
 第一版 ACE（Agentic Context Engineering）纵向切片已经接入：现有 adaptive Agent 产生真实执行轨迹，离线 Reflector/Curator 只从 `dev` 环境反馈增量构建不可变 Playbook，候选 Profile 在 `test` 时只读加载固定版本。它与用户偏好、业务事实和权限分仓，独立审查不会接收 Playbook；代码门禁拒绝具体商品/订单事实和放宽硬约束的策略。
 
-PG（Procedural Graphs）当前通过 `adaptive-pg-context-v2` 候选装配。它从持久化目标账本、最近行动、工具结果和未完成目标定位有界局部图；低置信时主动弃权，并以不参与决策的 v1 影子结果记录定位差异。独立指导模型只读取检索后的关系；离线 Refiner 仍从训练轨迹提出图修改，并在互斥 dev 验证案例上决定保留或拒绝。运行检查的“程序图指导”页展示冻结版本、定位置信度、影子差异、关系条件、实际暴露状态和后续行动。`venv/bin/python eval/run_pg_localization_eval.py --gate` 可零调用验证定位契约；`venv/bin/python -m eval.run_pg_evolution` 默认只验证演化配置，真实学习须显式 `--live`。设计与研究边界见 [轨迹状态感知程序图检索设计](docs/轨迹状态感知程序图检索设计.md)。
+PG（Procedural Graphs）当前提供两个研究候选：`adaptive-pg-context-v2` 用持久化目标账本、最近行动、工具结果和未完成目标定位有界局部图；`adaptive-pg-context-v3` 冻结同一定位器，进一步把局部图编译成零额外模型调用的指导契约，并在工具提交前记录采用、偏离或精确无进展重放阻断。低置信定位仍主动弃权，v1 定位器只作为不参与决策的影子对照。运行检查和论文实验室展示图版本、定位置信度、契约生成方式、额外模型调用、采用审查及实际工具结果。`venv/bin/python eval/run_pg_localization_eval.py --gate` 验证定位边界，`venv/bin/python eval/run_pg_guidance_eval.py --gate` 验证指导契约；两者均为零模型调用的机制测试，不能替代真实收益评测。离线 Refiner 和显式 `--live` 演化入口保持不变。设计见 [轨迹状态感知程序图检索设计](docs/轨迹状态感知程序图检索设计.md) 与 [程序图指导契约与采用闭环设计](docs/程序图指导契约与采用闭环设计.md)。
 
 论文实验室新增 [PG 挑战实验台](docs/程序图挑战实验台设计.md)（`/experiments/pg`）：18 个独立情境分为训练、验证、测试各 6 项；支持有预算的真实实验启动、停止、图修改审查、无 PG／种子图／演化图对照和逐样本证据。低成本冒烟只从三个分组各取一个冻结情境，共最多 6 个样本，并把“定位→检索→指导→行动→工具与核验”投影为持久证据；预算和失败分类见 [程序图真实模型闭环设计](docs/程序图真实模型闭环设计.md)。实验状态与失败结果均持久化，冒烟及脚本测试结果不作为收益结论。
 
