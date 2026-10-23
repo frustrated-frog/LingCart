@@ -13,7 +13,10 @@ const graph: PGCatalog['seed_graph'] = { graph_id: 'test-graph', version: 0, par
   nodes: [{ id: 'Start', kind: 'STATE', description: '开始' }, { id: 'End', kind: 'STATE', description: '结束' }],
   edges: [{ id: 'start-end', source: 'Start', target: 'End', relation: 'LEADS_TO', condition: '核验通过', guidance: '只有已核验才能结束', pitfalls: '不能提前结束' }] }
 const catalog: PGCatalog = { model_configured: true, plans: { smoke: plan, full: { ...plan, preset: 'full', max_samples: 180, max_model_attempts: 2886, max_token_units: 49_000_000 } },
-  seed_graph: graph, current_identity: {}, dataset: { cases: [{ id: 'PG13', learning_partition: 'test', scenario_family: 'empty-policy', category: '空结果恢复', description: '查找键盘并说明政策' }] } }
+  seed_graph: graph, current_identity: {}, dataset: { cases: [
+    { id: 'PG13', learning_partition: 'test', scenario_family: 'empty-policy', category: '空结果恢复', description: '查找键盘并说明政策' },
+    { id: 'PG14', learning_partition: 'test', scenario_family: 'hidden-full-only', category: '工具选择', description: '完整实验才展示的案例' },
+  ] } }
 const job: PGJob = { job_id: 'pg-test-job', created_at: '2026-10-23T01:00:00Z', preset: 'smoke', status: 'COMPLETED', stage: 'completed', completed_samples: 30,
   frozen: plan, stage_completed: 6, stage_total: 6, cancel_requested: false, stale: false, identity: {}, execution_source: 'live_provider',
   history: [{ iteration: 1, status: 'REJECTED', reason: 'VALIDATION_REGRESSION', parent_sha256: 'seed', retained_sha256: 'seed',
@@ -42,6 +45,7 @@ it('shows real empty state and bounded paid launch without invented metrics', as
   expect(screen.queryByText('0.0%')).not.toBeInTheDocument()
   expect(screen.getByText('只有已核验才能结束')).toBeInTheDocument()
   expect(screen.getByText('查找键盘并说明政策')).toBeInTheDocument()
+  expect(screen.queryByText('完整实验才展示的案例')).not.toBeInTheDocument()
 })
 it('keeps idempotency key when retrying a failed launch', async () => {
   vi.mocked(api.pgJob).mockResolvedValue({ ...job, status: 'QUEUED' })

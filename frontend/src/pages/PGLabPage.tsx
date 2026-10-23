@@ -216,7 +216,7 @@ export function PGLabPage() {
     <SectionHeading index="03" title="挑战集覆盖" note={`数据指纹 ${frozen.dataset_sha256.slice(0, 16)}`} />
     <div className="pg-partitions" role="tablist" aria-label="数据分组">{partitions.map(([id, title, note]) => <button key={id} role="tab" aria-selected={partition === id} onClick={() => setPartition(id)}>
       <strong>{title} <span>{frozen.groups[id].length}</span></strong><small>{note}</small></button>)}</div>
-    <div className="pg-task-grid">{(job?.cases ?? data.dataset.cases).filter(c => c.learning_partition === partition).map(c => <article key={c.id}><div><code>{c.id}</code><span>{c.category}</span></div><p>{c.description}</p><small>{c.scenario_family}</small></article>)}</div>
+    <div className="pg-task-grid">{(job?.cases ?? data.dataset.cases).filter(c => c.learning_partition === partition && frozen.groups[partition].includes(c.id)).map(c => <article key={c.id}><div><code>{c.id}</code><span>{c.category}</span></div><p>{c.description}</p><small>{c.scenario_family}</small></article>)}</div>
     <SectionHeading index="04" title="样本证据" note="包括失败、停止前已完成的样本" />
     {!samples.data?.samples.length ? <div className="pg-empty"><div><strong>尚无已完成样本</strong><p>每个样本结束后立即落盘，实验中断也能继续查看。</p></div></div> : <>
       <div className="pg-samples"><table><thead><tr><th>阶段</th><th>案例 / 重复</th><th>结果</th><th>判分原因</th><th>轨迹</th></tr></thead><tbody>{samples.data.samples.map(s => <tr key={key(s)}>
