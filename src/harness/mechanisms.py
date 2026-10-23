@@ -230,5 +230,11 @@ def built_in_mechanisms() -> tuple[HarnessMechanism, ...]:
                           ("src/native_protocol.py", "src/runtime.py")),
         LivePlanSteeringMechanism(),
         PGContextMechanism(),
+        PGContextMechanism(
+            mechanism_version="2",
+            retrieval_strategy="trajectory-state-v2",
+            max_local_edges=6,
+            min_localization_score=55,
+        ),
     )
 

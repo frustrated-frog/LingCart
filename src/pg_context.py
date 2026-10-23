@@ -13,6 +13,12 @@ from src.context_engine import ContextEngine
 from src.errors import AgentError
 from src.llm import get_llm
 from src.procedural_graph import FrozenModel, ProceduralGraph, canonical, fingerprint
+from src.pg_retrieval import (
+    bounded_trajectory_snapshot,
+    build_trajectory_state,
+    retrieve_state_aware,
+    shadow_action_anchor,
+)
 from src.runtime import current_runtime
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -53,14 +59,22 @@ class PGContextMechanism:
     mechanism_id: str = "procedural-graph-context"
     mechanism_version: str = "1"
     compatible_engines: tuple[str, ...] = ("adaptive",)
-    source_files: tuple[str, ...] = ("src/procedural_graph.py", "src/pg_context.py", "src/context_engine.py")
+    source_files: tuple[str, ...] = (
+        "src/procedural_graph.py", "src/pg_retrieval.py", "src/pg_context.py", "src/context_engine.py",
+    )
     graph_path: str | None = None
     graph_sha256: str | None = None
     hops: int = 2
     max_graph_chars: int = 10000
+    retrieval_strategy: str = "action-anchor-v1"
+    max_local_edges: int = 6
+    min_localization_score: int = 55
 
     def configure(self, configuration):
-        if set(configuration) != {"graph_path", "hops", "max_graph_chars"}:
+        base_keys = {"graph_path", "hops", "max_graph_chars"}
+        v2_keys = base_keys | {"retrieval_strategy", "max_local_edges", "min_localization_score"}
+        expected = v2_keys if self.mechanism_version == "2" else base_keys
+        if set(configuration) != expected:
             raise ValueError("PG 必须冻结图路径、跳数和图上下文预算")
         path = configuration["graph_path"]
         if (not isinstance(path, str) or PurePosixPath(path).is_absolute() or ".." in PurePosixPath(path).parts
@@ -72,13 +86,25 @@ class PGContextMechanism:
             raise ValueError("PG 跳数无效")
         if type(configuration["max_graph_chars"]) is not int or not 512 <= configuration["max_graph_chars"] <= 16000:
             raise ValueError("PG 图预算无效")
+        if self.mechanism_version == "2":
+            if configuration["retrieval_strategy"] != "trajectory-state-v2":
+                raise ValueError("PG v2 必须使用轨迹状态定位")
+            if type(configuration["max_local_edges"]) is not int or not 1 <= configuration["max_local_edges"] <= 16:
+                raise ValueError("PG 局部图边数无效")
+            if (type(configuration["min_localization_score"]) is not int
+                    or not 1 <= configuration["min_localization_score"] <= 100):
+                raise ValueError("PG 定位置信阈值无效")
         graph = ProceduralGraph.from_path(ROOT / path)
         return replace(self, **configuration, graph_sha256=graph.fingerprint)
 
     @property
     def configuration(self):
-        return {"graph_path": self.graph_path, "graph_sha256": self.graph_sha256,
-                "hops": self.hops, "max_graph_chars": self.max_graph_chars}
+        result = {"graph_path": self.graph_path, "graph_sha256": self.graph_sha256,
+                  "hops": self.hops, "max_graph_chars": self.max_graph_chars}
+        if self.mechanism_version == "2":
+            result.update(retrieval_strategy=self.retrieval_strategy, max_local_edges=self.max_local_edges,
+                          min_localization_score=self.min_localization_score)
+        return result
 
     def install(self, context):
         context.mechanisms[self.slot] = self
@@ -96,12 +122,21 @@ class PGContextMechanism:
             raise AgentError("PG_ARTIFACT_CHANGED", "冻结程序图已变化，请创建新版本 Profile", retryable=False)
         base = ContextEngine(goal, preferences=preferences, observations=observations, revision=revision,
                              mechanism_id=self.mechanism_id)
-        return PGContextEngine(base, graph, hops=self.hops, max_graph_chars=self.max_graph_chars)
+        return PGContextEngine(base, graph, hops=self.hops, max_graph_chars=self.max_graph_chars,
+                               mechanism_version=self.mechanism_version,
+                               retrieval_strategy=self.retrieval_strategy,
+                               max_local_edges=self.max_local_edges,
+                               min_localization_score=self.min_localization_score / 100)
 
 
 class PGContextEngine:
-    def __init__(self, base, graph, *, hops=2, max_graph_chars=10000):
+    def __init__(self, base, graph, *, hops=2, max_graph_chars=10000, mechanism_version="1",
+                 retrieval_strategy="action-anchor-v1", max_local_edges=6, min_localization_score=0.55):
         self.base, self.graph, self.hops, self.max_graph_chars = base, graph, hops, max_graph_chars
+        self.mechanism_version = mechanism_version
+        self.retrieval_strategy = retrieval_strategy
+        self.max_local_edges = max_local_edges
+        self.min_localization_score = min_localization_score
 
     def __getattr__(self, name):
         return getattr(self.base, name)
@@ -111,26 +146,23 @@ class PGContextEngine:
             "graph_id": self.graph.graph_id, "version": self.graph.version, "sha256": self.graph.fingerprint}}
 
     def _guidance(self, runtime, state, plan, max_chars):
-        # 已提交行动是定位依据；用户改目标后从 Start 重新定位。
-        actions = [e for e in runtime.events if e.get("type") == "adaptive_decision"
-                   and e.get("goal_revision", 0) == state["goal_revision"]]
-        if state.get("goal") is None:
-            actions = []
-        steps = {s.step_id: s for s in plan.steps}
-        recent = []
-        for event in actions[-3:]:
-            decision = event["decision"]
-            step = steps.get(event.get("step_id"))
-            observation = canonical(step.result) if step and step.result is not None else ""
-            recent.append({"action": decision.get("tool") or decision["action"],
-                           "decision": decision, "observation": observation[:1600],
-                           "observation_truncated": len(observation) > 1600,
-                           "status": step.status if step else None})
-        selection = self.graph.retrieve(recent[-1]["action"] if recent else "Start", hops=self.hops)
+        trajectory = build_trajectory_state(state, plan, runtime.events)
+        if self.retrieval_strategy == "trajectory-state-v2":
+            selection = retrieve_state_aware(self.graph, trajectory, hops=self.hops,
+                max_edges=self.max_local_edges, min_score=self.min_localization_score)
+            shadow = shadow_action_anchor(self.graph, trajectory, hops=self.hops)
+        else:
+            actions = trajectory["recent_actions"] if state.get("goal") is not None else []
+            selection = self.graph.retrieve(actions[-1]["action"] if actions else "Start", hops=self.hops)
+            selection.update(algorithm="action-anchor-v1", status="FALLBACK" if selection["fallback"] else "LOCALIZED",
+                             reason="UNKNOWN_ACTION" if selection["fallback"] else "LAST_ACTION",
+                             confidence=1.0 if not selection["fallback"] else 0.0,
+                             abstained=False, candidates=[])
+            shadow = None
         payload = {"request": state["request"], "goal": state.get("goal"),
-                   "feedback": state.get("feedback"), "recent_steps": recent, "subgraph": selection}
+                   "feedback": state.get("feedback"), "trajectory_state": trajectory, "subgraph": selection}
         key = fingerprint({"graph": self.graph.fingerprint, "payload": payload,
-                           "action_sequence": actions[-1].get("sequence") if actions else None,
+                           "retrieval_strategy": self.retrieval_strategy,
                            "version": state.get("version"), "revision": state["goal_revision"],
                            "binding_revision": state.get("binding_revision", 0)})
         # 事件与模型响应同属持久状态。即使进程在 solver 决策前退出，也复用指导和游标。
@@ -142,24 +174,26 @@ class PGContextEngine:
         event = {"decision_key": key, "graph_sha256": self.graph.fingerprint,
                  "graph_id": self.graph.graph_id, "graph_version": self.graph.version,
                  "anchor": selection["anchor"], "fallback": selection["fallback"],
+                 "abstained": selection.get("abstained", False),
                  "node_ids": [n["id"] for n in selection["nodes"]],
                  "edge_ids": [], "retrieved_edge_ids": [e["id"] for e in selection["edges"]],
                  "subgraph": selection if len(canonical(selection)) <= self.max_graph_chars else None,
-                 "state_snapshot": {
-                     "goal_revision": state["goal_revision"],
-                     "goal": state.get("goal"),
-                     "feedback": state.get("feedback"),
-                     "recent_steps": recent,
-                     "unfinished_plan_steps": [
-                         {"step_id": step.step_id, "tool": step.tool, "status": step.status,
-                          "objective_id": step.objective_id}
-                         for step in plan.steps if step.status not in {"COMPLETED", "FAILED", "SKIPPED"}
-                     ],
+                 "localization": {
+                     "algorithm": selection.get("algorithm", self.retrieval_strategy),
+                     "status": selection.get("status"),
+                     "reason": selection.get("reason"),
+                     "confidence": selection.get("confidence"),
+                     "candidates": selection.get("candidates", []),
+                     "excluded_edge_ids": selection.get("excluded_edge_ids", []),
+                     "shadow": shadow,
                  },
+                 "state_snapshot": bounded_trajectory_snapshot(trajectory),
                  "guidance": "", "status": "SKIPPED", "reason": None}
         cached_model = str(runtime.model_cursor + 1) in runtime.models
         if len(canonical(selection)) > self.max_graph_chars or len(canonical(payload)) + len(GUIDANCE_PROMPT) > max_chars:
             event["reason"] = "CONTEXT_BUDGET"
+        elif selection.get("abstained"):
+            event["reason"] = "LOCALIZATION_ABSTAINED"
         elif not selection["edges"]:
             event["reason"] = "NO_OUTGOING_EDGES"
         elif not cached_model and runtime.limits.max_model_calls - runtime.counters["model_calls"] < 3:
@@ -204,7 +238,8 @@ class PGContextEngine:
         if exposed:
             messages = [messages[0], advice, *messages[1:]]
             runtime.record("mechanism_applied", slot="context", mechanism_id="procedural-graph-context",
-                mechanism_version="1", graph_sha256=self.graph.fingerprint, decision_key=event["decision_key"],
+                mechanism_version=self.mechanism_version, graph_sha256=self.graph.fingerprint,
+                decision_key=event["decision_key"],
                 edge_ids=event["edge_ids"])
         manifest.update(pg_graph_sha256=self.graph.fingerprint, pg_decision_key=event["decision_key"],
                         pg_edge_ids=event["edge_ids"] if exposed else [],

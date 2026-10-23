@@ -14,10 +14,11 @@ from src.procedural_graph import ProceduralGraph, fingerprint
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_SPEC = ROOT / "research/experiments/pg-context-v1/evolution-spec.json"
 DEFAULT_GRAPH = ROOT / "research/graphs/pg-seed-v1.json"
+PROFILE_TEMPLATE = ROOT / "configs/harness/adaptive-pg-context-v2.json"
 
 
 def graph_profile(graph, path):
-    payload = json.loads((ROOT / "configs/harness/adaptive-pg-context-v1.json").read_text())
+    payload = json.loads(PROFILE_TEMPLATE.read_text())
     payload["profile_id"] = f"pg-{graph.fingerprint[:16]}-{fingerprint(str(path))[:8]}"
     payload["display_name"] = f"PG 冻结图版本 {graph.version} 候选"
     for mechanism in payload["mechanisms"]:

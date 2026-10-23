@@ -172,9 +172,73 @@ def test_steering_invalidates_guidance_and_old_action_anchor(monkeypatch):
     assert json.loads(model.inputs[-1][-1].content)["subgraph"]["anchor"] == "Start"
 
 
+def test_v2_localization_uses_structured_trajectory_and_keeps_v1_as_non_acting_shadow(monkeypatch):
+    model = Guide({"guidance": "读取完整候选证据", "edge_ids": ["search-inspect"]})
+    monkeypatch.setattr("src.pg_context.get_llm", lambda **_: model)
+    context = RunRuntime("pg-v2", BudgetLimits(max_model_calls=5))
+    context.record("adaptive_decision", goal_revision=0,
+                   decision={"action": "tool", "tool": "search_products"}, step_id="s1")
+    context.record("adaptive_decision", goal_revision=0,
+                   decision={"action": "tool", "tool": "answer_faq"}, step_id="s2")
+    plan = TaskPlan([], [
+        TaskStep("s1", "shopping", "search_products", {}, status="SUCCEEDED", result={"products": []}),
+        TaskStep("s2", "faq", "answer_faq", {}, status="SUCCEEDED", result={"answer": "七天"}),
+    ])
+    current = {**state(), "goal": {"objectives": [
+        {"id": "recommendation", "kind": "recommend"}, {"id": "policy", "kind": "answer_faq"},
+    ]}, "objective_ledger": [
+        {"objective_id": "recommendation", "status": "PENDING", "evidence_refs": [], "failures": []},
+        {"objective_id": "policy", "status": "VERIFIED", "evidence_refs": ["s2"], "failures": []},
+    ]}
+    engine = PGContextEngine(ContextEngine("推荐键盘并解释退货政策"), graph(),
+        mechanism_version="2", retrieval_strategy="trajectory-state-v2")
+    with runtime_scope(context):
+        _, manifest = engine.decision_messages("系统", current, plan, [], max_chars=10000)
+    event = next(item for item in context.events if item["type"] == "pg_guidance")
+    assert event["anchor"] == "search_products" and event["fallback"] is False
+    assert event["localization"]["algorithm"] == "trajectory-state-v2"
+    assert event["localization"]["shadow"]["anchor"] == "answer_faq"
+    assert event["localization"]["shadow"]["fallback"] is True
+    assert len(event["retrieved_edge_ids"]) < len(graph().edges)
+    assert manifest["pg_status"] == "EXPOSED"
+
+
+def test_v2_low_confidence_abstention_skips_guidance_model(monkeypatch):
+    model = Guide()
+    monkeypatch.setattr("src.pg_context.get_llm", lambda **_: model)
+    context = RunRuntime("pg-v2", BudgetLimits(max_model_calls=4))
+    context.record("adaptive_decision", goal_revision=0,
+                   decision={"action": "tool", "tool": "answer_faq"}, step_id="s1")
+    plan = TaskPlan([], [TaskStep("s1", "faq", "answer_faq", {}, status="SUCCEEDED", result={"answer": "七天"})])
+    current = {**state(), "goal": {"objectives": [{"id": "policy", "kind": "answer_faq"}]},
+               "objective_ledger": [{"objective_id": "policy", "status": "PENDING",
+                                      "evidence_refs": [], "failures": []}]}
+    engine = PGContextEngine(ContextEngine("解释退货政策"), graph(),
+        mechanism_version="2", retrieval_strategy="trajectory-state-v2")
+    with runtime_scope(context):
+        messages, manifest = engine.decision_messages("系统", current, plan, [], max_chars=10000)
+    event = next(item for item in context.events if item["type"] == "pg_guidance")
+    assert event["abstained"] is True and event["reason"] == "LOCALIZATION_ABSTAINED"
+    assert manifest["pg_status"] == "SKIPPED" and len(messages) == 2
+    assert model.inputs == [] and context.counters["model_calls"] == 0
+
+
 def test_profile_is_research_only_and_binds_immutable_artifact():
     runner = get_runner("adaptive-pg-context-v1")
     assert runner.build_context("推荐耳机").graph.fingerprint == graph().fingerprint
     assert runner.provenance()["research"]["status"] == "candidate"
     with pytest.raises(AgentError, match="仅限研究"):
         get_product_runner("adaptive-pg-context-v1")
+
+
+def test_v2_profile_changes_only_localization_strategy_and_remains_research_only():
+    v1 = get_runner("adaptive-pg-context-v1")
+    v2 = get_runner("adaptive-pg-context-v2")
+    v1_context = v1.build_context("推荐耳机")
+    v2_context = v2.build_context("推荐耳机")
+    assert v1_context.graph.fingerprint == v2_context.graph.fingerprint == graph().fingerprint
+    assert v1_context.retrieval_strategy == "action-anchor-v1"
+    assert v2_context.retrieval_strategy == "trajectory-state-v2"
+    assert v2.provenance()["research"]["status"] == "candidate"
+    with pytest.raises(AgentError, match="仅限研究"):
+        get_product_runner("adaptive-pg-context-v2")

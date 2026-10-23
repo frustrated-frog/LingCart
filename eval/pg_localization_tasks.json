@@ -1,0 +1,96 @@
+{
+  "schema_version": 1,
+  "suite": "pg_localization_contract",
+  "description": "仅验证结构化轨迹定位与局部图边界，不作为业务成功率或论文收益证据。",
+  "graph": "research/graphs/pg-seed-v1.json",
+  "cases": [
+    {
+      "id": "PGL01",
+      "description": "目标尚未建立",
+      "trajectory": {
+        "goal_defined": false,
+        "recent_actions": [],
+        "unresolved_objective_kinds": [],
+        "pending_steps": [],
+        "all_objectives_verified": false
+      },
+      "expected_anchor": "Start",
+      "required_edge_ids": ["start-goal"]
+    },
+    {
+      "id": "PGL02",
+      "description": "目标已建立但尚无行动",
+      "trajectory": {
+        "goal_defined": true,
+        "recent_actions": [],
+        "unresolved_objective_kinds": ["recommend"],
+        "pending_steps": [],
+        "all_objectives_verified": false
+      },
+      "expected_anchor": "set_goal",
+      "required_edge_ids": ["goal-search", "goal-clarify"]
+    },
+    {
+      "id": "PGL03",
+      "description": "空检索之后处理图外政策目标，仍需恢复推荐",
+      "trajectory": {
+        "goal_defined": true,
+        "recent_actions": [
+          {"action": "set_goal", "outcome": "SUCCESS"},
+          {"action": "search_products", "outcome": "EMPTY"},
+          {"action": "answer_faq", "outcome": "SUCCESS"}
+        ],
+        "unresolved_objective_kinds": ["recommend"],
+        "pending_steps": [],
+        "all_objectives_verified": false
+      },
+      "expected_anchor": "search_products",
+      "required_edge_ids": ["search-inspect", "inspect-recommend"]
+    },
+    {
+      "id": "PGL04",
+      "description": "完整证据已经读取，下一阶段应选择候选",
+      "trajectory": {
+        "goal_defined": true,
+        "recent_actions": [
+          {"action": "search_products", "outcome": "NON_EMPTY"},
+          {"action": "inspect", "outcome": "SUCCESS"}
+        ],
+        "unresolved_objective_kinds": ["recommend"],
+        "pending_steps": [],
+        "all_objectives_verified": false
+      },
+      "expected_anchor": "inspect",
+      "required_edge_ids": ["inspect-recommend", "recommend-complete"]
+    },
+    {
+      "id": "PGL05",
+      "description": "所有目标均已核验",
+      "trajectory": {
+        "goal_defined": true,
+        "recent_actions": [{"action": "recommend", "outcome": "SUCCESS"}],
+        "unresolved_objective_kinds": [],
+        "pending_steps": [],
+        "all_objectives_verified": true
+      },
+      "expected_anchor": "complete",
+      "required_edge_ids": ["complete-end"]
+    },
+    {
+      "id": "PGL06",
+      "description": "图不覆盖当前目标时必须弃权",
+      "trajectory": {
+        "goal_defined": true,
+        "recent_actions": [
+          {"action": "search_products", "outcome": "NON_EMPTY"},
+          {"action": "answer_faq", "outcome": "SUCCESS"}
+        ],
+        "unresolved_objective_kinds": ["answer_faq"],
+        "pending_steps": [],
+        "all_objectives_verified": false
+      },
+      "expected_anchor": null,
+      "required_edge_ids": []
+    }
+  ]
+}
