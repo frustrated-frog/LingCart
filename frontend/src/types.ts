@@ -626,9 +626,10 @@ export interface PGEdge {
   condition: string; guidance: string; pitfalls: string
 }
 export interface PGPlan {
-  preset: PGPreset; spec: { repeats: number; iterations: number; max_model_calls_per_run: number }
+  preset: PGPreset; spec: { repeats: number; iterations: number; max_model_calls_per_run: number
+    max_prompt_tokens_per_run?: number; max_completion_tokens_per_run?: number; max_seconds_per_run?: number }
   groups: Record<'train' | 'validation' | 'test', string[]>
-  max_samples: number; max_model_attempts: number; dataset_sha256: string; seed_sha256: string
+  max_samples: number; max_model_attempts: number; max_token_units: number | null; dataset_sha256: string; seed_sha256: string
 }
 export interface PGCatalog {
   dataset: { cases: { id: string; learning_partition: 'train' | 'validation' | 'test'; scenario_family: string; category: string; description: string }[] }
@@ -636,6 +637,23 @@ export interface PGCatalog {
 }
 export interface PGSample {
   stage: string; case_id: string; repetition: number; passed: boolean; failures: string[]
+  interventions: number; failure_stage: string | null
+}
+export interface PGIntervention {
+  intervention_id: string; graph: { graph_id: string; graph_version: number; graph_sha256: string }
+  localization: { anchor: string; fallback: boolean; node_ids: string[]; state_snapshot: Record<string, unknown>; sequence: number }
+  retrieval: { retrieved_edge_ids: string[]; selected_edge_ids: string[]; subgraph: { edges?: PGEdge[] } | null }
+  guidance: { status: string; reason: string | null; content: string; exposed: boolean; sequence: number }
+  decision: { sequence: number; source: string; payload: Record<string, unknown> } | null
+  action_alignment: { status: string; matched_edge_ids: string[]; expected_actions?: string[]; actual_action?: string; reason?: string }
+  tool: { name: string; args: Record<string, unknown>; status: string; sequence: number; result: unknown; invalid_result: boolean } | null
+  verification: Record<string, unknown> | null
+}
+export interface PGSampleDetail {
+  case_id: string; repetition: number; passed: boolean; [key: string]: unknown
+  pg_evidence?: { schema_version: number; summary: { interventions: number; exposed: number; aligned: number; diverged: number
+    unknown_alignment: number; localization_fallbacks: number; environment_triggered: boolean; recovered: boolean; failure_stage: string | null }
+    turns: { turn_index: number; request: string; passed: boolean; failures: string[]; interventions: PGIntervention[] }[] }
 }
 export interface PGSelection {
   iteration: number; status: string; reason: string; parent_sha256: string; candidate_sha256?: string; retained_sha256: string
@@ -654,7 +672,8 @@ export interface PGJobSummary {
 }
 export interface PGJob extends PGJobSummary {
   cases: PGCatalog['dataset']['cases']
-  learning_cost: { rollout_model_attempts: number; refiner_model_attempts: number; rollout_tokens: number | null }
+  learning_cost: { rollout_model_attempts: number; refiner_model_attempts: number; rollout_tokens: number | null; refiner_token_units: number }
+  budget_usage: { model_attempts: number | null; token_units: number | null }
   frozen: PGPlan; stage_completed: number; stage_total: number; cancel_requested: boolean; stale: boolean
   identity: Record<string, unknown>; execution_source: string; history: PGSelection[]; arms: Partial<Record<PGArm, PGArmResult>>
   error: string | null; error_type?: string | null; seed_graph: PGGraph; retained_graph: PGGraph | null

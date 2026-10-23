@@ -11,6 +11,11 @@ ROOT = Path(__file__).resolve().parents[1]
 DATASET = ROOT / 'eval/pg_challenge_tasks.json'
 SEED = ROOT / 'research/graphs/pg-seed-v1.json'
 ARMS = ('baseline', 'seed', 'evolved')
+SMOKE_CASES = {
+    'train': ('PG01',),
+    'validation': ('PG07',),
+    'test': ('PG13',),
+}
 
 
 def challenge_dataset():
@@ -43,17 +48,37 @@ def plan(preset):
             or spec.dataset != DATASET.relative_to(ROOT).as_posix()):
         raise ValueError('PG 训练配置与冻结挑战集不一致')
     if preset == 'smoke':
-        spec = spec.model_copy(update={'repeats': 1, 'iterations': 1})
+        groups = {part: list(SMOKE_CASES[part]) for part in ('train', 'validation', 'test')}
+        spec = spec.model_copy(update={
+            'train_cases': SMOKE_CASES['train'],
+            'validation_cases': SMOKE_CASES['validation'],
+            'repeats': 1,
+            'iterations': 1,
+            'max_model_calls_per_run': 8,
+            # 这些字段是单 Run / Refiner 的硬限制。Runtime 使用保守 token unit
+            # （无 usage 时为 UTF-8 字节预留），因此这里不会把未知用量当成 0。
+            'max_prompt_tokens_per_run': 48000,
+            'max_completion_tokens_per_run': 2000,
+            'max_seconds_per_run': 60,
+            'max_refiner_prompt_tokens': 60000,
+            'max_refiner_completion_tokens': 1500,
+            'max_provider_attempts_per_call': 1,
+        })
     repeats, iterations = spec.repeats, spec.iterations
     samples = repeats * (len(groups['validation']) + iterations * (len(groups['train']) + len(groups['validation']))
                          + 3 * len(groups['test']))
+    max_model_attempts = samples * spec.max_model_calls_per_run + iterations * 2
+    max_token_units = (samples * (spec.max_prompt_tokens_per_run + spec.max_completion_tokens_per_run)
+                       + iterations * (spec.max_refiner_prompt_tokens + spec.max_refiner_completion_tokens))
     return dict(preset=preset, spec=spec.model_dump(mode='json'), groups=groups,
-                max_samples=samples, max_model_attempts=samples * spec.max_model_calls_per_run + iterations * 2,
+                max_samples=samples, max_model_attempts=max_model_attempts, max_token_units=max_token_units,
                 dataset_sha256=evaluation_fingerprint(dataset), seed_sha256=ProceduralGraph.from_path(SEED).fingerprint,
-                cost_guard=dict(max_extra_model_attempts_per_sample=2, max_tool_call_regression=0))
+                cost_guard=dict(max_extra_model_attempts_per_sample=2, max_tool_call_regression=0,
+                                max_model_attempts=max_model_attempts, max_token_units=max_token_units))
 
 
 def behavior_metrics(report):
+    from src.pg_evidence import project_sample_evidence
     samples = report.get('samples', [])
     recovery = exposed = repeated = 0
     triggered = 0
@@ -78,11 +103,21 @@ def behavior_metrics(report):
         triggered += sample_triggered
         recovery += sample_triggered and sample['passed']
         exposed += sample_exposed
+    evidence = [project_sample_evidence(sample) for sample in samples]
+    interventions = [item for projection in evidence for turn in projection['turns']
+                     for item in turn['interventions']]
+    failure_stages = Counter(projection['summary']['failure_stage'] for projection in evidence
+                             if projection['summary']['failure_stage'])
     metrics = summarize(samples, report.get('manifest', {}).get('repeats', 1))
     return {**metrics, 'triggered_samples': triggered, 'recovered_samples': recovery,
             'recovery_rate': recovery / triggered if triggered else None,
             'pg_exposed_samples': exposed, 'pg_exposure_rate': exposed / len(samples) if samples else None,
-            'repeated_ineffective_calls': repeated}
+            'repeated_ineffective_calls': repeated,
+            'pg_interventions': len(interventions),
+            'pg_action_aligned': sum(item['action_alignment']['status'] == 'ALIGNED' for item in interventions),
+            'pg_action_diverged': sum(item['action_alignment']['status'] == 'DIVERGED' for item in interventions),
+            'pg_localization_fallbacks': sum(item['localization']['fallback'] for item in interventions),
+            'failure_stages': dict(sorted(failure_stages.items()))}
 
 
 def test_contract(candidate, baseline, repeats):

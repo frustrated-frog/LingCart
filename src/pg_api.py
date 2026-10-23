@@ -33,6 +33,7 @@ class JobResponse(BaseModel):
     seed_graph: dict
     cases: list[dict]
     learning_cost: dict
+    budget_usage: dict
     retained_graph: dict | None = None
     evolution: dict | None = None
     contracts: dict | None = None
@@ -110,8 +111,10 @@ def pg_samples(job_id: str):
         records = []
         for path in sample_files(store, job_id):
             sample = json.loads(path.read_text())
+            evidence = sample.get('pg_evidence', {}).get('summary', {})
             records.append(dict(stage=path.parent.name, case_id=sample['case_id'], repetition=sample['repetition'],
-                passed=sample['passed'], failures=[f for t in sample.get('turns', []) for f in t.get('failures', [])]))
+                passed=sample['passed'], failures=[f for t in sample.get('turns', []) for f in t.get('failures', [])],
+                interventions=evidence.get('interventions', 0), failure_stage=evidence.get('failure_stage')))
         return {'samples': records}
     return checked(read)
 

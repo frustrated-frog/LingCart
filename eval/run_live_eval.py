@@ -229,7 +229,9 @@ def summarize(samples, repeats):
 
 def evaluate(dataset, *, repeats=3, split='all', case_ids=(), execution_mode='auto', harness_profile=None,
              experiment_spec=None, dataset_path=DATASET, runner=None, readiness=None,
-             max_model_calls_per_run=6, on_sample=None):
+             max_model_calls_per_run=6, max_prompt_tokens_per_run=None,
+             max_completion_tokens_per_run=None, max_seconds_per_run=None,
+             max_provider_attempts_per_call=None, on_sample=None):
     """runner 注入只用于基础设施测试，报告会明确标识为 test_harness。"""
     injected_runner = runner is not None
     if not 1 <= repeats <= 10:
@@ -293,14 +295,27 @@ def evaluate(dataset, *, repeats=3, split='all', case_ids=(), execution_mode='au
             config = load_gateway_config(purpose=purpose)
             report['manifest']['purpose_models'][purpose] = [{'provider': p.provider, 'model': p.model,
                 'thinking_mode': p.thinking_mode, 'reasoning_effort': p.reasoning_effort, 'strict_tools': p.strict_tools} for p in config.providers]
+            for item in report['manifest']['purpose_models'][purpose]:
+                item['gateway_max_attempts'] = config.max_attempts
         except ModelGatewayConfigurationError:
             report['manifest']['purpose_models'][purpose] = None
     if not status.get('configured') and not injected_runner:
         report.update(status='NOT_RUN', reason='MODEL_NOT_CONFIGURED', message='尚未配置模型，未执行真实评测', metrics=summarize([], repeats))
         return report
     limits = BudgetLimits.adaptive() if suite == 'adaptive' else BudgetLimits(max_seconds=45)
-    limits = replace(limits, max_model_calls=min(limits.max_model_calls, max_model_calls_per_run))
-    report['manifest']['limits'] = limits.__dict__
+    limit_updates = {'max_model_calls': min(limits.max_model_calls, max_model_calls_per_run)}
+    for name, value in (
+        ('max_prompt_tokens', max_prompt_tokens_per_run),
+        ('max_completion_tokens', max_completion_tokens_per_run),
+        ('max_seconds', max_seconds_per_run),
+    ):
+        if value is not None:
+            if not isinstance(value, (int, float)) or isinstance(value, bool) or value <= 0:
+                raise ValueError(f'{name} 必须是正数')
+            limit_updates[name] = min(getattr(limits, name), value)
+    limits = replace(limits, **limit_updates)
+    report['manifest']['limits'] = {**limits.__dict__,
+        'max_provider_attempts_per_call': max_provider_attempts_per_call}
     selected = [case for case in dataset['cases']
                 if (split == 'all' or case['split'] == split) and (not case_ids or case['id'] in case_ids)]
     if not selected:
@@ -330,8 +345,10 @@ def evaluate(dataset, *, repeats=3, split='all', case_ids=(), execution_mode='au
                             sample_runner.execution_mode = getattr(runner, 'execution_mode', execution_mode)
                             from contextlib import nullcontext
                             from eval.adaptive_checks import scenario
-                            with (scenario(case, session_id) if suite == 'adaptive' else nullcontext({})) as environment:
-                                result = run_conversation(turn['message'], session_id, request_id=str(turn_index), limits=limits, runner=sample_runner)
+                            from src.llm import model_attempt_limit
+                            with model_attempt_limit(max_provider_attempts_per_call):
+                                with (scenario(case, session_id) if suite == 'adaptive' else nullcontext({})) as environment:
+                                    result = run_conversation(turn['message'], session_id, request_id=str(turn_index), limits=limits, runner=sample_runner)
                             if suite == 'adaptive':
                                 result['evaluation_environment'] = environment
                     except Exception as error:

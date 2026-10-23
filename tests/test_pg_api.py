@@ -15,7 +15,8 @@ def client(tmp_path, monkeypatch):
 def test_catalog_and_empty_state_are_real_and_private(client):
     payload = client.get('/engineering/pg/catalog').json()
     assert len(payload['dataset']['cases']) == 18
-    assert payload['plans']['smoke']['max_model_attempts'] == 578
+    assert payload['plans']['smoke']['max_model_attempts'] == 50
+    assert payload['plans']['smoke']['max_samples'] == 6
     assert client.get('/engineering/pg/jobs').json() == {'jobs': []}
     assert TestClient(api.app).get('/engineering/pg/catalog').status_code == 403
     assert client.get('/engineering/pg/jobs/absent').json()['detail']['code'] == 'PG_JOB_NOT_FOUND'

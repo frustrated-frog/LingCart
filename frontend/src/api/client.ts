@@ -146,12 +146,12 @@ export const api = {
   pgCatalog: () => request<PGCatalog>('/engineering/pg/catalog'),
   pgJobs: () => request<{ jobs: PGJobSummary[] }>('/engineering/pg/jobs'),
   pgJob: (id: string) => request<PGJob>(`/engineering/pg/jobs/${encodeURIComponent(id)}`),
-  pgStart: (payload: { request_id: string; preset: PGPreset }) => request<PGJob>('/engineering/pg/jobs', {
+  pgStart: (payload: { request_id: string; preset: PGPreset; confirm_full_cost?: boolean }) => request<PGJob>('/engineering/pg/jobs', {
     method: 'POST', body: JSON.stringify(payload),
   }),
   pgCancel: (id: string) => request<PGJob>(`/engineering/pg/jobs/${encodeURIComponent(id)}/cancel`, { method: 'POST' }),
   pgSamples: (id: string) => request<{ samples: PGSample[] }>(`/engineering/pg/jobs/${encodeURIComponent(id)}/samples`),
-  pgSample: (id: string, sample: PGSample) => request<Record<string, unknown>>(
+  pgSample: (id: string, sample: PGSample) => request<import('../types').PGSampleDetail>(
     `/engineering/pg/jobs/${encodeURIComponent(id)}/samples/${encodeURIComponent(sample.stage)}/${encodeURIComponent(sample.case_id)}/${sample.repetition}`),
   overview: () => request<EngineeringOverview>('/engineering/overview'),
   runs: (filters: { status?: string; profile_id?: string; limit?: number } = {}) =>

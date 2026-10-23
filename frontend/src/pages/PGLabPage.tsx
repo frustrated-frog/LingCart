@@ -27,6 +27,8 @@ const reasons: Record<string, string> = {
 const errors: Record<string, string> = {
   PG_WORKER_START_FAILED: '实验进程启动失败。', PG_CANCELLED: '实验已停止，已完成样本仍可查看。',
   PG_IDENTITY_CHANGED: '源码、数据或模型配置发生变化，实验已停止。',
+  PG_BUDGET_EXCEEDED: '实验触及冻结的总预算上限，已停止并保留已有证据。',
+  PG_FULL_COST_CONFIRMATION_REQUIRED: '完整实验需要明确确认高调用预算。',
   PG_EXPERIMENT_FAILED: '实验未完整完成，请检查下方阶段、失败类型和已保存样本。',
 }
 const phase = (value: string) => value === 'seed-validation' ? '种子图验证' : value === 'refinement' ? '生成图修改'
@@ -79,7 +81,30 @@ function SampleEvidence({ jobId, sample }: { jobId: string; sample: PGSample }) 
     queryFn: () => api.pgSample(jobId, sample) })
   if (query.isPending) return <LoadingState label="正在读取原始执行证据" />
   if (query.isError) return <ErrorState error={query.error} retry={() => { void query.refetch() }} />
-  return <div className="pg-sample-evidence"><b>{sample.case_id} · 第 {sample.repetition} 次 · {phase(sample.stage)}</b><JsonBlock value={query.data} /></div>
+  const evidence = query.data?.pg_evidence
+  if (!evidence) return <div className="pg-sample-evidence"><b>{sample.case_id} · 第 {sample.repetition} 次 · {phase(sample.stage)}</b>
+    <p className="pg-muted">该历史样本尚未生成结构化 PG 干预投影，以下保留原始证据。</p><JsonBlock value={query.data} /></div>
+  return <div className="pg-sample-evidence"><div className="pg-evidence-heading"><div><b>{sample.case_id} · 第 {sample.repetition} 次 · {phase(sample.stage)}</b>
+    <p>{evidence.summary.failure_stage ? `失败阶段：${evidence.summary.failure_stage}` : evidence.summary.recovered ? '扰动后已恢复' : '样本未记录失败阶段'}</p></div>
+    <dl><div><dt>干预</dt><dd>{evidence.summary.interventions}</dd></div><div><dt>已暴露</dt><dd>{evidence.summary.exposed}</dd></div>
+      <div><dt>行动对齐</dt><dd>{evidence.summary.aligned}</dd></div><div><dt>行动分歧</dt><dd>{evidence.summary.diverged}</dd></div></dl></div>
+    {evidence.turns.flatMap(turn => turn.interventions.map((item, index) => {
+      const decision = item.decision?.payload ?? {}
+      const action = String(decision.tool ?? decision.action ?? '没有后续决策')
+      return <article className="pg-intervention-chain" key={`${turn.turn_index}-${item.intervention_id}-${index}`}>
+        <header><span>干预 {index + 1} · 事件 {item.guidance.sequence}</span><b>{item.guidance.exposed ? '已进入模型决策上下文' : '未暴露给决策'}</b></header>
+        <div className="pg-chain-grid">
+          <section><small>01 · 状态定位</small><strong>{node(item.localization.anchor)}</strong><p>{item.localization.fallback ? '未知行动，回退全图' : '命中局部锚点'}</p><em>{item.localization.node_ids.length} 个局部节点</em></section>
+          <section><small>02 · 子图检索</small><strong>{item.retrieval.selected_edge_ids.join(' / ') || '未选择关系'}</strong><p>候选 {item.retrieval.retrieved_edge_ids.length} 条 · 采用 {item.retrieval.selected_edge_ids.length} 条</p></section>
+          <section><small>03 · 情境指导</small><strong>{item.guidance.status}</strong><p>{item.guidance.content || item.guidance.reason || '指导器选择弃权'}</p></section>
+          <section><small>04 · 实际行动</small><strong>{node(action)}</strong><p>对齐判定：{item.action_alignment.status}</p><em>{item.decision ? `决策事件 ${item.decision.sequence}` : '没有已提交行动'}</em></section>
+          <section><small>05 · 工具与核验</small><strong>{item.tool ? node(item.tool.name) : '未调用工具'}</strong><p>{item.tool ? `${item.tool.status ?? '已返回'}${item.tool.invalid_result ? ' · 无效结果' : ''}` : item.verification ? '已进入目标核验' : '尚无后续结果'}</p></section>
+        </div>
+        <details><summary>检查状态、局部子图、工具结果和核验原始投影</summary><JsonBlock value={item} /></details>
+      </article>
+    }))}
+    {!evidence.summary.interventions && <div className="pg-empty"><div><strong>该样本没有 PG 干预</strong><p>无 PG 对照组属于预期；若这是种子图或演化图样本，应结合失败阶段检查原因。</p></div></div>}
+    <details><summary>查看完整原始样本</summary><JsonBlock value={query.data} /></details></div>
 }
 
 function Comparison({ job }: { job?: PGJob }) {
@@ -111,6 +136,7 @@ export function PGLabPage() {
   const samples = useQuery({ queryKey: ['pg-samples', jobId], queryFn: () => api.pgSamples(jobId), enabled: !!jobId,
     refetchInterval: active(jobQuery.data?.status) ? 5_000 : false })
   const [preset, setPreset] = useState<PGPreset>('smoke')
+  const [confirmFullCost, setConfirmFullCost] = useState(false)
   const [round, setRound] = useState(0)
   const [graphView, setGraphView] = useState<'seed' | 'retained'>('seed')
   const [partition, setPartition] = useState<'train' | 'validation' | 'test'>('test')
@@ -118,7 +144,7 @@ export function PGLabPage() {
   const request = useRef({ preset, id: crypto.randomUUID() })
   const start = useMutation({ mutationFn: () => {
     if (request.current.preset !== preset) request.current = { preset, id: crypto.randomUUID() }
-    return api.pgStart({ preset, request_id: request.current.id })
+    return api.pgStart({ preset, request_id: request.current.id, confirm_full_cost: preset === 'full' && confirmFullCost })
   }, onSuccess: job => {
     setParams({ job: job.job_id }); queryClient.setQueryData(['pg-job', job.job_id], job)
     request.current = { preset, id: crypto.randomUUID() }
@@ -148,11 +174,12 @@ export function PGLabPage() {
     {(catalog.isError || jobs.isError || jobQuery.isError || samples.isError) && <div className="pg-alert" role="alert">部分状态读取失败。已显示数据可能过期。<button onClick={refresh}>重试读取</button></div>}
     <section className="pg-launch" aria-label="启动实验">
       <div><span className="pg-kicker">冻结配置</span><h2>从一轮小实验开始</h2><p>每项任务使用独立种子数据库。实验将调用真实模型，可能产生费用。</p>
-        <label>实验规模<select value={preset} disabled={start.isPending} onChange={e => setPreset(e.target.value as PGPreset)}>
+        <label>实验规模<select value={preset} disabled={start.isPending} onChange={e => { setPreset(e.target.value as PGPreset); setConfirmFullCost(false) }}>
           <option value="smoke">冒烟 · 1 轮演化 × 1 次重复</option><option value="full">完整 · 3 轮演化 × 3 次重复</option></select></label></div>
       <div className="pg-launch-budget"><div><strong>{launchPlan.max_samples}</strong><span>最多任务样本</span></div><div><strong>{launchPlan.max_model_attempts.toLocaleString()}</strong><span>最多模型尝试（含重试）</span></div>
-        <small>每 Run {launchPlan.spec.max_model_calls_per_run} 次 · Refiner 每轮 2 次</small></div>
-      <div className="pg-launch-action"><button className="pg-primary-button" type="button" disabled={busy || start.isPending || !data.model_configured || jobs.isPending || jobs.isError}
+        <small>每 Run {launchPlan.spec.max_model_calls_per_run} 次 · Refiner 每轮最多 2 次 · 总 token unit 上限 {number(launchPlan.max_token_units)}</small></div>
+      <div className="pg-launch-action">{preset === 'full' && <label className="pg-cost-confirm"><input type="checkbox" checked={confirmFullCost} onChange={e => setConfirmFullCost(e.target.checked)} />我确认完整实验的高调用预算</label>}
+        <button className="pg-primary-button" type="button" disabled={busy || start.isPending || !data.model_configured || jobs.isPending || jobs.isError || (preset === 'full' && !confirmFullCost)}
         onClick={() => start.mutate()}><Play size={16} />{start.isPending ? '正在提交…' : busy ? '实验执行中' : '启动真实实验'}</button>
         <small>{!data.model_configured ? 'Model Gateway 尚未配置' : '图与测试条件在执行前冻结'}</small></div>
     </section>
@@ -173,7 +200,7 @@ export function PGLabPage() {
     {job?.execution_source === 'test_harness' && <div className="pg-alert">测试替身数据 · 仅验证工程链路，不代表真实模型效果。</div>}
     <SectionHeading index="01" title="三组对照" note={`${frozen.groups.test.length} 个测试情境 × ${frozen.spec.repeats} 次重复 / 每组`} />
     <Comparison job={job} />
-    {job && <p className="pg-training-cost">学习阶段另计：轨迹模型调用 {number(job.learning_cost.rollout_model_attempts)} 次 · Refiner {number(job.learning_cost.refiner_model_attempts)} 次 · 轨迹 Token {number(job.learning_cost.rollout_tokens)}。测试成本见上表；停止时未结束阶段的开销可能尚未汇总。</p>}
+    {job && <p className="pg-training-cost">累计硬预算：模型尝试 {number(job.budget_usage.model_attempts)} / {number(frozen.max_model_attempts)} · token unit {number(job.budget_usage.token_units)} / {number(frozen.max_token_units)}。学习阶段：轨迹调用 {number(job.learning_cost.rollout_model_attempts)} 次 · Refiner {number(job.learning_cost.refiner_model_attempts)} 次。停止时未结束调用可能尚未汇总。</p>}
     <div className="pg-verdict"><GitBranch size={20} /><div><strong>{job?.comparison ? conclusions[job.comparison.conclusion] : job ? '实验尚未完成，保留已获得的证据' : '尚无实验结果'}</strong>
       <p>{job?.comparison ? '结论仅适用于本次冻结挑战集，未进行统计显著性检验；机制仍为 candidate。' : '完成训练、验证和三组测试后，这里会展示门禁结论。'}</p>
       {job?.comparison && <details><summary>检查对照门禁与失败原因</summary>{job.comparison.failures.map(f => <p key={f}>{f}</p>)}
@@ -194,7 +221,7 @@ export function PGLabPage() {
     {!samples.data?.samples.length ? <div className="pg-empty"><div><strong>尚无已完成样本</strong><p>每个样本结束后立即落盘，实验中断也能继续查看。</p></div></div> : <>
       <div className="pg-samples"><table><thead><tr><th>阶段</th><th>案例 / 重复</th><th>结果</th><th>判分原因</th><th>轨迹</th></tr></thead><tbody>{samples.data.samples.map(s => <tr key={key(s)}>
         <td>{phase(s.stage)}</td><td><code>{s.case_id} / {s.repetition}</code></td><td><span className={s.passed ? 'pg-pass' : 'pg-fail'}>{s.passed ? '通过' : '失败'}</span></td>
-        <td>{s.failures.join('；') || '独立判据通过'}</td><td><button aria-expanded={selectedSample === s} onClick={() => setSampleKey(sampleKey === key(s) ? '' : key(s))}>查看 {s.case_id} 证据</button></td></tr>)}</tbody></table></div>
+        <td>{s.failures.join('；') || (s.failure_stage ? `失败阶段：${s.failure_stage}` : '独立判据通过')}<small className="pg-sample-count">PG 干预 {s.interventions}</small></td><td><button aria-expanded={selectedSample === s} onClick={() => setSampleKey(sampleKey === key(s) ? '' : key(s))}>查看 {s.case_id} 证据</button></td></tr>)}</tbody></table></div>
       {selectedSample && <SampleEvidence jobId={jobId} sample={selectedSample} />}</>}
     {job && <details className="pg-raw"><summary>冻结配置、执行身份与完整实验记录</summary><JsonBlock value={job} /></details>}
   </div>

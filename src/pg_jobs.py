@@ -24,6 +24,7 @@ class StartExperiment(BaseModel):
     model_config = ConfigDict(extra='forbid', strict=True)
     request_id: str = Field(pattern=r'^[a-zA-Z0-9_-]{8,80}$')
     preset: Literal['smoke', 'full']
+    confirm_full_cost: bool = False
 
 
 class LabError(Exception):
@@ -42,7 +43,8 @@ def identity():
             config = load_gateway_config(purpose=purpose)
             models[purpose] = [{'provider': p.provider, 'model': p.model, 'thinking_mode': p.thinking_mode,
                                 'reasoning_effort': p.reasoning_effort, 'strict_tools': p.strict_tools,
-                                'endpoint_sha256': fingerprint(p.base_url)} for p in config.providers]
+                                'endpoint_sha256': fingerprint(p.base_url),
+                                'gateway_max_attempts': config.max_attempts} for p in config.providers]
         except ModelGatewayConfigurationError:
             models[purpose] = None
     return {key: manifest[key] for key in ('dataset_sha256', 'source_tree_sha256', 'dependency_lock_sha256',
@@ -89,7 +91,11 @@ class JobStore:
             row = db.execute('SELECT * FROM jobs WHERE id=?', (job_id,)).fetchone()
         if not row:
             raise LabError('PG_JOB_NOT_FOUND', '实验不存在', 404)
-        return {**json.loads(row['data']), 'status': row['status'], 'cancel_requested': bool(row['cancel'])}
+        data = json.loads(row['data'])
+        data.setdefault('learning_cost', {}).setdefault('refiner_token_units', 0)
+        data.setdefault('budget_usage', {'model_attempts': None, 'token_units': None})
+        data.setdefault('frozen', {}).setdefault('max_token_units', None)
+        return {**data, 'status': row['status'], 'cancel_requested': bool(row['cancel'])}
 
     def list(self):
         with self.connect() as db:
@@ -105,6 +111,8 @@ class JobStore:
             if row['preset'] != request.preset:
                 raise LabError('PG_IDEMPOTENCY_CONFLICT', '同一请求不能更换实验配置')
             return self.get(row['id'])
+        if request.preset == 'full' and not request.confirm_full_cost:
+            raise LabError('PG_FULL_COST_CONFIRMATION_REQUIRED', '完整实验需要明确确认高调用预算', 422)
         from src.llm import get_model_status
         if launch and not get_model_status().get('configured'):
             raise LabError('MODEL_NOT_CONFIGURED', '请先配置 Model Gateway，再启动真实实验', 422)
@@ -116,7 +124,9 @@ class JobStore:
                     execution_source='live_provider', seed_graph=ProceduralGraph.from_path(SEED).model_dump(mode='json'),
                     cases=[{k: c[k] for k in ('id', 'learning_partition', 'scenario_family', 'category', 'description')}
                            for c in challenge_dataset()['cases']],
-                    learning_cost={'rollout_model_attempts': 0, 'refiner_model_attempts': 0, 'rollout_tokens': None})
+                    learning_cost={'rollout_model_attempts': 0, 'refiner_model_attempts': 0,
+                                   'rollout_tokens': None, 'refiner_token_units': 0},
+                    budget_usage={'model_attempts': 0, 'token_units': 0})
         with self.connect() as db:
             db.execute('BEGIN IMMEDIATE')
             self._expire(db)

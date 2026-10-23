@@ -21,8 +21,10 @@ def test_challenge_partitions_cover_distinct_families_and_bounded_cost():
     dataset = challenge_dataset()
     assert len({c['scenario_family'] for c in dataset['cases']}) == 18
     small, full = plan('smoke'), plan('full')
-    assert small['max_samples'] == 36 and full['max_samples'] == 180
-    assert small['max_model_attempts'] == 578
+    assert small['max_samples'] == 6 and full['max_samples'] == 180
+    assert small['max_model_attempts'] == 50
+    assert small['max_token_units'] == 361500
+    assert small['groups'] == {'train': ['PG01'], 'validation': ['PG07'], 'test': ['PG13']}
     assert not set(small['groups']['test']) & set(small['spec']['train_cases'] + small['spec']['validation_cases'])
     assert {c['category'] for c in dataset['cases'] if c['learning_partition'] == 'test'} == {
         '空结果恢复', '工具选择', '行动依赖', '多目标覆盖', '环境变化', '组合迁移'}
@@ -59,6 +61,14 @@ def test_persistent_idempotency_concurrent_requests_and_cancellation(tmp_path):
     assert not store.update(job_id, status='RUNNING')
 
 
+def test_full_experiment_requires_explicit_cost_confirmation(tmp_path):
+    store = JobStore(tmp_path)
+    with pytest.raises(LabError, match='明确确认'):
+        store.create(StartExperiment(request_id='full-without-confirm', preset='full'), launch=False)
+    job = store.create(StartExperiment(request_id='full-confirmed', preset='full', confirm_full_cost=True), launch=False)
+    assert job['frozen']['max_samples'] == 180
+
+
 def test_dead_workers_are_interrupted_without_relaunch(tmp_path):
     store = JobStore(tmp_path)
     request = StartExperiment(request_id='dead-request', preset='smoke')
@@ -87,6 +97,25 @@ def test_worker_keeps_partial_samples_on_cancel_and_refuses_duplicate(tmp_path):
     saved = store.get(job['job_id'])
     assert calls == ['dev'] and saved['status'] == 'CANCELLED'
     assert saved['completed_samples'] == 1
+    assert list(store.directory(job['job_id']).glob('samples/**/*.json'))
+
+
+def test_worker_stops_when_persisted_usage_crosses_frozen_budget(tmp_path):
+    from eval.run_pg_lab import run_job
+    store = JobStore(tmp_path)
+    job = store.create(StartExperiment(request_id='budget-worker', preset='smoke'), launch=False)
+    def evaluator(dataset, **kwargs):
+        kwargs['on_sample']({'case_id': 'PG07', 'repetition': 1, 'passed': False,
+            'model_attempts': job['frozen']['max_model_attempts'] + 1,
+            'turns': [{'result': {'events': [], 'budget': {'consumed': {
+                'prompt_tokens': 1, 'completion_tokens': 1}}}}]})
+        pytest.fail('预算超限后不能继续执行')
+    with tempfile.TemporaryDirectory(dir=ROOT / 'research/graphs') as graphs:
+        run_job(job['job_id'], store=store, evaluator=evaluator,
+                execution_source='test_harness', graph_root=Path(graphs))
+    saved = store.get(job['job_id'])
+    assert saved['status'] == 'FAILED' and saved['error'] == 'PG_BUDGET_EXCEEDED'
+    assert saved['budget_usage']['model_attempts'] == job['frozen']['max_model_attempts'] + 1
     assert list(store.directory(job['job_id']).glob('samples/**/*.json'))
 
 

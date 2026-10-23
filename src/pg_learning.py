@@ -26,6 +26,12 @@ class EvolutionSpec(FrozenModel):
     iterations: int = Field(default=3, ge=1, le=8)
     max_model_calls_per_run: int = Field(default=16, ge=3, le=16)
     max_extra_model_attempts_per_sample: int = Field(default=2, ge=0, le=8)
+    max_prompt_tokens_per_run: int = Field(default=256000, ge=8000, le=256000)
+    max_completion_tokens_per_run: int = Field(default=12000, ge=500, le=12000)
+    max_seconds_per_run: int = Field(default=90, ge=20, le=180)
+    max_refiner_prompt_tokens: int = Field(default=256000, ge=8000, le=256000)
+    max_refiner_completion_tokens: int = Field(default=6000, ge=500, le=6000)
+    max_provider_attempts_per_call: int = Field(default=2, ge=1, le=2)
 
     @model_validator(mode="after")
     def separated_cases(self):
@@ -120,9 +126,15 @@ source_cases 必须引用提供的训练案例，禁止引用验证案例。不�
 
 
 class ModelGraphRefiner:
+    def __init__(self, *, max_prompt_tokens=256000, max_completion_tokens=6000, max_provider_attempts=2):
+        self.max_prompt_tokens = max_prompt_tokens
+        self.max_completion_tokens = max_completion_tokens
+        self.max_provider_attempts = max_provider_attempts
+
     def propose(self, graph, report, rejected_history):
         context = RunRuntime("pg-refiner", BudgetLimits(max_model_calls=2, max_seconds=90,
-            max_context_chars=60000, max_prompt_tokens=256000, max_completion_tokens=6000))
+            max_context_chars=60000, max_prompt_tokens=self.max_prompt_tokens,
+            max_completion_tokens=self.max_completion_tokens))
         payload = {"graph": graph.model_dump(mode="json"), "training": training_examples(report),
                    "allowed_actions": sorted(allowed_actions()), "rejected_history": rejected_history[-4:]}
         messages = [SystemMessage(content=REFINER_PROMPT + "\nSchema:" + canonical(GraphPatch.model_json_schema())),
@@ -134,6 +146,8 @@ class ModelGraphRefiner:
             with runtime_scope(context):
                 model = get_llm(purpose="planner")
                 model = model.json_mode() if hasattr(model, "json_mode") else model
+                if hasattr(model, "max_attempts"):
+                    model.max_attempts = min(model.max_attempts, self.max_provider_attempts)
                 response = context.model_call(model, messages, purpose="pg_refiner", agent="pg", allow_tools=False, isolated=True)
             return {"proposal": as_text(response.content), "error": "REFINER_TOOL_CALL" if getattr(response, "tool_calls", []) else None,
                     "events": context.events, "budget": context.counters}

@@ -145,6 +145,17 @@ class PGContextEngine:
                  "node_ids": [n["id"] for n in selection["nodes"]],
                  "edge_ids": [], "retrieved_edge_ids": [e["id"] for e in selection["edges"]],
                  "subgraph": selection if len(canonical(selection)) <= self.max_graph_chars else None,
+                 "state_snapshot": {
+                     "goal_revision": state["goal_revision"],
+                     "goal": state.get("goal"),
+                     "feedback": state.get("feedback"),
+                     "recent_steps": recent,
+                     "unfinished_plan_steps": [
+                         {"step_id": step.step_id, "tool": step.tool, "status": step.status,
+                          "objective_id": step.objective_id}
+                         for step in plan.steps if step.status not in {"COMPLETED", "FAILED", "SKIPPED"}
+                     ],
+                 },
                  "guidance": "", "status": "SKIPPED", "reason": None}
         cached_model = str(runtime.model_cursor + 1) in runtime.models
         if len(canonical(selection)) > self.max_graph_chars or len(canonical(payload)) + len(GUIDANCE_PROMPT) > max_chars:

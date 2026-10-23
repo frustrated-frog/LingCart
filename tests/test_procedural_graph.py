@@ -82,6 +82,9 @@ def test_guidance_is_consumed_once_and_restored_without_charging(monkeypatch):
         engine.decision_messages("增加动作限制", current, plan, [], max_chars=10000)
     assert "先明确目标与约束" in messages[1].content
     assert manifest["pg_status"] == "EXPOSED"
+    guidance = next(event for event in context.events if event["type"] == "pg_guidance")
+    assert guidance["state_snapshot"]["goal_revision"] == 0
+    assert guidance["state_snapshot"]["unfinished_plan_steps"] == []
     assert len(model.inputs) == 1 and context.counters["model_calls"] == 1
     snapshot = {**new_runtime_snapshot("pg-test", conversation={}, history=[]), **deepcopy(context.snapshot)}
     restored = RunRuntime("pg-test", context.limits, snapshot=seal_runtime_snapshot(snapshot, "pg-test"), events=deepcopy(context.events))
