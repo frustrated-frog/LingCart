@@ -34,7 +34,12 @@ def strategy_text(value: str) -> str:
     import re
     if re.search(r"(?<![A-Za-z0-9])P\d{4}S?(?![A-Za-z0-9])", value, re.I):
         raise ValueError("程序知识不能固化商品编号")
-    if re.search(r"(?:放宽|放松|忽略|绕过|取消).{0,12}(?:预算|价格|硬约束|排除项|审批|安全)", value):
+    unsafe = re.compile(r"(?:放宽|放松|忽略|绕过|取消).{0,12}(?:预算|价格|硬约束|排除项|审批|安全)")
+    for match in unsafe.finditer(value):
+        prefix = value[max(0, match.start() - 6):match.start()]
+        # Refiner 必须能够表达“禁止绕过审批”这类安全约束；只豁免紧邻动作的明确否定。
+        if re.search(r"(?:不得|不能|不可|不要|禁止|严禁|切勿|避免)\s*$", prefix):
+            continue
         raise ValueError("程序知识不能放宽硬约束")
     if re.search(r"(?:订单|order)[\s:#：-]*\d+|\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b|(?:api[_ -]?key|bearer)\s*[:= ]\s*\S+", value, re.I):
         raise ValueError("程序知识不能包含订单事实、个人联系信息或凭证")
