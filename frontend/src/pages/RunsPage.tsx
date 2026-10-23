@@ -131,11 +131,12 @@ function ProceduralGraphTab({ detail }: { detail: RunDetail }) {
       ['指导记录', guidance.length],
       ['指导模型调用', events.filter((item) => ['model_started', 'model_retry'].includes(item.type) && item.purpose === 'pg_guidance').length],
     ]} />
-    <p className="muted">图在本次运行中保持冻结。建议由原 Agent 自主采纳；生成建议或执行了下一步，都不代表已经证明效果改善。</p>
+    <p className="muted">图在本次运行中保持冻结。候选后继保持建议性质；只有已有无进展证据的完全相同重放可以在提交前阻断，任何单次行动都不代表已经证明效果改善。</p>
     <details><summary>查看冻结图指纹</summary><JsonBlock value={graph.sha256 ?? guidance[0]?.graph_sha256 ?? null} /></details>
     {!guidance.length && <div className="empty-inline">已绑定图，尚未生成指导；无法判断是否实际参与决策。</div>}
     <div className="steering-ledger pg-guidance-ledger">{guidance.map((item, index) => {
       const exposure = events.filter((event) => event.type === 'evidence_context' && event.pg_decision_key === item.decision_key).at(-1)
+      const review = events.filter((event) => event.type === 'pg_decision_reviewed' && event.decision_key === item.decision_key).at(-1)
       const next = events.find((event) => event.type === 'adaptive_decision' && Number(event.sequence) > Number(item.sequence)
         && (index + 1 === guidance.length || Number(event.sequence) < Number(guidance[index + 1].sequence)))
       const decision = record(next?.decision)
@@ -147,12 +148,15 @@ function ProceduralGraphTab({ detail }: { detail: RunDetail }) {
       const shadow = record(localization.shadow)
       const confidence = typeof localization.confidence === 'number' ? `${Math.round(localization.confidence * 100)}%` : '未记录'
       const scope = item.abstained ? '主动弃权' : item.fallback ? '全图回退' : '有界局部图'
+      const generation = record(item.generation)
+      const contract = record(item.guidance_contract)
       return <article key={String(item.sequence ?? index)}>
         <span>事件 {String(item.sequence ?? '—')} · 定位 {String(item.anchor ?? '主动弃权')} · {scope}</span>
         <b>{labels[status] ?? status}</b>
         <p>{String(item.guidance || reasons[String(item.reason)] || item.reason || '没有生成可用建议')}</p>
+        <small>生成方式：{generation.mode === 'deterministic-contract-v1' ? '确定性指导契约' : '模型情境化'} · 额外模型调用：{String(generation.model_calls ?? '未记录')}{Object.keys(contract).length ? ` · 契约 ${String(contract.contract_id ?? '').slice(0, 8)}` : ''}</small>
         <small>定位器：{String(localization.algorithm ?? 'action-anchor-v1')} · 置信度：{confidence}{Object.keys(shadow).length ? ` · v1 影子：${String(shadow.anchor ?? '未知')}${shadow.fallback ? '（全图回退）' : ''}` : ''}</small>
-        <small>引用关系：{edgeIds.join(' / ') || '无'} · 后续行动：{String(decision.tool ?? decision.action ?? '尚无已提交行动')}</small>
+        <small>引用关系：{edgeIds.join(' / ') || '无'} · 后续行动：{String(decision.tool ?? decision.action ?? review?.actual_action ?? '尚无已提交行动')}{review ? ` · 采用审查：${String(review.status)}${review.blocked ? '（提交前阻断）' : ''}` : ''}</small>
         {edges.length > 0 && <details><summary>查看本次检索的行动关系与条件</summary><div className="table-wrap"><table><thead><tr><th>关系</th><th>条件</th><th>指导</th><th>常见错误</th></tr></thead><tbody>
           {edges.map((edge) => <tr key={String(edge.id)}><td>{String(edge.source)} → {String(edge.target)}<br /><code>{String(edge.relation)}</code></td><td>{String(edge.condition || '无条件')}</td><td>{String(edge.guidance)}</td><td>{String(edge.pitfalls || '未记录')}</td></tr>)}
         </tbody></table></div></details>}

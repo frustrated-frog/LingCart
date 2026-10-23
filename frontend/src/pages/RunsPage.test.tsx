@@ -129,4 +129,24 @@ describe('RunsPage PG evidence', () => {
     expect(screen.getByText('轨迹证据不足，定位器主动弃权')).toBeInTheDocument()
     expect(screen.getByText(/v1 影子：answer_faq（全图回退）/)).toBeInTheDocument()
   })
+
+  it('shows deterministic contract adoption review and precommit blocking', async () => {
+    vi.spyOn(api, 'runs').mockResolvedValue({ runs: [summary] })
+    vi.spyOn(api, 'run').mockResolvedValue({ ...detail, checkpoint: { context: { procedural_graph: {
+      graph_id: 'lingcart-pg', version: 1, sha256: 'frozen-graph',
+    } } }, result: { trace: [], events: [
+      { type: 'pg_guidance', sequence: 1, decision_key: 'contract-decision', status: 'READY',
+        anchor: 'search_products', fallback: false, guidance: '不得原样重复无进展调用', edge_ids: ['search-inspect'],
+        generation: { mode: 'deterministic-contract-v1', model_calls: 0 },
+        guidance_contract: { contract_id: 'contract-12345678', policy: 'ADVISORY_EXCEPT_EXACT_NO_PROGRESS_REPEAT' } },
+      { type: 'evidence_context', sequence: 2, pg_decision_key: 'contract-decision', pg_status: 'EXPOSED' },
+      { type: 'pg_decision_reviewed', sequence: 3, decision_key: 'contract-decision', status: 'BLOCKED',
+        blocked: true, actual_action: 'search_products' },
+    ] } })
+    renderPage()
+    fireEvent.click(await screen.findByRole('tab', { name: '程序图指导' }))
+    expect(screen.getByText(/生成方式：确定性指导契约/)).toBeInTheDocument()
+    expect(screen.getByText(/额外模型调用：0/)).toBeInTheDocument()
+    expect(screen.getByText(/后续行动：search_products · 采用审查：BLOCKED（提交前阻断）/)).toBeInTheDocument()
+  })
 })
