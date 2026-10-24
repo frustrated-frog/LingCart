@@ -1,0 +1,82 @@
+{
+  "schema_version": 1,
+  "suite": "adaptive",
+  "dataset_id": "pg-state-condition-holdout-v1",
+  "description": "PG V4 冻结后的独立任务集。开发集只用于流程核对，测试集不得参与条件、阈值或图结构调整。",
+  "split_counts": {"dev": 2, "test": 4},
+  "cases": [
+    {
+      "id": "PGS-D01", "split": "dev", "category": "普通检索开发校验", "language": "zh",
+      "description": "开发样本：普通检索、证据读取与推荐闭环。",
+      "turns": [{"message": "推荐450元以内、带主动降噪的耳机", "expect": {"statuses": ["SUCCEEDED"], "forbidden_tools": ["process_payment", "initiate_refund"], "allowed_mutations": []}}],
+      "adaptive_expect": {"objectives": [{"kind": "recommend"}], "require_goal_coverage": true,
+        "product_constraints": [
+          {"description": "价格至多450", "source_quote": "450元以内", "field": "price", "op": "lte", "value": 450},
+          {"description": "带主动降噪", "source_quote": "带主动降噪", "field": "specs.降噪", "op": "eq", "value": "主动降噪"}
+        ]}
+    },
+    {
+      "id": "PGS-D02", "split": "dev", "category": "空结果开发校验", "language": "zh",
+      "description": "开发样本：首次目录检索为空后恢复。",
+      "turns": [{"message": "找一款300元以内、三模连接的键盘", "expect": {"statuses": ["SUCCEEDED"], "forbidden_tools": ["process_payment", "initiate_refund"], "allowed_mutations": []}}],
+      "adaptive_expect": {"objectives": [{"kind": "recommend"}], "require_goal_coverage": true,
+        "product_constraints": [
+          {"description": "价格至多300", "source_quote": "300元以内", "field": "price", "op": "lte", "value": 300},
+          {"description": "三模连接", "source_quote": "三模连接", "field": "specs.连接方式", "op": "eq", "value": "三模"}
+        ]},
+      "scenario": {"kind": "empty_search"}
+    },
+    {
+      "id": "PGS-H01", "split": "test", "category": "未见空结果与规格组合", "language": "zh",
+      "description": "留出样本：扩展坞空结果恢复和双规格约束。",
+      "turns": [{"message": "推荐260元以内、至少8个接口并支持4K 60Hz的扩展坞", "expect": {"statuses": ["SUCCEEDED"], "forbidden_tools": ["process_payment", "initiate_refund"], "allowed_mutations": []}}],
+      "adaptive_expect": {"objectives": [{"kind": "recommend"}], "require_goal_coverage": true,
+        "product_constraints": [
+          {"description": "价格至多260", "source_quote": "260元以内", "field": "price", "op": "lte", "value": 260},
+          {"description": "至少8个接口", "source_quote": "至少8个接口", "field": "specs.接口数量", "op": "gte", "value": 8},
+          {"description": "支持4K 60Hz", "source_quote": "4K 60Hz", "field": "specs.视频输出", "op": "contains", "value": "4K 60Hz"}
+        ]},
+      "scenario": {"kind": "empty_search"}
+    },
+    {
+      "id": "PGS-H02", "split": "test", "category": "未见双目标交替", "language": "zh",
+      "description": "留出样本：两个独立推荐目标要求状态定位随目标推进。",
+      "turns": [{"message": "分别推荐一款350元以内的开放式耳机和一款280元以内的双模键盘", "expect": {"statuses": ["SUCCEEDED"], "forbidden_tools": ["process_payment", "initiate_refund"], "allowed_mutations": []}}],
+      "adaptive_expect": {"objectives": [{"kind": "recommend"}, {"kind": "recommend"}], "minimum_recommendations": 2, "require_goal_coverage": true,
+        "product_constraints": [],
+        "recommendation_targets": [
+          [
+            {"description": "耳机价格至多350", "source_quote": "350元以内的开放式耳机", "field": "price", "op": "lte", "value": 350},
+            {"description": "开放式耳机", "source_quote": "开放式耳机", "field": "specs.佩戴方式", "op": "eq", "value": "开放式"}
+          ],
+          [
+            {"description": "键盘价格至多280", "source_quote": "280元以内的双模键盘", "field": "price", "op": "lte", "value": 280},
+            {"description": "双模键盘", "source_quote": "双模键盘", "field": "specs.连接方式", "op": "eq", "value": "双模"}
+          ]
+        ]}
+    },
+    {
+      "id": "PGS-H03", "split": "test", "category": "未见价格变化恢复", "language": "zh",
+      "description": "留出样本：候选价格变化后必须重新取得证据。",
+      "turns": [{"message": "推荐500元以内、续航至少36小时的耳机", "expect": {"statuses": ["SUCCEEDED"], "forbidden_tools": ["process_payment", "initiate_refund"], "allowed_mutations": []}}],
+      "adaptive_expect": {"objectives": [{"kind": "recommend"}], "require_goal_coverage": true,
+        "product_constraints": [
+          {"description": "价格至多500", "source_quote": "500元以内", "field": "price", "op": "lte", "value": 500},
+          {"description": "续航至少36小时", "source_quote": "续航至少36小时", "field": "specs.综合续航", "op": "gte", "value": 36}
+        ]},
+      "scenario": {"kind": "price_change", "updates": {"price": 9999}}
+    },
+    {
+      "id": "PGS-H04", "split": "test", "category": "未见库存变化恢复", "language": "zh",
+      "description": "留出样本：候选库存变化后必须重新规划。",
+      "turns": [{"message": "推荐400元以内、静音轴且三模连接的键盘，只要有货的", "expect": {"statuses": ["SUCCEEDED"], "forbidden_tools": ["process_payment", "initiate_refund"], "allowed_mutations": []}}],
+      "adaptive_expect": {"objectives": [{"kind": "recommend"}], "require_goal_coverage": true,
+        "product_constraints": [
+          {"description": "价格至多400", "source_quote": "400元以内", "field": "price", "op": "lte", "value": 400},
+          {"description": "静音轴", "source_quote": "静音轴", "field": "specs.轴体", "op": "eq", "value": "静音轴"},
+          {"description": "三模连接", "source_quote": "三模连接", "field": "specs.连接方式", "op": "eq", "value": "三模"}
+        ]},
+      "scenario": {"kind": "stock_change", "updates": {"stock": 0}}
+    }
+  ]
+}

@@ -83,6 +83,8 @@ def project_turn(turn, turn_index=0):
                         and event.get("decision_key") == guidance.get("decision_key")), None)
         review = next((event for event in window if event.get("type") == "pg_decision_reviewed"
                        and event.get("decision_key") == guidance.get("decision_key")), None)
+        outcome = next((event for event in window if event.get("type") == "pg_action_outcome"
+                        and (not review or event.get("review_id") == review.get("review_id"))), None)
         decision = next((event for event in window if event.get("type") == "adaptive_decision"), None)
         decision_sequence = _sequence(decision, -1) if decision else -1
         action = _record(_record(decision).get("decision"))
@@ -127,6 +129,16 @@ def project_turn(turn, turn_index=0):
                 "excluded_edge_ids": list(localization.get("excluded_edge_ids") or []),
                 "subgraph": guidance.get("subgraph"),
             },
+            "applicability": {
+                "strategy": _record(guidance.get("applicability")).get("strategy"),
+                "status": _record(guidance.get("applicability")).get("status"),
+                "reason": _record(guidance.get("applicability")).get("reason"),
+                "evaluations": list(_record(guidance.get("applicability")).get("evaluations") or []),
+                "selected_edge_ids": list(_record(guidance.get("applicability")).get("selected_edge_ids") or []),
+                "false_edge_ids": list(_record(guidance.get("applicability")).get("false_edge_ids") or []),
+                "unknown_edge_ids": list(_record(guidance.get("applicability")).get("unknown_edge_ids") or []),
+                "projected_paths": list(guidance.get("projected_paths") or []),
+            },
             "guidance": {
                 "status": status,
                 "reason": guidance.get("reason"),
@@ -140,6 +152,17 @@ def project_turn(turn, turn_index=0):
             "decision": ({"sequence": _sequence(decision, decision["_order"]),
                           "source": decision.get("source"), "payload": action} if decision else None),
             "action_alignment": _alignment(guidance, decision, review),
+            "action_progress": ({
+                "status": outcome.get("progress_status"),
+                "reason": outcome.get("progress_reason"),
+                "signals": list(outcome.get("signals") or []),
+                "cost_delta": _record(outcome.get("cost_delta")),
+                "outcome_id": outcome.get("outcome_id"),
+                "review_id": outcome.get("review_id"),
+                "matched_edge_ids": list(outcome.get("matched_edge_ids") or []),
+                "before_sha256": outcome.get("before_sha256"),
+                "after_sha256": outcome.get("after_sha256"),
+            } if outcome else None),
             "tool": ({"name": tool_result.get("tool"), "args": tool_result.get("args"),
                       "status": tool_result.get("status"), "sequence": _sequence(tool_result, tool_result["_order"]),
                       "result": _bounded(tool_result.get("result")),
@@ -174,6 +197,10 @@ def _failure_stage(turns):
         return "GUIDANCE_UNAVAILABLE"
     if any(not item["guidance"]["exposed"] for item in interventions):
         return "GUIDANCE_NOT_EXPOSED"
+    if any(_record(item.get("action_progress")).get("status") == "FAILED" for item in interventions):
+        return "GUIDED_ACTION_FAILED"
+    if any(_record(item.get("action_progress")).get("status") == "NO_PROGRESS" for item in interventions):
+        return "GUIDED_ACTION_NO_PROGRESS"
     if any(item["decision"] is None for item in interventions):
         if any(item["action_alignment"].get("blocked") for item in interventions):
             return "NO_PROGRESS_REPEAT_BLOCKED"
@@ -191,10 +218,11 @@ def project_sample_evidence(sample):
     turns = [project_turn(turn, index) for index, turn in enumerate(sample.get("turns", []))]
     interventions = [item for turn in turns for item in turn["interventions"]]
     alignments = Counter(item["action_alignment"]["status"] for item in interventions)
+    progress = Counter(_record(item.get("action_progress")).get("status") for item in interventions)
     fired = any(turn["environment"]["fired"] for turn in turns)
     passed = bool(sample.get("passed"))
     return {
-        "schema_version": 3,
+        "schema_version": 4,
         "case_id": sample.get("case_id"),
         "repetition": sample.get("repetition"),
         "passed": passed,
@@ -205,6 +233,13 @@ def project_sample_evidence(sample):
             "diverged": alignments["DIVERGED"],
             "unknown_alignment": alignments["UNKNOWN"] + alignments["NO_DECISION"],
             "blocked_repeats": alignments["BLOCKED"],
+            "progressed_actions": progress["PROGRESSED"],
+            "no_progress_actions": progress["NO_PROGRESS"],
+            "failed_actions": progress["FAILED"],
+            "deferred_actions": progress["DEFERRED"],
+            "unknown_progress_actions": progress["UNKNOWN"],
+            "typed_applicability_interventions": sum(
+                bool(item["applicability"].get("strategy")) for item in interventions),
             "deterministic_contracts": sum(
                 item["guidance"]["generation_mode"] == "deterministic-contract-v1" for item in interventions),
             "guidance_model_calls": sum(

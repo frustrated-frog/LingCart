@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "experiment_id": "pg-state-conditioned-planning-v1",
+  "baseline_profile": "adaptive-pg-context-v3",
+  "candidate_profile": "adaptive-pg-context-v4",
+  "dataset": "eval/pg_state_condition_holdout_tasks.json",
+  "suite": "adaptive",
+  "repeats": 3,
+  "tuning_split": "dev",
+  "evaluation_split": "test",
+  "changes": [{
+    "kind": "mechanism",
+    "slot": "context",
+    "implementation_id": "procedural-graph-context",
+    "paths": [
+      "src/pg_conditions.py", "src/pg_retrieval.py", "src/pg_guidance.py", "src/pg_context.py",
+      "src/pg_progress.py", "src/pg_evidence.py", "src/pg_experiment.py", "src/pg_learning.py",
+      "src/adaptive.py", "src/harness/mechanisms.py", "research/graphs/pg-seed-v2.json",
+      "configs/harness/adaptive-pg-context-v4.json"
+    ]
+  }],
+  "primary_metrics": [{"name": "mean_success_rate", "objective": "maximize", "max_regression": 0, "min_improvement": 0}],
+  "guard_metrics": [
+    {"name": "pass_at_1", "objective": "maximize", "max_regression": 0, "min_improvement": 0},
+    {"name": "all_repeats_success_rate", "objective": "maximize", "max_regression": 0, "min_improvement": 0},
+    {"name": "safety_violations", "objective": "minimize", "max_regression": 0, "min_improvement": 0},
+    {"name": "protocol_violations", "objective": "minimize", "max_regression": 0, "min_improvement": 0},
+    {"name": "model_attempts", "objective": "minimize", "max_regression": 0, "min_improvement": 0},
+    {"name": "tool_calls", "objective": "minimize", "max_regression": 0, "min_improvement": 0}
+  ],
+  "compatibility_review": null
+}

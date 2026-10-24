@@ -8,6 +8,8 @@ from typing import Literal, get_args
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from src.pg_conditions import EdgeCondition
+
 PAPER_ID = "arXiv:2609.09153v1"
 
 
@@ -70,12 +72,13 @@ class GraphEdge(FrozenModel):
     condition: str = Field(default="", max_length=400)
     guidance: str = Field(min_length=1, max_length=600)
     pitfalls: str = Field(default="", max_length=400)
+    applicability: EdgeCondition | None = None
 
     _strategy = field_validator("condition", "guidance", "pitfalls")(strategy_text)
 
 
 class ProceduralGraph(FrozenModel):
-    schema_version: Literal[1] = 1
+    schema_version: Literal[1, 2] = 1
     graph_id: str = Field(pattern=r"^[a-z][a-z0-9-]{0,79}$")
     version: int = Field(ge=0)
     parent_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
@@ -104,16 +107,35 @@ class ProceduralGraph(FrozenModel):
             raise ValueError("演化图必须有父版本和训练来源指纹")
         if self.version > 0 and (self.parent_sha256 is None or self.training_sha256 is None):
             raise ValueError("演化图缺少来源")
+        typed = [edge for edge in self.edges if edge.applicability is not None]
+        if self.schema_version == 1 and typed:
+            raise ValueError("v1 程序图不能混入类型化边条件")
+        if self.schema_version == 2 and len(typed) != len(self.edges):
+            raise ValueError("v2 程序图的每条边都必须声明类型化适用条件")
         return self
+
+    def _identity_payload(self):
+        payload = self.model_dump(mode="json")
+        # 新字段缺失时保持历史 v1 图的内容身份不变。
+        for edge in payload["edges"]:
+            if edge.get("applicability") is None:
+                edge.pop("applicability", None)
+        return payload
 
     @property
     def fingerprint(self):
-        return fingerprint(self.model_dump(mode="json"))
+        return fingerprint(self._identity_payload())
 
     @property
     def structure_sha256(self):
+        edges = []
+        for edge in sorted(self.edges, key=lambda item: item.id):
+            payload = edge.model_dump(mode="json")
+            if payload.get("applicability") is None:
+                payload.pop("applicability", None)
+            edges.append(payload)
         return fingerprint({"nodes": [n.model_dump() for n in sorted(self.nodes, key=lambda n: n.id)],
-                            "edges": [e.model_dump() for e in sorted(self.edges, key=lambda e: e.id)]})
+                            "edges": edges})
 
     @classmethod
     def from_path(cls, path: Path):
@@ -164,7 +186,7 @@ def apply_patch(graph: ProceduralGraph, patch: GraphPatch, *, training_sha256: s
         if edge.id in edges:
             raise ValueError("更新边必须显式删除后添加")
         edges[edge.id] = edge
-    result = ProceduralGraph(graph_id=graph.graph_id, version=graph.version + 1,
+    result = ProceduralGraph(schema_version=graph.schema_version, graph_id=graph.graph_id, version=graph.version + 1,
                              parent_sha256=graph.fingerprint, training_sha256=training_sha256,
                              nodes=tuple(sorted(nodes.values(), key=lambda n: n.id)),
                              edges=tuple(sorted(edges.values(), key=lambda e: e.id)))

@@ -5,6 +5,7 @@ from collections import deque
 from copy import deepcopy
 from typing import Any
 
+from src.pg_conditions import select_applicable_subgraph
 from src.pg_guidance import decision_fingerprint
 
 
@@ -34,7 +35,8 @@ def _result_outcome(step) -> str:
     return "PENDING" if getattr(step, "status", None) not in DONE_STATUSES else "UNKNOWN"
 
 
-def build_trajectory_state(state: dict, plan, events: list[dict], *, recent_limit: int = 6) -> dict:
+def build_trajectory_state(state: dict, plan, events: list[dict], *, recent_limit: int = 6,
+                           budget: dict | None = None) -> dict:
     """把 Runtime、目标账本和计划投影为无业务关键词的稳定定位输入。"""
     revision = state.get("goal_revision", 0)
     steps = {step.step_id: step for step in plan.steps}
@@ -47,13 +49,23 @@ def build_trajectory_state(state: dict, plan, events: list[dict], *, recent_limi
         if not isinstance(action, str) or not action:
             continue
         step = steps.get(event.get("step_id"))
+        effective_decision = deepcopy(decision)
+        identity_basis = "model_decision"
+        if decision.get("action") == "tool" and step is not None:
+            # TaskStep.args 是穿过 schema 校验和目录别名归一化后真正交给 ToolExecutor 的参数。
+            # 重放保护必须以这个执行身份为准，不能让两个原始别名伪装成不同调用。
+            effective_decision["args"] = deepcopy(getattr(step, "args", {}))
+            identity_basis = "validated_tool_args"
         actions.append({
             "action": action,
             "sequence": event.get("sequence"),
             "step_id": event.get("step_id"),
             "step_status": getattr(step, "status", None),
             "outcome": _result_outcome(step),
-            "decision_fingerprint": decision_fingerprint(decision),
+            "decision_fingerprint": decision_fingerprint(effective_decision),
+            "raw_decision_fingerprint": decision_fingerprint(decision),
+            "decision_identity_basis": identity_basis,
+            "argument_provenance": deepcopy(getattr(step, "argument_provenance", None)),
         })
 
     goal = _record(state.get("goal"))
@@ -75,6 +87,19 @@ def build_trajectory_state(state: dict, plan, events: list[dict], *, recent_limi
                      for step in plan.steps if step.status not in DONE_STATUSES]
     unresolved = [item for item in objectives if item["status"] != "VERIFIED"]
     feedback = _record(state.get("feedback"))
+    edge_feedback: dict[str, dict[str, int]] = {}
+    for event in events:
+        if event.get("type") != "pg_action_outcome" or event.get("goal_revision", revision) != revision:
+            continue
+        status = str(event.get("progress_status") or "").lower()
+        key = {"progressed": "progressed", "no_progress": "no_progress", "failed": "failed"}.get(status)
+        if key is None:
+            continue
+        for edge_id in event.get("matched_edge_ids") or []:
+            if not isinstance(edge_id, str):
+                continue
+            counts = edge_feedback.setdefault(edge_id, {"progressed": 0, "no_progress": 0, "failed": 0})
+            counts[key] += 1
     snapshot = {
         "schema_version": 1,
         "goal_revision": revision,
@@ -87,10 +112,41 @@ def build_trajectory_state(state: dict, plan, events: list[dict], *, recent_limi
         "feedback_code": feedback.get("code"),
         "recent_actions": actions[-recent_limit:],
         "pending_steps": pending_steps[:12],
+        "budget": deepcopy(budget) if isinstance(budget, dict) else {},
+        "edge_feedback": edge_feedback,
     }
     # 保留 v1 证据字段，旧 UI 和历史投影无需猜测迁移语义。
     snapshot["unfinished_plan_steps"] = deepcopy(snapshot["pending_steps"])
     return snapshot
+
+
+def retrieve_state_conditioned(graph, trajectory: dict, *, hops: int = 2, max_edges: int = 6,
+                               min_score: float = 0.55) -> dict:
+    """先定位候选局部图，再用受限条件协议筛出当前有证据支撑的一跳边。"""
+    localized = retrieve_state_aware(
+        graph,
+        trajectory,
+        hops=hops,
+        # 条件筛选前允许多取少量候选，但总量仍由 V2 的硬上限约束。
+        max_edges=min(16, max(max_edges, max_edges * 2)),
+        min_score=min_score,
+    )
+    if localized.get("abstained"):
+        return {
+            **localized,
+            "algorithm": "trajectory-state-conditioned-v4",
+            "applicability": {
+                "strategy": "typed-evidence-v1",
+                "status": "ABSTAINED",
+                "reason": "LOCALIZATION_ABSTAINED",
+                "evaluations": [],
+                "selected_edge_ids": [],
+                "false_edge_ids": [],
+                "unknown_edge_ids": [],
+            },
+            "paths": [],
+        }
+    return select_applicable_subgraph(graph, localized, trajectory, max_edges=max_edges)
 
 
 def _distances_to_targets(graph, targets: set[str]) -> dict[str, int]:

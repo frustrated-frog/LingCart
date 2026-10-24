@@ -151,13 +151,17 @@ def _review_liveplan_candidate(context, recorder, state, plan, decision):
     return True
 
 
-def _review_context_candidate(context, recorder, state, plan, decision):
+def _review_context_candidate(context, recorder, state, plan, decision, *, raw_decision=None,
+                              argument_provenance=None, identity_basis=None):
     engine = context.context_engine
     if engine is None or not hasattr(engine, 'review_candidate'):
-        return False
-    review = engine.review_candidate(context, decision)
+        return None
+    review = engine.review_candidate(context, decision, raw_decision=raw_decision,
+                                     argument_provenance=argument_provenance,
+                                     identity_basis=identity_basis,
+                                     state=state, plan=plan)
     if not review or not review.get('blocked'):
-        return False
+        return review
     _discard_native_queue(context, state, 'PG_GUIDANCE_CONTRACT_REJECTED')
     state['feedback'] = {
         'code': 'PG_GUIDANCE_CONTRACT_REJECTED',
@@ -173,7 +177,15 @@ def _review_context_candidate(context, recorder, state, plan, decision):
                and event.get('review_id') == review.get('review_id') for event in context.events):
         recorder.record('decision_rejected', code='PG_GUIDANCE_CONTRACT_REJECTED',
                         action=decision.action, review_id=review.get('review_id'))
-    return True
+    return review
+
+
+def _record_context_outcome(context, state, plan, pending, decision, step):
+    engine = context.context_engine
+    if engine is None or not hasattr(engine, 'review_outcome'):
+        return None
+    return engine.review_outcome(context, state, plan,
+        review_id=(pending or {}).get('pg_review_id'), decision=decision, step=step)
 
 
 def _apply_binding_transaction(context, recorder, state, plan, history, transaction, *, reject_as_error):
@@ -440,14 +452,15 @@ def _normalize_goal_catalog_aliases(goal, request, history):
     return payload, provenance
 
 
-def _accept(context, recorder, state, plan, decision, history):
+def _accept(context, recorder, state, plan, decision, history, *, validated_tool=None, pg_review=None):
     if state['goal'] is None:
         if decision.goal is None:
             if decision.action in {'clarify', 'respond', 'handoff', 'unsupported'}:
                 if decision.commands:
                     from src.dialogue_understanding import validate_command_grounding
                     validate_command_grounding(decision.commands, state['request'], history)
-                state['pending'] = dict(decision=decision.model_dump(), step_id=None)
+                state['pending'] = dict(decision=decision.model_dump(), step_id=None,
+                                        pg_review_id=(pg_review or {}).get('review_id'))
                 state['model_cursor'] = context.model_cursor
                 _save(context, state, plan)
                 recorder.record('adaptive_decision', source='model', decision=decision.model_dump(),
@@ -513,7 +526,8 @@ def _accept(context, recorder, state, plan, decision, history):
         state['next_steps'] = decision.next_steps
     step = None
     if decision.action == 'tool':
-        args, argument_provenance = _validate_tool(decision, state, plan, history)
+        args, argument_provenance = (validated_tool if validated_tool is not None
+                                     else _validate_tool(decision, state, plan, history))
         step = TaskStep(f'step-{len(plan.steps) + 1}', 'shopping', decision.tool, args,
                         argument_provenance=argument_provenance)
         if argument_provenance:
@@ -538,13 +552,16 @@ def _accept(context, recorder, state, plan, decision, history):
         candidate.steps.append(step)
         candidate.validate(context.limits.max_steps, context.limits.max_depth)
         plan.steps.append(step)
-    state['pending'] = dict(decision=decision.model_dump(), step_id=step.step_id if step else None)
+    state['pending'] = dict(decision=decision.model_dump(), step_id=step.step_id if step else None,
+                            pg_review_id=(pg_review or {}).get('review_id'))
     state['model_cursor'] = context.model_cursor
     state['feedback'] = None
     _save(context, state, plan)
     recorder.record('adaptive_decision', source='model', decision=decision.model_dump(),
                     goal_revision=state['goal_revision'], step_id=step.step_id if step else None,
-                    native_submission=state.get('active_native_submission'))
+                    native_submission=state.get('active_native_submission'),
+                    pg_review_id=(pg_review or {}).get('review_id'),
+                    effective_decision_fingerprint=(pg_review or {}).get('actual_decision_fingerprint'))
 
 
 def _selection_step(state, plan, decision):
@@ -814,9 +831,24 @@ def _run(context, user_message, history, pending_action):
                     apply_controls(context)
                     if _review_liveplan_candidate(context, recorder, state, plan, decision):
                         continue
-                    if _review_context_candidate(context, recorder, state, plan, decision):
+                    validated_tool = None
+                    effective_decision = decision
+                    # 首次复合决策沿用既有事务边界：先接受合法目标，工具参数错误再走修复轮。
+                    # 后续工具决策已经有稳定目标，必须在 PG 重放审查前按真实执行参数归一化。
+                    if decision.action == 'tool' and state.get('goal') is not None:
+                        validated_tool = _validate_tool(decision, state, plan, history)
+                        effective_decision = decision.model_copy(update={'args': validated_tool[0]})
+                    pg_review = _review_context_candidate(
+                        context, recorder, state, plan, effective_decision,
+                        raw_decision=decision,
+                        argument_provenance=validated_tool[1] if validated_tool else None,
+                        identity_basis=('validated_normalized_tool_args' if validated_tool
+                                        else 'model_decision_before_first_tool_validation'),
+                    )
+                    if pg_review and pg_review.get('blocked'):
                         continue
-                    _accept(context, recorder, state, plan, decision, history)
+                    _accept(context, recorder, state, plan, decision, history,
+                            validated_tool=validated_tool, pg_review=pg_review)
                     apply_controls(context)
                 except AgentError as error:
                     if error.code in {'MODEL_FORMAT_ERROR', 'UNKNOWN_TOOL', 'INVALID_TOOL_ARGUMENTS', 'REQUEST_AUDIT_REJECTED', 'AUDIT_FORMAT_ERROR',
@@ -837,11 +869,14 @@ def _run(context, user_message, history, pending_action):
             decision = Decision.model_validate(pending['decision'])
             step = next((s for s in plan.steps if s.step_id == pending['step_id']), None)
             if decision.action in {'respond', 'unsupported'}:
+                _record_context_outcome(context, state, plan, pending, decision, step)
                 return _present_dialogue(context, recorder, intake, state, plan, decision)
             if decision.action == 'handoff':
                 from src.orchestrator import _explicit_escalation
+                _record_context_outcome(context, state, plan, pending, decision, step)
                 return _explicit_escalation(intake, context.run_id, state['request'])
             if decision.action in {'clarify', 'finish'}:
+                _record_context_outcome(context, state, plan, pending, decision, step)
                 return _present(context, recorder, intake, state, plan,
                     reason='MODEL_CLARIFICATION' if decision.action == 'clarify' else 'MODEL_STOPPED', message=decision.message)
             if decision.action == 'recommend':
@@ -861,6 +896,7 @@ def _run(context, user_message, history, pending_action):
                 _save(context, state, plan)
                 message = _verify_recommendation(context, recorder, state, plan, decision, step)
                 record_outcome(state, decision.objective_id, step)
+                _record_context_outcome(context, state, plan, pending, decision, step)
                 if message is not None and len(state['objective_ledger']) == 1:
                     # Keep the pending proposal through terminal persistence. If
                     # the process dies before commit, resume must refresh again.
@@ -876,6 +912,7 @@ def _run(context, user_message, history, pending_action):
                         message='此选购项已核验，请继续处理剩余目标，再逐项提交 complete 证据。')
             elif decision.action == 'complete':
                 message = _complete(context, recorder, state, plan, decision)
+                _record_context_outcome(context, state, plan, pending, decision, step)
                 if message is not None:
                     apply_controls(context)
                     context.require()
@@ -930,6 +967,7 @@ def _run(context, user_message, history, pending_action):
                     step.status = 'FAILED'
                     step.error = dict(code=error.code, message=str(error))
                     state['feedback'] = dict(step_id=step.step_id, **step.error)
+            _record_context_outcome(context, state, plan, pending, decision, step)
             state['pending'] = None
             if state.get('feedback') and state['feedback'].get('code') != 'OBJECTIVES_REQUIRE_COMPLETION':
                 _discard_native_queue(context, state, state['feedback'].get('code', 'OBSERVATION_CHANGED'))

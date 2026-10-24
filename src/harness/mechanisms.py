@@ -243,5 +243,14 @@ def built_in_mechanisms() -> tuple[HarnessMechanism, ...]:
             min_localization_score=55,
             guidance_strategy="deterministic-contract-v1",
         ),
+        PGContextMechanism(
+            mechanism_version="4",
+            retrieval_strategy="trajectory-state-v2",
+            max_local_edges=6,
+            min_localization_score=55,
+            guidance_strategy="deterministic-contract-v1",
+            applicability_strategy="typed-evidence-v1",
+            path_ranking_strategy="goal-progress-cost-v1",
+        ),
     )
 

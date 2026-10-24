@@ -17,10 +17,13 @@ from src.procedural_graph import FrozenModel, ProceduralGraph, canonical, finger
 from src.pg_retrieval import (
     bounded_trajectory_snapshot,
     build_trajectory_state,
+    retrieve_state_conditioned,
     retrieve_state_aware,
     shadow_action_anchor,
 )
-from src.pg_guidance import compile_guidance_contract, render_guidance_contract, review_guidance_contract
+from src.pg_guidance import (compile_guidance_contract, decision_fingerprint,
+                             render_guidance_contract, review_guidance_contract)
+from src.pg_progress import assess_action_progress, progress_snapshot
 from src.runtime import current_runtime
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -72,12 +75,17 @@ class PGContextMechanism:
     max_local_edges: int = 6
     min_localization_score: int = 55
     guidance_strategy: str = "model-contextualization-v1"
+    applicability_strategy: str = "none"
+    path_ranking_strategy: str = "none"
 
     def configure(self, configuration):
         base_keys = {"graph_path", "hops", "max_graph_chars"}
         v2_keys = base_keys | {"retrieval_strategy", "max_local_edges", "min_localization_score"}
         v3_keys = v2_keys | {"guidance_strategy"}
-        expected = v3_keys if self.mechanism_version == "3" else v2_keys if self.mechanism_version == "2" else base_keys
+        v4_keys = v3_keys | {"applicability_strategy", "path_ranking_strategy"}
+        expected = (v4_keys if self.mechanism_version == "4" else v3_keys
+                    if self.mechanism_version == "3" else v2_keys
+                    if self.mechanism_version == "2" else base_keys)
         if set(configuration) != expected:
             raise ValueError("PG 必须冻结图路径、跳数和图上下文预算")
         path = configuration["graph_path"]
@@ -86,11 +94,12 @@ class PGContextMechanism:
                 or PurePosixPath(path).parts[:2] != ("research", "graphs") or not path.endswith(".json")
                 or not (ROOT / path).resolve().is_relative_to((ROOT / "research/graphs").resolve())):
             raise ValueError("PG 图必须位于 research/graphs 内")
+        graph = ProceduralGraph.from_path(ROOT / path)
         if type(configuration["hops"]) is not int or not 1 <= configuration["hops"] <= 3:
             raise ValueError("PG 跳数无效")
         if type(configuration["max_graph_chars"]) is not int or not 512 <= configuration["max_graph_chars"] <= 16000:
             raise ValueError("PG 图预算无效")
-        if self.mechanism_version in {"2", "3"}:
+        if self.mechanism_version in {"2", "3", "4"}:
             if configuration["retrieval_strategy"] != "trajectory-state-v2":
                 raise ValueError("PG v2+ 必须使用轨迹状态定位")
             if type(configuration["max_local_edges"]) is not int or not 1 <= configuration["max_local_edges"] <= 16:
@@ -98,20 +107,29 @@ class PGContextMechanism:
             if (type(configuration["min_localization_score"]) is not int
                     or not 1 <= configuration["min_localization_score"] <= 100):
                 raise ValueError("PG 定位置信阈值无效")
-        if self.mechanism_version == "3" and configuration["guidance_strategy"] != "deterministic-contract-v1":
-            raise ValueError("PG v3 必须使用确定性指导契约")
-        graph = ProceduralGraph.from_path(ROOT / path)
+        if self.mechanism_version in {"3", "4"} and configuration["guidance_strategy"] != "deterministic-contract-v1":
+            raise ValueError("PG v3+ 必须使用确定性指导契约")
+        if self.mechanism_version == "4":
+            if configuration["applicability_strategy"] != "typed-evidence-v1":
+                raise ValueError("PG v4 必须使用类型化证据适用性")
+            if configuration["path_ranking_strategy"] != "goal-progress-cost-v1":
+                raise ValueError("PG v4 必须使用目标进展与成本排序")
+            if graph.schema_version != 2:
+                raise ValueError("PG v4 必须绑定包含类型化边条件的 v2 图")
         return replace(self, **configuration, graph_sha256=graph.fingerprint)
 
     @property
     def configuration(self):
         result = {"graph_path": self.graph_path, "graph_sha256": self.graph_sha256,
                   "hops": self.hops, "max_graph_chars": self.max_graph_chars}
-        if self.mechanism_version in {"2", "3"}:
+        if self.mechanism_version in {"2", "3", "4"}:
             result.update(retrieval_strategy=self.retrieval_strategy, max_local_edges=self.max_local_edges,
                           min_localization_score=self.min_localization_score)
-        if self.mechanism_version == "3":
+        if self.mechanism_version in {"3", "4"}:
             result["guidance_strategy"] = self.guidance_strategy
+        if self.mechanism_version == "4":
+            result.update(applicability_strategy=self.applicability_strategy,
+                          path_ranking_strategy=self.path_ranking_strategy)
         return result
 
     def install(self, context):
@@ -120,7 +138,9 @@ class PGContextMechanism:
     def provenance(self):
         from src.harness.mechanisms import source_fingerprint
         implementation = (("src/pg_guidance.py", "src/adaptive.py")
-                          if self.mechanism_version == "3" else ())
+                          if self.mechanism_version in {"3", "4"} else ())
+        if self.mechanism_version == "4":
+            implementation += ("src/pg_conditions.py", "src/pg_progress.py")
         files = self.source_files + implementation + ((self.graph_path,) if self.graph_path else ())
         return {"slot": self.slot, "id": self.mechanism_id, "version": self.mechanism_version,
                 "source_files": list(files), "implementation_sha256": source_fingerprint(files),
@@ -137,19 +157,24 @@ class PGContextMechanism:
                                retrieval_strategy=self.retrieval_strategy,
                                max_local_edges=self.max_local_edges,
                                min_localization_score=self.min_localization_score / 100,
-                               guidance_strategy=self.guidance_strategy)
+                               guidance_strategy=self.guidance_strategy,
+                               applicability_strategy=self.applicability_strategy,
+                               path_ranking_strategy=self.path_ranking_strategy)
 
 
 class PGContextEngine:
     def __init__(self, base, graph, *, hops=2, max_graph_chars=10000, mechanism_version="1",
                  retrieval_strategy="action-anchor-v1", max_local_edges=6, min_localization_score=0.55,
-                 guidance_strategy="model-contextualization-v1"):
+                 guidance_strategy="model-contextualization-v1", applicability_strategy="none",
+                 path_ranking_strategy="none"):
         self.base, self.graph, self.hops, self.max_graph_chars = base, graph, hops, max_graph_chars
         self.mechanism_version = mechanism_version
         self.retrieval_strategy = retrieval_strategy
         self.max_local_edges = max_local_edges
         self.min_localization_score = min_localization_score
         self.guidance_strategy = guidance_strategy
+        self.applicability_strategy = applicability_strategy
+        self.path_ranking_strategy = path_ranking_strategy
 
     def __getattr__(self, name):
         return getattr(self.base, name)
@@ -159,8 +184,18 @@ class PGContextEngine:
             "graph_id": self.graph.graph_id, "version": self.graph.version, "sha256": self.graph.fingerprint}}
 
     def _guidance(self, runtime, state, plan, max_chars):
-        trajectory = build_trajectory_state(state, plan, runtime.events)
-        if self.retrieval_strategy == "trajectory-state-v2":
+        budget = None
+        if self.applicability_strategy == "typed-evidence-v1":
+            budget = {
+                "model_calls_remaining": max(0, runtime.limits.max_model_calls - runtime.counters["model_calls"]),
+                "tool_calls_remaining": max(0, runtime.limits.max_tool_calls - runtime.counters["tool_calls"]),
+            }
+        trajectory = build_trajectory_state(state, plan, runtime.events, budget=budget)
+        if self.applicability_strategy == "typed-evidence-v1":
+            selection = retrieve_state_conditioned(self.graph, trajectory, hops=self.hops,
+                max_edges=self.max_local_edges, min_score=self.min_localization_score)
+            shadow = shadow_action_anchor(self.graph, trajectory, hops=self.hops)
+        elif self.retrieval_strategy == "trajectory-state-v2":
             selection = retrieve_state_aware(self.graph, trajectory, hops=self.hops,
                 max_edges=self.max_local_edges, min_score=self.min_localization_score)
             shadow = shadow_action_anchor(self.graph, trajectory, hops=self.hops)
@@ -195,7 +230,8 @@ class PGContextEngine:
                  "anchor": selection["anchor"], "fallback": selection["fallback"],
                  "abstained": selection.get("abstained", False),
                  "node_ids": [n["id"] for n in selection["nodes"]],
-                 "edge_ids": [], "retrieved_edge_ids": [e["id"] for e in selection["edges"]],
+                 "edge_ids": [], "retrieved_edge_ids": list(selection.get("candidate_edge_ids")
+                                                               or [e["id"] for e in selection["edges"]]),
                  "subgraph": selection if len(canonical(selection)) <= self.max_graph_chars else None,
                  "localization": {
                      "algorithm": selection.get("algorithm", self.retrieval_strategy),
@@ -206,6 +242,8 @@ class PGContextEngine:
                      "excluded_edge_ids": selection.get("excluded_edge_ids", []),
                      "shadow": shadow,
                  },
+                 "applicability": deepcopy(selection.get("applicability")),
+                 "projected_paths": deepcopy(selection.get("paths") or []),
                  "state_snapshot": bounded_trajectory_snapshot(prompt_trajectory),
                  "guidance": "", "guidance_contract": None,
                  "generation": {"mode": self.guidance_strategy, "model_calls": 0},
@@ -221,15 +259,16 @@ class PGContextEngine:
             event["reason"] = "CONTEXT_BUDGET"
         elif selection.get("abstained"):
             event["reason"] = "LOCALIZATION_ABSTAINED"
-        elif not selection["edges"]:
-            event["reason"] = "NO_OUTGOING_EDGES"
         elif contract is not None:
             guidance = render_guidance_contract(contract)
             event.update(guidance_contract=contract,
                          edge_ids=list(contract["edge_ids"]),
                          guidance=guidance,
                          status="READY" if guidance else "ABSTAINED",
-                         reason="DETERMINISTIC_CONTRACT" if guidance else "NO_ACTIONABLE_EDGE")
+                         reason="DETERMINISTIC_CONTRACT" if guidance else (
+                             "NO_APPLICABLE_EDGES" if selection.get("applicability") else "NO_ACTIONABLE_EDGE"))
+        elif not selection["edges"]:
+            event["reason"] = "NO_OUTGOING_EDGES"
         elif not cached_model and runtime.limits.max_model_calls - runtime.counters["model_calls"] < 3:
             event["reason"] = "RESERVED_DECISION_AND_AUDIT"
         else:
@@ -284,7 +323,8 @@ class PGContextEngine:
                         pg_status="EXPOSED" if exposed else ("CONTEXT_OMITTED" if event["status"] == "READY" else event["status"]))
         return messages, manifest
 
-    def review_candidate(self, runtime, decision):
+    def review_candidate(self, runtime, decision, *, raw_decision=None, argument_provenance=None,
+                         identity_basis=None, state=None, plan=None):
         """审计契约采用情况；只阻止已有无进展证据的完全相同重放。"""
         if self.guidance_strategy != "deterministic-contract-v1":
             return None
@@ -300,7 +340,13 @@ class PGContextEngine:
                          and isinstance(event.get("guidance_contract"), dict)), None)
         if guidance is None:
             return None
-        review = review_guidance_contract(guidance["guidance_contract"], decision.model_dump(mode="json"))
+        effective_payload = (decision.model_dump(mode="json") if hasattr(decision, "model_dump")
+                             else deepcopy(decision))
+        raw_payload = (raw_decision.model_dump(mode="json") if hasattr(raw_decision, "model_dump")
+                       else deepcopy(raw_decision) if isinstance(raw_decision, dict)
+                       else deepcopy(effective_payload))
+        review = review_guidance_contract(guidance["guidance_contract"], effective_payload)
+        raw_fingerprint = decision_fingerprint(raw_payload)
         review_id = fingerprint({"decision_key": guidance["decision_key"],
                                  "decision_fingerprint": review["actual_decision_fingerprint"]})
         previous = next((event for event in reversed(runtime.events)
@@ -308,6 +354,48 @@ class PGContextEngine:
                          and event.get("review_id") == review_id), None)
         if previous is not None:
             return previous
+        before = (progress_snapshot(state, plan, runtime)
+                  if self.mechanism_version == "4" and isinstance(state, dict) and plan is not None else None)
         return runtime.record("pg_decision_reviewed", review_id=review_id,
             decision_key=guidance["decision_key"], contract_id=guidance["guidance_contract"]["contract_id"],
+            goal_revision=state.get("goal_revision", 0) if isinstance(state, dict) else None,
+            raw_decision_fingerprint=raw_fingerprint,
+            decision_identity_basis=(identity_basis or (
+                "validated_normalized_tool_args" if effective_payload.get("action") == "tool"
+                else "validated_decision")),
+            argument_provenance=deepcopy(argument_provenance or {}),
+            progress_before=before,
             **review)
+
+    def review_outcome(self, runtime, state, plan, *, review_id, decision, step=None):
+        """把一次采用审查和随后发生的真实状态变化连接为幂等证据。"""
+        if self.mechanism_version != "4" or not review_id:
+            return None
+        review = next((event for event in reversed(runtime.events)
+                       if event.get("type") == "pg_decision_reviewed"
+                       and event.get("review_id") == review_id), None)
+        if review is None or not isinstance(review.get("progress_before"), dict):
+            return None
+        outcome_id = fingerprint({"review_id": review_id, "step_id": getattr(step, "step_id", None)})
+        previous = next((event for event in reversed(runtime.events)
+                         if event.get("type") == "pg_action_outcome"
+                         and event.get("outcome_id") == outcome_id), None)
+        if previous is not None:
+            return previous
+        after = progress_snapshot(state, plan, runtime)
+        payload = decision.model_dump(mode="json") if hasattr(decision, "model_dump") else deepcopy(decision)
+        assessment = assess_action_progress(review["progress_before"], after, payload, step=step)
+        return runtime.record(
+            "pg_action_outcome",
+            outcome_id=outcome_id,
+            review_id=review_id,
+            decision_key=review.get("decision_key"),
+            contract_id=review.get("contract_id"),
+            goal_revision=state.get("goal_revision", 0),
+            decision_fingerprint=review.get("actual_decision_fingerprint"),
+            raw_decision_fingerprint=review.get("raw_decision_fingerprint"),
+            matched_edge_ids=deepcopy(review.get("matched_edge_ids") or []),
+            progress_before=deepcopy(review["progress_before"]),
+            progress_after=after,
+            **assessment,
+        )

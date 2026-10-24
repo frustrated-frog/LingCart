@@ -50,6 +50,7 @@ def compile_guidance_contract(graph, selection: dict, trajectory: dict) -> dict:
     唯一硬阻断是已有真实 EMPTY/ERROR 结果的完全相同决策指纹。
     """
     nodes = {node.id: node for node in graph.nodes}
+    typed_applicability = isinstance(selection.get("applicability"), dict)
     instructions = []
     recommended_actions = []
     for edge in selection.get("edges") or []:
@@ -67,6 +68,8 @@ def compile_guidance_contract(graph, selection: dict, trajectory: dict) -> dict:
             "condition": edge.get("condition") or "",
             "guidance": edge.get("guidance") or "",
             "pitfalls": edge.get("pitfalls") or "",
+            "applicability": deepcopy(edge.get("applicability")),
+            "path_score": edge.get("path_score"),
         })
     recommended_actions = list(dict.fromkeys(recommended_actions))
 
@@ -77,6 +80,8 @@ def compile_guidance_contract(graph, selection: dict, trajectory: dict) -> dict:
             continue
         forbidden_repeats.append({
             "decision_fingerprint": identity,
+            "raw_decision_fingerprint": item.get("raw_decision_fingerprint"),
+            "decision_identity_basis": item.get("decision_identity_basis", "model_decision"),
             "action": item.get("action"),
             "outcome": item.get("outcome"),
             "sequence": item.get("sequence"),
@@ -84,15 +89,23 @@ def compile_guidance_contract(graph, selection: dict, trajectory: dict) -> dict:
         })
 
     basis = {
-        "schema_version": 1,
+        "schema_version": 2 if typed_applicability else 1,
         "graph_sha256": graph.fingerprint,
         "localization_anchor": selection.get("anchor"),
         "localization_confidence": selection.get("confidence"),
         "edge_ids": [item["edge_id"] for item in instructions],
         "recommended_actions": recommended_actions,
         "forbidden_repeats": forbidden_repeats,
-        "policy": "ADVISORY_EXCEPT_EXACT_NO_PROGRESS_REPEAT",
+        "policy": ("STATE_CONDITIONED_ADVISORY_EXCEPT_EXACT_NO_PROGRESS_REPEAT"
+                   if typed_applicability else "ADVISORY_EXCEPT_EXACT_NO_PROGRESS_REPEAT"),
     }
+    if typed_applicability:
+        basis.update(
+            applicability_strategy=selection["applicability"].get("strategy"),
+            applicability_status=selection["applicability"].get("status"),
+            condition_evaluations=deepcopy(selection["applicability"].get("evaluations") or []),
+            projected_paths=deepcopy(selection.get("paths") or []),
+        )
     return {**basis, "contract_id": fingerprint(basis), "instructions": instructions}
 
 
@@ -100,12 +113,24 @@ def render_guidance_contract(contract: dict) -> str:
     parts = []
     actions = contract.get("recommended_actions") or []
     if actions:
-        parts.append("程序图候选后继：" + "、".join(actions) + "；必须结合边条件与当前证据判断是否适用。")
+        qualifier = ("这些后继的受限条件已由可信轨迹证据判定为 TRUE"
+                     if contract.get("schema_version") == 2 else "必须结合边条件与当前证据判断是否适用")
+        parts.append("程序图候选后继：" + "、".join(actions) + f"；{qualifier}。")
     for item in contract.get("instructions") or []:
         row = f"[{item['edge_id']}] 条件：{item['condition'] or '未声明'}；建议：{item['guidance']}"
         if item.get("pitfalls"):
             row += f"；避免：{item['pitfalls']}"
+        applicability = item.get("applicability") or {}
+        if applicability.get("status"):
+            bindings = applicability.get("evidence_bindings") or []
+            row += "；适用性：" + applicability["status"]
+            if bindings:
+                row += "（" + "，".join(
+                    f"{binding.get('fact')}={binding.get('actual')}" for binding in bindings
+                ) + "）"
         parts.append(row + "。")
+    if contract.get("projected_paths"):
+        parts.append("路径中只有第一条边是当前适用建议；后续边必须在状态变化后重新求值，不能提前执行。")
     if contract.get("forbidden_repeats"):
         parts.append("不得原样重复已返回空结果或错误的相同决策；可以改变有依据的参数、选择其他目标或如实停止。")
     return "\n".join(parts)

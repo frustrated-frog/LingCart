@@ -91,7 +91,7 @@ def test_projection_uses_persisted_contract_review_and_counts_blocked_repeat():
 
     projection = project_sample_evidence(value)
     intervention = projection['turns'][0]['interventions'][0]
-    assert projection['schema_version'] == 3
+    assert projection['schema_version'] == 4
     assert intervention['guidance']['generation_mode'] == 'deterministic-contract-v1'
     assert intervention['action_alignment']['status'] == 'BLOCKED'
     assert intervention['action_alignment']['blocked'] is True
@@ -99,3 +99,39 @@ def test_projection_uses_persisted_contract_review_and_counts_blocked_repeat():
     assert projection['summary']['deterministic_contracts'] == 1
     assert projection['summary']['guidance_model_calls'] == 0
     assert projection['summary']['failure_stage'] == 'NO_PROGRESS_REPEAT_BLOCKED'
+
+
+def test_projection_links_typed_applicability_review_and_real_progress():
+    value = sample()
+    events = value['turns'][0]['result']['events']
+    guidance = events[0]
+    guidance.update(
+        applicability={
+            'strategy': 'typed-evidence-v1', 'status': 'APPLICABLE', 'reason': 'APPLICABLE_EDGE_FOUND',
+            'evaluations': [{'edge_id': 'start-search', 'status': 'TRUE'}],
+            'selected_edge_ids': ['start-search'], 'false_edge_ids': [], 'unknown_edge_ids': [],
+        },
+        projected_paths=[{'path_id': 'path-1', 'edge_ids': ['start-search'],
+                          'currently_applicable_prefix': 1}],
+    )
+    events.insert(4, {
+        'type': 'pg_decision_reviewed', 'sequence': 4, 'decision_key': 'decision-1',
+        'review_id': 'review-1', 'contract_id': 'contract-1', 'status': 'ALIGNED',
+        'blocked': False, 'reason': 'RECOMMENDED_ACTION', 'actual_action': 'search_products',
+        'recommended_actions': ['search_products'], 'matched_edge_ids': ['start-search'],
+    })
+    events.append({
+        'type': 'pg_action_outcome', 'sequence': 8, 'decision_key': 'decision-1',
+        'review_id': 'review-1', 'outcome_id': 'outcome-1', 'progress_status': 'PROGRESSED',
+        'progress_reason': 'VERIFIABLE_STATE_CHANGE', 'signals': ['TRUSTED_OBSERVATION_ADDED'],
+        'cost_delta': {'model_calls': 0, 'tool_calls': 1}, 'matched_edge_ids': ['start-search'],
+        'before_sha256': 'a' * 64, 'after_sha256': 'b' * 64,
+    })
+
+    projection = project_sample_evidence(value)
+    intervention = projection['turns'][0]['interventions'][0]
+    assert intervention['applicability']['selected_edge_ids'] == ['start-search']
+    assert intervention['action_progress']['status'] == 'PROGRESSED'
+    assert intervention['action_progress']['signals'] == ['TRUSTED_OBSERVATION_ADDED']
+    assert projection['summary']['typed_applicability_interventions'] == 1
+    assert projection['summary']['progressed_actions'] == 1

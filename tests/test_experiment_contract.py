@@ -68,6 +68,20 @@ def test_pg_guidance_contract_experiment_freezes_v2_localization_as_baseline():
     ]
     assert {'model_attempts', 'tool_calls'} <= {rule.name for rule in experiment.guard_metrics}
 
+
+def test_pg_state_condition_experiment_uses_v3_baseline_and_fresh_holdout():
+    from eval.run_live_eval import load_dataset
+
+    experiment = ExperimentSpec.from_path(
+        ROOT / 'research/experiments/pg-state-conditioned-planning-v1/experiment-spec.json')
+    dataset = load_dataset(ROOT / experiment.dataset)
+    assert experiment.baseline_profile == 'adaptive-pg-context-v3'
+    assert experiment.candidate_profile == 'adaptive-pg-context-v4'
+    assert dataset['split_counts'] == {'dev': 2, 'test': 4}
+    assert all(case['id'].startswith('PGS-D') for case in dataset['cases'] if case['split'] == 'dev')
+    assert all(case['id'].startswith('PGS-H') for case in dataset['cases'] if case['split'] == 'test')
+    assert 'PG13' not in {case['id'] for case in dataset['cases']}
+
 def test_contract_rejects_reversed_guards_and_requires_a_cost_metric():
     payload = json.loads((ROOT / 'research/templates/experiment-spec.json').read_text())
     payload['guard_metrics'][0]['objective'] = 'minimize'

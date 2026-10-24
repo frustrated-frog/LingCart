@@ -118,6 +118,14 @@ def behavior_metrics(report):
             'pg_action_diverged': sum(item['action_alignment']['status'] == 'DIVERGED' for item in interventions),
             'pg_no_progress_repeats_blocked': sum(item['action_alignment']['status'] == 'BLOCKED'
                                                    for item in interventions),
+            'pg_typed_applicability_interventions': sum(
+                bool(item.get('applicability', {}).get('strategy')) for item in interventions),
+            'pg_actions_progressed': sum(
+                (item.get('action_progress') or {}).get('status') == 'PROGRESSED' for item in interventions),
+            'pg_actions_without_progress': sum(
+                (item.get('action_progress') or {}).get('status') == 'NO_PROGRESS' for item in interventions),
+            'pg_actions_failed': sum(
+                (item.get('action_progress') or {}).get('status') == 'FAILED' for item in interventions),
             'pg_deterministic_contracts': sum(item['guidance'].get('generation_mode') == 'deterministic-contract-v1'
                                               for item in interventions),
             'pg_guidance_model_calls': sum(item['guidance'].get('generation_model_calls') or 0

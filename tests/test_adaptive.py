@@ -225,6 +225,51 @@ def test_pg_contract_blocks_exact_empty_result_replay_before_second_tool_call(mo
                    for event in result['events'])
 
 
+def test_pg_v4_blocks_catalog_alias_replay_by_validated_execution_identity(monkeypatch):
+    from src.context_engine import ContextEngine
+    from src.pg_context import PGContextEngine
+    from src.procedural_graph import ProceduralGraph
+    from src.runtime import RunRuntime, runtime_scope
+
+    calls = []
+    def empty_search(**kwargs):
+        calls.append(kwargs)
+        return {'products': [], 'total': 0, 'filters': kwargs, 'data_source': 'TEST_CATALOG'}
+    install(monkeypatch, 'search_products', empty_search)
+    keyboard_goal = goal(
+        summary='选购键盘',
+        objectives=[dict(id='shopping', description='推荐键盘', source_quote='键盘', kind='recommend')],
+        hard_constraints=[
+            dict(description='键盘品类', source_quote='键盘', field='category', op='eq', value='keyboard'),
+        ],
+    )
+    first = dict(action='tool', reason='查询真实目录', goal=keyboard_goal, tool='search_products',
+                 args=dict(query='键盘', category='keyboard', limit=2))
+    alias_replay = dict(action='tool', reason='换用中文品类别名重试', tool='search_products',
+                        args=dict(query='键盘', category='键盘', limit=2))
+    model(monkeypatch, first, alias_replay, clarification)
+    context = RunRuntime('pg-v4-alias-integration', BudgetLimits(max_model_calls=8))
+    context.context_engine = PGContextEngine(ContextEngine('推荐键盘'),
+        ProceduralGraph.from_path(Path('research/graphs/pg-seed-v2.json')),
+        mechanism_version='4', retrieval_strategy='trajectory-state-v2',
+        guidance_strategy='deterministic-contract-v1', applicability_strategy='typed-evidence-v1',
+        path_ranking_strategy='goal-progress-cost-v1')
+
+    with runtime_scope(context):
+        result = run_adaptive('推荐键盘')
+
+    assert result['status'] == 'WAITING_CLARIFICATION', result
+    assert calls == [{'query': '键盘', 'category': '键盘', 'limit': 2}]
+    blocked = next(event for event in result['events']
+                   if event['type'] == 'pg_decision_reviewed' and event['status'] == 'BLOCKED')
+    assert blocked['decision_identity_basis'] == 'validated_normalized_tool_args'
+    assert blocked['blocked_by']['raw_decision_fingerprint'] != blocked['actual_decision_fingerprint']
+    outcomes = [event for event in result['events'] if event['type'] == 'pg_action_outcome']
+    assert outcomes and outcomes[0]['review_id']
+    assert outcomes[0]['progress_status'] == 'PROGRESSED'
+    assert 'GOAL_DEFINED' in outcomes[0]['signals']
+
+
 def test_repeated_refreshes_do_not_create_artificial_dependency_depth():
     from src.adaptive import _selection_step
     from src.adaptive_decision import Decision

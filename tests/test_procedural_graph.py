@@ -322,3 +322,18 @@ def test_v3_profile_freezes_v2_localization_and_changes_only_guidance_strategy()
     assert v3.provenance()["research"]["status"] == "candidate"
     with pytest.raises(AgentError, match="仅限研究"):
         get_product_runner("adaptive-pg-context-v3")
+
+
+def test_v4_profile_adds_typed_applicability_without_promoting_product_use():
+    v3 = get_runner("adaptive-pg-context-v3")
+    v4 = get_runner("adaptive-pg-context-v4")
+    v3_context = v3.build_context("推荐耳机")
+    v4_context = v4.build_context("推荐耳机")
+    assert v3_context.retrieval_strategy == v4_context.retrieval_strategy == "trajectory-state-v2"
+    assert v3_context.guidance_strategy == v4_context.guidance_strategy == "deterministic-contract-v1"
+    assert v3_context.graph.schema_version == 1 and v4_context.graph.schema_version == 2
+    assert v4_context.applicability_strategy == "typed-evidence-v1"
+    assert v4_context.path_ranking_strategy == "goal-progress-cost-v1"
+    assert v4.provenance()["research"]["status"] == "candidate"
+    with pytest.raises(AgentError, match="仅限研究"):
+        get_product_runner("adaptive-pg-context-v4")
