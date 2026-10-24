@@ -40,6 +40,14 @@ const percent = (value: number | null | undefined) => value == null ? '—' : `$
 const node = (value: string) => TOOL_LABELS[value] ?? ({ Start: '开始', End: '结束', set_goal: '建立目标', recommend: '推荐候选', complete: '完成核验', inspect: '检查证据', clarify: '澄清需求', revise_plan: '修订计划', refine_constraints: '细化约束', finish: '结束执行', respond: '回应用户', handoff: '转交处理', unsupported: '说明能力范围' }[value] ?? value)
 const partitions = [['train', '训练', '只从这里学习'], ['validation', '验证', '决定是否保留'], ['test', '测试', '冻结后统一对照']] as const
 const active = (status?: string) => status === 'RUNNING' || status === 'QUEUED'
+const conditionText = (edge: PGGraph['edges'][number]) => {
+  const condition = edge.applicability
+  if (!condition) return edge.condition || '未限定额外条件'
+  const render = (item: NonNullable<typeof condition.all_of>[number]) => `${item.fact} ${item.operator}${item.value == null ? '' : ` ${JSON.stringify(item.value)}`}`
+  const all = (condition.all_of ?? []).map(render)
+  const any = (condition.any_of ?? []).map(render)
+  return [all.length ? `全部满足：${all.join('；')}` : '', any.length ? `任一满足：${any.join('；')}` : ''].filter(Boolean).join('；')
+}
 
 function GraphInspector({ graph }: { graph: PGGraph }) {
   const [selectedId, setSelectedId] = useState('')
@@ -54,7 +62,7 @@ function GraphInspector({ graph }: { graph: PGGraph }) {
       <div className="pg-node-path"><div><GitBranch size={18} /><strong>{node(edge.source)}</strong><code>{edge.source}</code></div>
         <span><small>{edge.relation}</small><ArrowRight size={30} /></span>
         <div><GitBranch size={18} /><strong>{node(edge.target)}</strong><code>{edge.target}</code></div></div>
-      <dl><dt>适用条件</dt><dd>{edge.condition || '未限定额外条件'}</dd><dt>执行指导</dt><dd>{edge.guidance}</dd><dt>常见错误</dt><dd>{edge.pitfalls || '尚未记录'}</dd></dl>
+      <dl><dt>{edge.applicability ? '类型化适用条件' : '适用条件'}</dt><dd>{conditionText(edge)}</dd>{edge.applicability && <><dt>条件说明</dt><dd>{edge.condition || '未补充自然语言说明'}</dd></>}<dt>执行指导</dt><dd>{edge.guidance}</dd><dt>常见错误</dt><dd>{edge.pitfalls || '尚未记录'}</dd></dl>
       <small className="pg-muted">局部关系来自冻结图；是否实际指导过行动，请查看样本中的暴露事件。</small>
     </div> : <p>这张图尚无关系。</p>}
   </div>
@@ -91,6 +99,9 @@ function SampleEvidence({ jobId, sample }: { jobId: string; sample: PGSample }) 
       <div><dt>重放阻断</dt><dd>{evidence.summary.blocked_repeats ?? 0}</dd></div>
       <div><dt>指导模型调用</dt><dd>{evidence.summary.guidance_model_calls ?? '—'}</dd></div>
       <div><dt>定位弃权</dt><dd>{evidence.summary.localization_abstentions ?? 0}</dd></div>
+      <div><dt>产生进展</dt><dd>{evidence.summary.progressed_actions ?? 0}</dd></div>
+      <div><dt>没有进展</dt><dd>{evidence.summary.no_progress_actions ?? 0}</dd></div>
+      <div><dt>行动失败</dt><dd>{evidence.summary.failed_actions ?? 0}</dd></div>
       <div><dt>影子差异</dt><dd>{evidence.summary.shadow_differences ?? 0}</dd></div></dl></div>
     {evidence.turns.flatMap(turn => turn.interventions.map((item, index) => {
       const decision = item.decision?.payload ?? {}
@@ -99,14 +110,18 @@ function SampleEvidence({ jobId, sample }: { jobId: string; sample: PGSample }) 
       const shadow = item.localization.shadow
       const localizationState = item.localization.abstained ? '低置信，主动弃权'
         : item.localization.fallback ? '未知行动，回退全图' : '命中有界局部锚点'
+      const applicability = item.applicability ?? {}
+      const evaluations = applicability.evaluations ?? []
+      const progress = item.action_progress
       return <article className="pg-intervention-chain" key={`${turn.turn_index}-${item.intervention_id}-${index}`}>
         <header><span>干预 {index + 1} · 事件 {item.guidance.sequence}</span><b>{item.guidance.exposed ? '已进入模型决策上下文' : '未暴露给决策'}{item.localization.shadow_changed ? ' · 定位器结果有差异' : ''}</b></header>
         <div className="pg-chain-grid">
           <section><small>01 · 状态定位</small><strong>{item.localization.anchor ? node(item.localization.anchor) : '主动弃权'}</strong><p>{localizationState}</p><em>置信度 {confidence} · {item.localization.node_ids.length} 个局部节点</em>{shadow && <em>v1 影子：{node(shadow.anchor ?? '未知')} · {shadow.fallback ? '全图回退' : '局部图'}</em>}</section>
-          <section><small>02 · 子图检索</small><strong>{item.retrieval.selected_edge_ids.join(' / ') || '未选择关系'}</strong><p>候选 {item.retrieval.retrieved_edge_ids.length} 条 · 采用 {item.retrieval.selected_edge_ids.length} 条</p><em>裁剪 {(item.retrieval.excluded_edge_ids ?? []).length} 条</em></section>
+          <section><small>02 · 条件证据</small><strong>{applicability.status ?? '历史版本未记录'}</strong><p>{item.retrieval.selected_edge_ids.join(' / ') || '没有被证明适用的关系'}</p><em>候选 {evaluations.length || item.retrieval.retrieved_edge_ids.length} · TRUE {(applicability.selected_edge_ids ?? []).length} · FALSE {(applicability.false_edge_ids ?? []).length} · UNKNOWN {(applicability.unknown_edge_ids ?? []).length}</em></section>
           <section><small>03 · 情境指导</small><strong>{item.guidance.generation_mode === 'deterministic-contract-v1' ? '确定性指导契约' : item.guidance.status}</strong><p>{item.guidance.content || item.guidance.reason || '指导器选择弃权'}</p><em>{item.guidance.generation_model_calls == null ? '调用数未记录' : `额外模型调用 ${item.guidance.generation_model_calls}`}</em></section>
           <section><small>04 · 实际行动</small><strong>{node(action)}</strong><p>采用判定：{item.action_alignment.status}{item.action_alignment.blocked ? ' · 提交前阻断' : ''}</p><em>{item.decision ? `决策事件 ${item.decision.sequence}` : item.action_alignment.review_id ? `审查 ${item.action_alignment.review_id.slice(0, 8)}` : '没有已提交行动'}</em></section>
           <section><small>05 · 工具与核验</small><strong>{item.tool ? node(item.tool.name) : '未调用工具'}</strong><p>{item.tool ? `${item.tool.status ?? '已返回'}${item.tool.invalid_result ? ' · 无效结果' : ''}` : item.verification ? '已进入目标核验' : '尚无后续结果'}</p></section>
+          <section><small>06 · 目标进展</small><strong>{progress?.status ?? '尚未记录'}</strong><p>{progress?.signals?.join(' / ') || progress?.reason || '历史样本没有行动进展归因'}</p><em>{progress?.cost_delta ? `模型 +${progress.cost_delta.model_calls ?? 0} · 工具 +${progress.cost_delta.tool_calls ?? 0}` : '成本增量未记录'}</em></section>
         </div>
         <details><summary>检查状态、局部子图、工具结果和核验原始投影</summary><JsonBlock value={item} /></details>
       </article>
@@ -125,6 +140,10 @@ function Comparison({ job }: { job?: PGJob }) {
     { label: '低置信定位弃权', value: id => id === 'baseline' ? '不适用' : number(job?.arms[id]?.metrics.pg_localization_abstentions) },
     { label: 'v1 影子全图回退', value: id => id === 'baseline' ? '不适用' : number(job?.arms[id]?.metrics.pg_shadow_full_graph_fallbacks) },
     { label: '无进展重放阻断', value: id => id === 'baseline' ? '不适用' : number(job?.arms[id]?.metrics.pg_no_progress_repeats_blocked) },
+    { label: '类型化条件干预', value: id => id === 'baseline' ? '不适用' : number(job?.arms[id]?.metrics.pg_typed_applicability_interventions) },
+    { label: '指导后产生进展', value: id => id === 'baseline' ? '不适用' : number(job?.arms[id]?.metrics.pg_actions_progressed) },
+    { label: '指导后没有进展', value: id => id === 'baseline' ? '不适用' : number(job?.arms[id]?.metrics.pg_actions_without_progress) },
+    { label: '指导后行动失败', value: id => id === 'baseline' ? '不适用' : number(job?.arms[id]?.metrics.pg_actions_failed) },
     { label: 'PG 指导模型调用', value: id => id === 'baseline' ? '不适用' : number(job?.arms[id]?.metrics.pg_guidance_model_calls) },
     { label: '模型调用次数', value: id => number(job?.arms[id]?.metrics.model_attempts) },
     { label: '总 Token', value: id => number(job?.arms[id]?.metrics.tokens.total_tokens) },

@@ -122,7 +122,7 @@ function ProceduralGraphTab({ detail }: { detail: RunDetail }) {
   const guidance = events.filter((item) => item.type === 'pg_guidance')
   const graph = record(record(detail.checkpoint.context).procedural_graph)
   const labels: Record<string, string> = { READY: '建议已生成', EXPOSED: '已送入决策', ABSTAINED: '图不适用，已弃权', SKIPPED: '已跳过', FAILED: '指导失败', CONTEXT_OMITTED: '上下文不足，未送入决策' }
-  const reasons: Record<string, string> = { CONTEXT_BUDGET: '图或轨迹超出上下文预算', LOCALIZATION_ABSTAINED: '轨迹证据不足，定位器主动弃权', NO_OUTGOING_EDGES: '当前节点没有后继关系', RESERVED_DECISION_AND_AUDIT: '为决策和独立核验保留预算', GUIDANCE_SCHEMA_INVALID: '指导格式或引用无效' }
+  const reasons: Record<string, string> = { CONTEXT_BUDGET: '图或轨迹超出上下文预算', LOCALIZATION_ABSTAINED: '轨迹证据不足，定位器主动弃权', NO_OUTGOING_EDGES: '当前节点没有后继关系', NO_APPLICABLE_EDGES: '候选关系均未获得当前证据支持', RESERVED_DECISION_AND_AUDIT: '为决策和独立核验保留预算', GUIDANCE_SCHEMA_INVALID: '指导格式或引用无效' }
   if (!guidance.length && !Object.keys(graph).length) return <div className="empty-inline">该运行尚无程序图指导记录。</div>
   return <>
     <DefinitionGrid items={[
@@ -137,6 +137,8 @@ function ProceduralGraphTab({ detail }: { detail: RunDetail }) {
     <div className="steering-ledger pg-guidance-ledger">{guidance.map((item, index) => {
       const exposure = events.filter((event) => event.type === 'evidence_context' && event.pg_decision_key === item.decision_key).at(-1)
       const review = events.filter((event) => event.type === 'pg_decision_reviewed' && event.decision_key === item.decision_key).at(-1)
+      const outcome = review?.review_id ? events.filter((event) => event.type === 'pg_action_outcome'
+        && event.review_id === review.review_id).at(-1) : undefined
       const next = events.find((event) => event.type === 'adaptive_decision' && Number(event.sequence) > Number(item.sequence)
         && (index + 1 === guidance.length || Number(event.sequence) < Number(guidance[index + 1].sequence)))
       const decision = record(next?.decision)
@@ -150,13 +152,20 @@ function ProceduralGraphTab({ detail }: { detail: RunDetail }) {
       const scope = item.abstained ? '主动弃权' : item.fallback ? '全图回退' : '有界局部图'
       const generation = record(item.generation)
       const contract = record(item.guidance_contract)
+      const applicability = record(item.applicability)
+      const evaluations = Array.isArray(applicability.evaluations) ? applicability.evaluations.map(record) : []
       return <article key={String(item.sequence ?? index)}>
         <span>事件 {String(item.sequence ?? '—')} · 定位 {String(item.anchor ?? '主动弃权')} · {scope}</span>
         <b>{labels[status] ?? status}</b>
         <p>{String(item.guidance || reasons[String(item.reason)] || item.reason || '没有生成可用建议')}</p>
         <small>生成方式：{generation.mode === 'deterministic-contract-v1' ? '确定性指导契约' : '模型情境化'} · 额外模型调用：{String(generation.model_calls ?? '未记录')}{Object.keys(contract).length ? ` · 契约 ${String(contract.contract_id ?? '').slice(0, 8)}` : ''}</small>
         <small>定位器：{String(localization.algorithm ?? 'action-anchor-v1')} · 置信度：{confidence}{Object.keys(shadow).length ? ` · v1 影子：${String(shadow.anchor ?? '未知')}${shadow.fallback ? '（全图回退）' : ''}` : ''}</small>
+        {Object.keys(applicability).length > 0 && <small>条件证据：{String(applicability.status ?? '未记录')} · TRUE {Array.isArray(applicability.selected_edge_ids) ? applicability.selected_edge_ids.length : 0} · FALSE {Array.isArray(applicability.false_edge_ids) ? applicability.false_edge_ids.length : 0} · UNKNOWN {Array.isArray(applicability.unknown_edge_ids) ? applicability.unknown_edge_ids.length : 0}</small>}
         <small>引用关系：{edgeIds.join(' / ') || '无'} · 后续行动：{String(decision.tool ?? decision.action ?? review?.actual_action ?? '尚无已提交行动')}{review ? ` · 采用审查：${String(review.status)}${review.blocked ? '（提交前阻断）' : ''}` : ''}</small>
+        {outcome && <small>行动进展：{String(outcome.progress_status ?? '未记录')} · {Array.isArray(outcome.signals) && outcome.signals.length ? outcome.signals.map(String).join(' / ') : String(outcome.progress_reason ?? '没有可核验信号')}</small>}
+        {evaluations.length > 0 && <details><summary>查看每条关系的条件求值证据</summary><div className="table-wrap"><table><thead><tr><th>关系</th><th>判定</th><th>原因</th><th>证据绑定</th></tr></thead><tbody>
+          {evaluations.map((evaluation) => <tr key={String(evaluation.edge_id)}><td>{String(evaluation.source)} → {String(evaluation.target)}<br /><code>{String(evaluation.edge_id)}</code></td><td>{String(evaluation.status)}</td><td>{String(evaluation.reason)}</td><td><JsonBlock value={record(evaluation.evaluation).evidence_bindings ?? []} /></td></tr>)}
+        </tbody></table></div></details>}
         {edges.length > 0 && <details><summary>查看本次检索的行动关系与条件</summary><div className="table-wrap"><table><thead><tr><th>关系</th><th>条件</th><th>指导</th><th>常见错误</th></tr></thead><tbody>
           {edges.map((edge) => <tr key={String(edge.id)}><td>{String(edge.source)} → {String(edge.target)}<br /><code>{String(edge.relation)}</code></td><td>{String(edge.condition || '无条件')}</td><td>{String(edge.guidance)}</td><td>{String(edge.pitfalls || '未记录')}</td></tr>)}
         </tbody></table></div></details>}

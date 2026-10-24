@@ -624,7 +624,9 @@ export interface PGGraph {
 export interface PGEdge {
   id: string; source: string; target: string; relation: string
   condition: string; guidance: string; pitfalls: string
+  applicability?: { all_of?: PGConditionClause[]; any_of?: PGConditionClause[] } | null
 }
+export interface PGConditionClause { fact: string; operator: string; value?: string | boolean | number | string[] | null }
 export interface PGPlan {
   preset: PGPreset; spec: { repeats: number; iterations: number; max_model_calls_per_run: number
     max_prompt_tokens_per_run?: number; max_completion_tokens_per_run?: number; max_seconds_per_run?: number }
@@ -646,12 +648,19 @@ export interface PGIntervention {
     shadow?: { algorithm?: string; anchor?: string | null; fallback?: boolean; node_ids?: string[]; edge_ids?: string[] } | null
     shadow_changed?: boolean; node_ids: string[]; state_snapshot: Record<string, unknown>; sequence: number }
   retrieval: { retrieved_edge_ids: string[]; selected_edge_ids: string[]; excluded_edge_ids?: string[]; subgraph: { edges?: PGEdge[] } | null }
+  applicability?: { strategy?: string | null; status?: string | null; reason?: string | null
+    evaluations?: { edge_id?: string; source?: string; target?: string; status?: string; reason?: string; score?: number | null
+      evaluation?: { evidence_bindings?: { fact?: string; actual?: unknown; source?: string }[] } }[]
+    selected_edge_ids?: string[]; false_edge_ids?: string[]; unknown_edge_ids?: string[]
+    projected_paths?: { path_id?: string; edge_ids?: string[]; currently_applicable_prefix?: number; future_edges_require_reevaluation?: string[] }[] }
   guidance: { status: string; reason: string | null; content: string; exposed: boolean; sequence: number
     generation_mode?: string; generation_model_calls?: number | null
     contract?: { contract_id?: string; policy?: string; recommended_actions?: string[]; forbidden_repeats?: Record<string, unknown>[] } | null }
   decision: { sequence: number; source: string; payload: Record<string, unknown> } | null
   action_alignment: { status: string; matched_edge_ids: string[]; expected_actions?: string[]; actual_action?: string; reason?: string
     blocked?: boolean; review_id?: string }
+  action_progress?: { status?: string; reason?: string; signals?: string[]; cost_delta?: { model_calls?: number; tool_calls?: number }
+    outcome_id?: string; review_id?: string; matched_edge_ids?: string[]; before_sha256?: string; after_sha256?: string } | null
   tool: { name: string; args: Record<string, unknown>; status: string; sequence: number; result: unknown; invalid_result: boolean } | null
   verification: Record<string, unknown> | null
 }
@@ -661,6 +670,8 @@ export interface PGSampleDetail {
     unknown_alignment: number; blocked_repeats?: number; deterministic_contracts?: number; guidance_model_calls?: number
     localization_fallbacks: number; localization_abstentions?: number
     shadow_differences?: number; shadow_fallbacks?: number
+    progressed_actions?: number; no_progress_actions?: number; failed_actions?: number; deferred_actions?: number
+    unknown_progress_actions?: number; typed_applicability_interventions?: number
     environment_triggered: boolean; recovered: boolean; failure_stage: string | null }
     turns: { turn_index: number; request: string; passed: boolean; failures: string[]; interventions: PGIntervention[] }[] }
 }
@@ -677,6 +688,8 @@ export interface PGArmResult {
     pg_localization_fallbacks?: number; pg_localization_abstentions?: number
     pg_shadow_disagreements?: number; pg_shadow_full_graph_fallbacks?: number
     pg_no_progress_repeats_blocked?: number; pg_deterministic_contracts?: number; pg_guidance_model_calls?: number
+    pg_typed_applicability_interventions?: number; pg_actions_progressed?: number
+    pg_actions_without_progress?: number; pg_actions_failed?: number
     tool_calls: number; tokens: { total_tokens: number | null }; latency_ms: { p95: number | null } }
 }
 export interface PGJobSummary {

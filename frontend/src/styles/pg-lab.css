@@ -31,3 +31,4 @@
 .pg-launch select { min-width:0; width:auto; flex:1; }
 .pg-run-selector select { width:340px; }
 .pg-lab button:hover:not(:disabled):not(.pg-primary-button) { border-color:#889bcc; }
+.pg-chain-grid { grid-template-columns:repeat(6,minmax(0,1fr)); }
