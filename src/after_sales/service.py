@@ -18,6 +18,7 @@ from src.after_sales.contracts import (
     CaseStatus,
     CaseType,
     EvidenceCommand,
+    EvidenceReadinessClaim,
     PolicyEvaluation,
     PolicyOutcome,
     RequestedResolution,
@@ -301,6 +302,83 @@ class AfterSalesCaseService:
             actor_type=actor_type,
             actor_id=actor_id,
             payload={**content, "checksum": evidence_checksum},
+            occurred_at=_naive_utc(now or _utcnow()),
+            allow_same_status=True,
+        )
+        return self.get_case(case_id)
+
+    def record_evidence_readiness(
+        self,
+        case_id: str,
+        claim: EvidenceReadinessClaim,
+        *,
+        policy_version_id: str,
+        policy_checksum: str,
+        source_ref: str,
+        idempotency_key: str,
+        expected_revision: int,
+        actor_id: str | None = None,
+        now: datetime | None = None,
+    ) -> CaseProjection:
+        """Persist a policy-bound deferral without upgrading it into evidence."""
+
+        from src.after_sales.readiness import (
+            EvidenceReadinessValidationError,
+            readiness_event_payload,
+            validate_readiness_claims,
+        )
+
+        case = self._case(case_id)
+        policy = self.session.get(PolicyVersion, policy_version_id)
+        if policy is None or policy.checksum != policy_checksum:
+            raise AfterSalesDomainError(
+                "EVIDENCE_READINESS_POLICY_STALE",
+                "证据就绪度引用的政策版本不存在或已经变化",
+            )
+        prefix = "agent_runs:"
+        suffix = ":request"
+        run_id = (
+            source_ref[len(prefix):-len(suffix)]
+            if source_ref.startswith(prefix) and source_ref.endswith(suffix)
+            else ""
+        )
+        run = self.session.get(AgentRun, run_id) if run_id else None
+        if run is None or case.origin_session_id is None or run.session_id != case.origin_session_id:
+            raise AfterSalesDomainError(
+                "EVIDENCE_READINESS_SOURCE_FORBIDDEN",
+                "证据就绪度来源不属于当前案件会话",
+            )
+        try:
+            (claim,) = validate_readiness_claims(
+                (claim,),
+                request=run.request,
+                reason_code=case.reason_code,
+                rules=policy.rules,
+            )
+        except EvidenceReadinessValidationError as exc:
+            raise AfterSalesDomainError(exc.code, str(exc)) from exc
+        payload = readiness_event_payload(
+            claim,
+            source_ref=source_ref,
+            policy_version_id=policy_version_id,
+            policy_checksum=policy_checksum,
+        )
+        previous = self._event_by_key(case_id, idempotency_key)
+        if previous is not None:
+            self._assert_replay(previous, "EVIDENCE_READINESS_RECORDED", payload)
+            return self.get_case(case_id)
+        self._assert_mutable(case, expected_revision)
+        if case.status == CaseStatus.SUBMITTED:
+            raise AfterSalesDomainError("CASE_ALREADY_SUBMITTED", "已提交案件不能修改证据就绪度")
+        self._invalidate_evidence_dependencies(case)
+        self._advance(
+            case,
+            target_status=CaseStatus(case.status),
+            event_type="EVIDENCE_READINESS_RECORDED",
+            idempotency_key=idempotency_key,
+            actor_type=ActorType.CUSTOMER,
+            actor_id=actor_id,
+            payload=payload,
             occurred_at=_naive_utc(now or _utcnow()),
             allow_same_status=True,
         )
@@ -782,10 +860,19 @@ class AfterSalesCaseService:
             "supersedes_decision_id": decision.supersedes_decision_id,
         }
 
-    @staticmethod
-    def _decision_dict(decision: PolicyDecision) -> dict[str, Any]:
+    def _decision_dict(self, decision: PolicyDecision) -> dict[str, Any]:
+        requirements = decision.facts.get("evidence_requirements", []) if isinstance(decision.facts, dict) else []
+        policy_checksum = next(
+            (row.get("policy_checksum") for row in requirements
+             if isinstance(row, dict) and row.get("policy_checksum")),
+            None,
+        )
+        if policy_checksum is None:
+            policy = self.session.get(PolicyVersion, decision.policy_version_id)
+            policy_checksum = policy.checksum if policy else None
         return {
             **AfterSalesCaseService._decision_event_payload(decision),
+            "policy_checksum": policy_checksum,
             "facts": decision.facts,
             "evidence_refs": decision.evidence_refs,
             "evaluator_version": decision.evaluator_version,

@@ -163,6 +163,44 @@ def test_planner_rejects_a_forged_automatic_action_for_customer_attestation():
     assert directive.reason_code == "POLICY_OBLIGATION_NOT_AUTOMATABLE"
 
 
+def test_planner_waits_on_a_policy_bound_deferred_readiness_claim():
+    claim_id = "b" * 64
+    action = {
+        "kind": "WAIT_FOR_CUSTOMER_EVIDENCE",
+        "goal_id": "evidence:ORDER_FACT",
+        "requirement_id": "policy:v1:ORDER_FACT",
+        "claim_id": claim_id,
+        "disposition": "DEFERRED",
+        "question": "案件已保留；准备好后请补充说明",
+    }
+    result = _case_result(action, condition="CUSTOMER_ATTESTATION", source="CUSTOMER_STATEMENT")
+    result["case"]["plans"][0]["goals"][0]["readiness"] = {
+        "schema_version": 1,
+        "projector_version": "evidence-readiness-v1",
+        "claim_id": claim_id,
+        "requirement_id": "policy:v1:ORDER_FACT",
+        "evidence_type": "ORDER_FACT",
+        "disposition": "DEFERRED",
+        "source_quote": "稍后才能确认",
+        "source_ref": "agent_runs:run-1:request",
+        "policy_version_id": "policy:v1",
+        "policy_checksum": "a" * 64,
+        "case_revision": 3,
+        "recorded_at": "2026-10-26T04:00:00",
+    }
+
+    directive = decide_next_case_action(project_case_execution_state(result))
+
+    assert directive.status == "WAIT_USER_INPUT"
+    assert directive.reason_code == "CUSTOMER_EVIDENCE_DEFERRED"
+    assert directive.question == "案件已保留；准备好后请补充说明"
+
+    result["case"]["plans"][0]["next_actions"][0]["claim_id"] = "c" * 64
+    forged = decide_next_case_action(project_case_execution_state(result))
+    assert forged.status == "ABSTAINED"
+    assert forged.reason_code == "EVIDENCE_READINESS_BINDING_INVALID"
+
+
 def test_stale_case_plan_never_drives_execution():
     action = {
         "kind": "COLLECT_BUSINESS_EVIDENCE",

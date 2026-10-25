@@ -12,6 +12,7 @@ from src.after_sales import (
     CaseStatus,
     CaseType,
     EvidenceCommand,
+    EvidenceReadinessClaim,
     PolicyOutcome,
     RequestedResolution,
 )
@@ -46,6 +47,9 @@ def session():
         db_session.flush()
         db_session.add(AgentRun(run_id="evidence-run", session_id="conversation-1", request_id="evidence",
                                 request="包装完好但商品外壳开裂；实际功能与商品说明不一致", status="SUCCEEDED",
+                                created_at=datetime(2026, 5, 25), limits={}))
+        db_session.add(AgentRun(run_id="readiness-run", session_id="conversation-1", request_id="readiness",
+                                request="损坏情况稍后才能确认，照片也稍后补", status="SUCCEEDED",
                                 created_at=datetime(2026, 5, 25), limits={}))
         db_session.commit()
         yield db_session
@@ -178,6 +182,68 @@ def test_evidence_write_is_versioned_and_idempotent(session):
         )
     assert stale.value.code == "CASE_REVISION_CONFLICT"
     assert stale.value.retryable is True
+
+
+def test_evidence_readiness_is_grounded_policy_bound_and_never_becomes_evidence(session):
+    service = AfterSalesCaseService(session)
+    case = service.open_case(_command())
+    policy = session.get(PolicyVersion, DEFAULT_AFTER_SALES_POLICY_VERSION_ID)
+    claim = EvidenceReadinessClaim(
+        evidence_type="DAMAGE_DESCRIPTION",
+        disposition="DEFERRED",
+        source_quote="损坏情况稍后才能确认",
+    )
+
+    changed = service.record_evidence_readiness(
+        case.case_id,
+        claim,
+        policy_version_id=policy.policy_version_id,
+        policy_checksum=policy.checksum,
+        source_ref="agent_runs:readiness-run:request",
+        idempotency_key="readiness-1",
+        expected_revision=case.revision,
+    )
+    replay = service.record_evidence_readiness(
+        case.case_id,
+        claim,
+        policy_version_id=policy.policy_version_id,
+        policy_checksum=policy.checksum,
+        source_ref="agent_runs:readiness-run:request",
+        idempotency_key="readiness-1",
+        expected_revision=case.revision,
+    )
+
+    assert replay.revision == changed.revision == 2
+    assert replay.evidence == ()
+    event = replay.events[-1]
+    assert event["event_type"] == "EVIDENCE_READINESS_RECORDED"
+    assert event["payload"]["disposition"] == "DEFERRED"
+    assert event["payload"]["requirement_id"].endswith(":DAMAGE_DESCRIPTION")
+    assert len(event["payload"]["claim_id"]) == 64
+
+    with pytest.raises(AfterSalesDomainError) as conflict:
+        service.record_evidence_readiness(
+            case.case_id,
+            claim.model_copy(update={"source_quote": "照片也稍后补"}),
+            policy_version_id=policy.policy_version_id,
+            policy_checksum=policy.checksum,
+            source_ref="agent_runs:readiness-run:request",
+            idempotency_key="readiness-1",
+            expected_revision=changed.revision,
+        )
+    assert conflict.value.code == "CASE_IDEMPOTENCY_CONFLICT"
+
+    with pytest.raises(AfterSalesDomainError) as inapplicable:
+        service.record_evidence_readiness(
+            case.case_id,
+            claim.model_copy(update={"evidence_type": "ORIGINAL_PACKAGING"}),
+            policy_version_id=policy.policy_version_id,
+            policy_checksum=policy.checksum,
+            source_ref="agent_runs:readiness-run:request",
+            idempotency_key="readiness-2",
+            expected_revision=changed.revision,
+        )
+    assert inapplicable.value.code == "EVIDENCE_READINESS_NOT_APPLICABLE"
 
 
 def test_policy_decision_requires_evidence_then_becomes_eligible(session):

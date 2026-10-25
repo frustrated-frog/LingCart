@@ -162,6 +162,10 @@ class AfterSalesPolicyEngine:
             AfterSalesCaseEvent.case_id == case_id,
             AfterSalesCaseEvent.event_type.in_(["EVIDENCE_ADDED", "EVIDENCE_REVOKED"]),
         ).order_by(AfterSalesCaseEvent.case_revision.desc()).limit(1)) or 0
+        evidence_readiness_revision = self.session.scalar(select(AfterSalesCaseEvent.case_revision).where(
+            AfterSalesCaseEvent.case_id == case_id,
+            AfterSalesCaseEvent.event_type == "EVIDENCE_READINESS_RECORDED",
+        ).order_by(AfterSalesCaseEvent.case_revision.desc()).limit(1)) or 0
         facts = {
             "case_id": case.case_id,
             "case_type": case.case_type,
@@ -180,6 +184,9 @@ class AfterSalesPolicyEngine:
             "active_evidence_types": sorted({evidence.evidence_type for evidence in active_evidence}),
             "evidence_requirements": requirements,
             "evidence_revision": evidence_revision,
+            # A readiness claim never satisfies policy, but its revision must
+            # participate in the immutable decision/plan input identity.
+            "evidence_readiness_revision": evidence_readiness_revision,
             "as_of_date": evaluated_at.date().isoformat(),
         }
         evidence_refs = self._evidence_refs(

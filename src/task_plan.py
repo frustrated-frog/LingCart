@@ -12,7 +12,7 @@ from src.errors import AgentError
 from src.intake import (FAQ, ORDER_DETAILS, ORDER_STATUS, PAYMENT_PROCESS, PAYMENT_STATUS, PRODUCT_COMPARE,
                         PRODUCT_DISCOVERY, PRODUCT_SEARCH, REFUND_ELIGIBILITY, REFUND_REQUEST, SHIPMENT_TRACKING)
 from src.runtime import ToolExecutor, TraceRecorder, current_runtime
-from src.after_sales.execution import decide_next_case_action, project_case_execution_state
+from src.after_sales.execution import ACTION_PLANNER_VERSION, decide_next_case_action, project_case_execution_state
 
 
 _PROPOSAL_OPERATIONS = {"prepare_refund", "prepare_payment", "prepare_case_submission"}
@@ -325,7 +325,7 @@ def _advance_after_sales_case(result, *, executor, recorder, trace, run_id, max_
         **current,
         "autonomous_execution": {
             "schema_version": 1,
-            "planner_version": "policy-aware-next-action-v1",
+            "planner_version": ACTION_PLANNER_VERSION,
             "initial_state_id": initial_state_id,
             "final_state_id": final_state_id,
             "executed_actions": executed,

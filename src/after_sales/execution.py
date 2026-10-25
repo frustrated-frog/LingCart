@@ -6,12 +6,13 @@ from typing import Any, Literal, Mapping
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from src.after_sales.contracts import EvidenceReadinessState
 from src.after_sales.service import _checksum
 
 
-STATE_PROJECTOR_VERSION = "policy-aware-case-state-v1"
-OBLIGATION_VERIFIER_VERSION = "policy-obligation-verifier-v1"
-ACTION_PLANNER_VERSION = "policy-aware-next-action-v1"
+STATE_PROJECTOR_VERSION = "policy-aware-case-state-v2"
+OBLIGATION_VERIFIER_VERSION = "policy-obligation-verifier-v2"
+ACTION_PLANNER_VERSION = "policy-aware-next-action-v2"
 AUTONOMOUS_OPERATION = "continue_after_sales_case"
 
 
@@ -25,13 +26,14 @@ class PolicyObligation(BaseModel):
     validation_condition: str
     accepted_sources: tuple[str, ...] = ()
     evidence_refs: tuple[str, ...] = ()
+    readiness: EvidenceReadinessState | None = None
 
 
 class CaseExecutionState(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     schema_version: Literal[1] = 1
-    projector_version: Literal["policy-aware-case-state-v1"] = STATE_PROJECTOR_VERSION
+    projector_version: Literal["policy-aware-case-state-v2"] = STATE_PROJECTOR_VERSION
     state_id: str
     status: Literal["READY", "STALE", "TERMINAL"]
     reason_code: str
@@ -54,8 +56,8 @@ class CaseActionDirective(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     schema_version: Literal[1] = 1
-    planner_version: Literal["policy-aware-next-action-v1"] = ACTION_PLANNER_VERSION
-    verifier_version: Literal["policy-obligation-verifier-v1"] = OBLIGATION_VERIFIER_VERSION
+    planner_version: Literal["policy-aware-next-action-v2"] = ACTION_PLANNER_VERSION
+    verifier_version: Literal["policy-obligation-verifier-v2"] = OBLIGATION_VERIFIER_VERSION
     directive_id: str
     state_id: str
     status: Literal["EXECUTE", "WAIT_USER_INPUT", "WAIT_APPROVAL", "BLOCKED", "COMPLETE", "ABSTAINED"]
@@ -83,6 +85,11 @@ def project_case_execution_state(result: Mapping[str, Any]) -> CaseExecutionStat
     case_revision = result.get("revision") if type(result.get("revision")) is int else case.get("revision")
     case_revision = case_revision if type(case_revision) is int and case_revision >= 0 else 0
     case_status = str(result.get("case_status") or case.get("status") or "UNKNOWN")
+    goals_by_requirement = {
+        str(row.get("requirement_id")): row
+        for row in plan.get("goals") or []
+        if isinstance(row, dict) and row.get("requirement_id")
+    }
     obligations = tuple(
         PolicyObligation(
             requirement_id=str(row.get("requirement_id") or ""),
@@ -92,6 +99,7 @@ def project_case_execution_state(result: Mapping[str, Any]) -> CaseExecutionStat
             validation_condition=str(row.get("validation_condition") or "UNSUPPORTED"),
             accepted_sources=tuple(str(item) for item in row.get("accepted_sources") or []),
             evidence_refs=tuple(str(item) for item in row.get("evidence_refs") or []),
+            readiness=goals_by_requirement.get(str(row.get("requirement_id") or ""), {}).get("readiness"),
         )
         for row in _record(decision.get("facts")).get("evidence_requirements") or []
         if isinstance(row, dict) and row.get("requirement_id")
@@ -218,6 +226,35 @@ def decide_next_case_action(state: CaseExecutionState) -> CaseActionDirective:
             reason_code="CUSTOMER_EVIDENCE_REQUIRED",
             action=customer,
             question=str(customer.get("question") or "请补充政策要求的材料。"),
+        )
+    deferred = next((row for row in actions if row.get("kind") == "WAIT_FOR_CUSTOMER_EVIDENCE"), None)
+    if deferred:
+        requirements = {row.requirement_id: row for row in state.obligations}
+        requirement = requirements.get(str(deferred.get("requirement_id") or ""))
+        readiness = requirement.readiness if requirement else None
+        if (
+            requirement is None
+            or requirement.status == "SATISFIED"
+            or readiness is None
+            or readiness.disposition != "DEFERRED"
+            or readiness.requirement_id != requirement.requirement_id
+            or readiness.evidence_type != requirement.evidence_type
+            or readiness.policy_version_id != state.policy_version_id
+            or readiness.policy_checksum != state.policy_checksum
+            or deferred.get("claim_id") != readiness.claim_id
+        ):
+            return _directive(
+                state,
+                status="ABSTAINED",
+                reason_code="EVIDENCE_READINESS_BINDING_INVALID",
+                action=deferred,
+            )
+        return _directive(
+            state,
+            status="WAIT_USER_INPUT",
+            reason_code="CUSTOMER_EVIDENCE_DEFERRED",
+            action=deferred,
+            question=str(deferred.get("question") or "案件已保留；准备好后请补充政策要求的材料。"),
         )
     approval = next((row for row in actions if row.get("kind") == "REQUEST_CUSTOMER_CONFIRMATION"), None)
     if approval:

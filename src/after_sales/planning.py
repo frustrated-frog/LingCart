@@ -23,16 +23,36 @@ def revise_case_plan(session, case, decision, now: datetime):
     goals, actions, retained, changed = [], [], [], []
     submitted = case.status == 'SUBMITTED'
     requirements = decision.facts.get('evidence_requirements', [])
+    from src.after_sales.readiness import project_evidence_readiness
+    policy_checksums = {row.get('policy_checksum') for row in requirements if row.get('policy_checksum')}
+    if len(policy_checksums) > 1:
+        from src.after_sales.service import AfterSalesDomainError
+        raise AfterSalesDomainError('CASE_PLAN_POLICY_CONFLICT', '案件证据义务引用了多个政策指纹')
+    readiness_by_requirement = (
+        project_evidence_readiness(
+            session,
+            case_id=case.case_id,
+            policy_version_id=decision.policy_version_id,
+            policy_checksum=next(iter(policy_checksums)),
+            requirements=requirements,
+        )
+        if policy_checksums else {}
+    )
     for requirement in requirements:
         goal_id = f"evidence:{requirement['evidence_type']}"
         basis = dict(requirement)
         if basis.get('semantic_assessment'):
             basis['semantic_assessment'] = {k: v for k, v in basis['semantic_assessment'].items()
                                             if k != 'assessment_id'}
+        readiness = readiness_by_requirement.get(requirement['requirement_id'])
+        if readiness is not None:
+            basis['readiness'] = readiness.model_dump(mode='json')
         goal = {'goal_id': goal_id, 'requirement_id': requirement['requirement_id'],
                 'description': requirement['description'], 'status': requirement['status'],
                 'evidence_refs': requirement['evidence_refs'], 'depends_on': [],
                 'basis_hash': _checksum(basis)}
+        if readiness is not None:
+            goal['readiness'] = readiness.model_dump(mode='json')
         if old_goals.get(goal_id) == goal:
             goals.append(old_goals[goal_id])
             retained.append(goal_id)
@@ -46,10 +66,17 @@ def revise_case_plan(session, case, decision, now: datetime):
                                 'requirement_id': requirement['requirement_id']})
             elif requirement['validation_condition'] == 'CUSTOMER_ATTESTATION' and 'CUSTOMER_STATEMENT' in requirement['accepted_sources']:
                 semantic = requirement.get('semantic_assessment') or {}
-                actions.append({'kind': 'REQUEST_CUSTOMER_EVIDENCE', 'goal_id': goal_id,
-                                'requirement_id': requirement['requirement_id'],
-                                'question': semantic.get('question') or requirement['description'],
-                                'semantic_status': semantic.get('status', 'NOT_ASSESSED')})
+                if readiness is not None and readiness.disposition == 'DEFERRED':
+                    actions.append({'kind': 'WAIT_FOR_CUSTOMER_EVIDENCE', 'goal_id': goal_id,
+                                    'requirement_id': requirement['requirement_id'],
+                                    'claim_id': readiness.claim_id,
+                                    'disposition': readiness.disposition,
+                                    'question': f"案件已保留；准备好后请补充：{requirement['description']}"})
+                else:
+                    actions.append({'kind': 'REQUEST_CUSTOMER_EVIDENCE', 'goal_id': goal_id,
+                                    'requirement_id': requirement['requirement_id'],
+                                    'question': semantic.get('question') or requirement['description'],
+                                    'semantic_status': semantic.get('status', 'NOT_ASSESSED')})
             else:
                 actions.append({'kind': 'REQUIRES_HUMAN_CAPABILITY', 'goal_id': goal_id})
     removed = sorted(set(old_goals) - {g['goal_id'] for g in goals} - {'resolution'})

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import StrEnum
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -76,6 +76,35 @@ class EvidenceCommand(BaseModel):
     source_ref: str = Field(min_length=1, max_length=200)
     payload: dict[str, Any]
     observed_at: datetime
+
+
+class EvidenceReadinessClaim(BaseModel):
+    """A grounded statement about when evidence can be supplied, never evidence itself."""
+
+    model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
+
+    evidence_type: str = Field(pattern=r"^[A-Z][A-Z0-9_]{1,47}$")
+    disposition: Literal["DEFERRED"]
+    source_quote: str = Field(min_length=1, max_length=500)
+
+
+class EvidenceReadinessState(BaseModel):
+    """Policy-bound projection of one durable readiness claim."""
+
+    model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
+
+    schema_version: Literal[1] = 1
+    projector_version: Literal["evidence-readiness-v1"] = "evidence-readiness-v1"
+    claim_id: str = Field(pattern=r"^[0-9a-f]{64}$")
+    requirement_id: str = Field(min_length=1, max_length=160)
+    evidence_type: str = Field(pattern=r"^[A-Z][A-Z0-9_]{1,47}$")
+    disposition: Literal["DEFERRED"]
+    source_quote: str = Field(min_length=1, max_length=500)
+    source_ref: str = Field(min_length=1, max_length=200)
+    policy_version_id: str = Field(min_length=1, max_length=96)
+    policy_checksum: str = Field(pattern=r"^[0-9a-f]{64}$")
+    case_revision: int = Field(gt=0)
+    recorded_at: str = Field(min_length=1, max_length=64)
 
 
 class PolicyEvaluation(BaseModel):
