@@ -64,6 +64,23 @@ def test_unproven_after_sales_refund_phrase_does_not_default_to_eligibility():
 @pytest.mark.parametrize(
     "message",
     [
+        "订单 1001 的耳机与描述不符，请建立售后案件核验是否可以退款。",
+        "Open an after-sales case for order 1001 and check whether it is refundable.",
+    ],
+)
+def test_explicit_after_sales_case_workflow_bypasses_refund_fast_path(message):
+    result = analyze_request(message)
+
+    assert result.execution_mode == LLM_REQUIRED
+    assert result.intents == ()
+    assert result.route_hints == ()
+    assert result.entities["order_id"] == 1001
+    assert result.semantic_hazards == ("EXPLICIT_CASE_WORKFLOW",)
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
         "查询订单但未提供订单号",
         "帮我看看物流",
         "这个订单能不能退款",

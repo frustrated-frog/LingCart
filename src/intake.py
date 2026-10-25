@@ -51,6 +51,11 @@ _IDENTIFIER_CATALOG_SCOPE = re.compile(
     r"(?:\s*(?:and|,|versus|vs\.?)\s*p\d{4}s?)+",
     re.IGNORECASE,
 )
+_AFTER_SALES_CASE_WORKFLOW = re.compile(
+    r"(?:建立|创建|发起|登记|开立)\s*(?:一个)?\s*售后(?:服务)?案件"
+    r"|(?:open|create|start|file)\s+(?:an?\s+)?after[- ]sales\s+(?:case|claim)",
+    re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True)
@@ -218,6 +223,7 @@ def analyze_request(user_message: str, *, _check_clause_coverage: bool = True) -
         entities["order_ids"] = order_ids
     intents: list[str] = []
     hazards = _semantic_hazards(normalized)
+    explicit_case_workflow = _AFTER_SALES_CASE_WORKFLOW.search(normalized) is not None
 
     handoff_mentioned = _has_any(
         normalized,
@@ -366,6 +372,16 @@ def analyze_request(user_message: str, *, _check_clause_coverage: bool = True) -
 
     # Preserve order while removing duplicate matches from overlapping phrases.
     intents = list(dict.fromkeys(intents))
+    if explicit_case_workflow:
+        return TaskIntake(
+            request=request,
+            entities=entities,
+            execution_mode=LLM_REQUIRED,
+            confidence=0.0,
+            reason="请求明确要求建立持久化售后案件，需保留原因、证据与处理目标",
+            route_hints=(),
+            semantic_hazards=("EXPLICIT_CASE_WORKFLOW",),
+        )
     if intents and _check_clause_coverage:
         # The fast path is allowed only when it accounts for every coordinated
         # clause. Unknown siblings go to the open-set semantic layer instead of
