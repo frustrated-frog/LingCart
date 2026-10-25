@@ -7,7 +7,8 @@ from src import orchestrator, tools
 from src.adaptive import run_adaptive
 from src.backend.db import Payment, get_engine, get_session_factory
 from src.backend.seed import seed
-from src.dialogue_understanding import TurnUnderstanding, to_task_plan, understand_turn
+from src.dialogue_understanding import TurnUnderstanding, _prompt, to_task_plan, understand_turn
+from src.runtime import BudgetLimits, RunRuntime, runtime_scope
 from src.task_plan import execute_plan
 
 
@@ -28,6 +29,39 @@ class ScriptedModel:
 
 def interpretation(*, commands=None, objectives=None, reason="test"):
     return {"reason": reason, "commands": commands or [], "objectives": objectives or []}
+
+
+def test_evidence_boundary_profile_adds_case_first_instruction_only_for_candidate():
+    from src.harness import get_runner
+
+    message = "订单 1001 商品与描述不符，请建立售后案件；原包装情况稍后确认。"
+
+    def prompt_for(profile_id):
+        runtime = RunRuntime(profile_id, BudgetLimits())
+        with runtime_scope(runtime):
+            get_runner(profile_id).bind(runtime)
+            return _prompt(message, None, None)
+
+    baseline_prompt = prompt_for("after-sales-policy-execution-v1")
+    candidate_prompt = prompt_for("after-sales-evidence-boundary-v2")
+
+    assert "Known evidence absence is not missing case-intake information" not in baseline_prompt
+    assert "Known evidence absence is not missing case-intake information" in candidate_prompt
+
+
+def test_evidence_context_quotes_are_scoped_to_after_sales_cases():
+    with pytest.raises(ValueError, match="Only AFTER_SALES_CASE"):
+        TurnUnderstanding.model_validate({
+            "reason": "不能用证据上下文隐藏独立订单目标",
+            "commands": [],
+            "objectives": [{
+                "id": "order-status",
+                "kind": "ORDER_STATUS",
+                "source_quote": "查询订单 1001",
+                "evidence_context_quotes": ["再看看物流"],
+                "order_id": 1001,
+            }],
+        })
 
 
 def catalog_extreme_spec(message: str, *, scope: str, with_category: bool) -> dict:

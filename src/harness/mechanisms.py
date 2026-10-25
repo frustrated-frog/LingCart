@@ -81,6 +81,7 @@ class AfterSalesPlanningMechanism(EmbeddedMechanism):
     """研究对照用的售后计划消费策略，不改变 Stable Kernel 执行边界。"""
 
     case_execution_mode: str = "policy_aware"
+    evidence_intake_mode: str = "model_default"
 
     def install(self, context) -> None:
         super().install(context)
@@ -89,13 +90,19 @@ class AfterSalesPlanningMechanism(EmbeddedMechanism):
             slot=self.slot,
             mechanism_id=self.mechanism_id,
             mechanism_version=self.mechanism_version,
-            configuration={"case_execution_mode": self.case_execution_mode},
+            configuration={
+                "case_execution_mode": self.case_execution_mode,
+                "evidence_intake_mode": self.evidence_intake_mode,
+            },
         )
 
     def provenance(self) -> dict:
         return {
             **super().provenance(),
-            "configuration": {"case_execution_mode": self.case_execution_mode},
+            "configuration": {
+                "case_execution_mode": self.case_execution_mode,
+                "evidence_intake_mode": self.evidence_intake_mode,
+            },
         }
 
 
@@ -238,11 +245,17 @@ def built_in_mechanisms() -> tuple[HarnessMechanism, ...]:
                            "src/catalog_metadata.py", "src/intake.py")),
         AfterSalesPlanningMechanism(
             "planning", "case-plan-observer", "0", ("orchestrator",),
-            after_sales_planning_sources, "observe_only",
+            after_sales_planning_sources, case_execution_mode="observe_only",
         ),
         AfterSalesPlanningMechanism(
             "planning", "policy-aware-case-execution", "1", ("orchestrator",),
-            after_sales_planning_sources, "policy_aware",
+            after_sales_planning_sources, case_execution_mode="policy_aware",
+        ),
+        AfterSalesPlanningMechanism(
+            "planning", "evidence-aware-case-execution", "2", ("orchestrator",),
+            after_sales_planning_sources,
+            case_execution_mode="policy_aware",
+            evidence_intake_mode="case_first",
         ),
         EmbeddedMechanism("tool_protocol", "runtime-tool-ledger", "2", ("orchestrator",),
                           ("src/runtime.py", "src/persistence.py")),

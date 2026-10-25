@@ -360,6 +360,7 @@ class CapabilityRegistry:
         spec = self.registration(str(objective["kind"])).spec
         protocol_fields = {
             "id", "kind", "source_quote", "desired_outcome", "target_type", "evidence_requirement",
+            "evidence_context_quotes",
         }
         supplied = {
             name for name, value in objective.items()

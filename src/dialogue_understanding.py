@@ -73,6 +73,7 @@ class BusinessObjective(StrictModel):
     desired_outcome: str | None = Field(None, min_length=1, max_length=300)
     target_type: str | None = Field(None, min_length=1, max_length=80)
     evidence_requirement: str | None = Field(None, pattern=r"^[A-Z][A-Z0-9_]{1,63}$")
+    evidence_context_quotes: list[str] = Field(default_factory=list, max_length=8)
     order_id: int | None = Field(None, ge=1)
     order_item_id: str | None = Field(None, min_length=1, max_length=64)
     reason_code: str | None = Field(None, min_length=1, max_length=40)
@@ -106,6 +107,10 @@ class BusinessObjective(StrictModel):
         if len(normalized_products) != len(set(normalized_products)):
             raise ValueError("Product IDs must be unique")
         self.product_ids = normalized_products
+        if len(self.evidence_context_quotes) != len(set(self.evidence_context_quotes)):
+            raise ValueError("Evidence context quotes must be unique")
+        if self.evidence_context_quotes and self.kind != "AFTER_SALES_CASE":
+            raise ValueError("Only AFTER_SALES_CASE may declare evidence context quotes")
         return self
 
 
@@ -152,6 +157,18 @@ evaluates a literal expression. Constraint shape: {version,constraints,optimizat
 goal_id,quantity,domain:{requirement_id,source_quote,provider,parameters}}]}. Constraint kinds are AGGREGATE
 {scope_goal_ids,attribute,function,operator,value}, COMPARISON {left,right,operator}, and ALL_DIFFERENT
 {scope_goal_ids,attribute}; every constraint and optimization also has requirement_id/source_quote. Leave missing values empty.
+For AFTER_SALES_CASE only, evidence_context_quotes may contain exact current HUMAN substrings describing the availability
+or absence of supporting policy evidence. They are audited context for that case, never a separate goal or authorization.
+"""
+
+_CASE_FIRST_EVIDENCE_BOUNDARY_PROMPT = """
+After-sales evidence boundary for this Harness Profile: when the latest HUMAN explicitly asks to open or create an
+AFTER_SALES_CASE and already supplies a grounded order_id plus an unambiguous reason_code, declare AFTER_SALES_CASE even
+when the HUMAN also says supporting policy evidence or an attestation is currently unavailable or cannot yet be given.
+Known evidence absence is not missing case-intake information. Do not invent or claim that evidence,
+do not use AFTER_SALES_CONTINUE before a case exists, and do not CLARIFY solely for that known absence. The policy runtime
+will persist NEEDS_EVIDENCE and WAIT_USER_INPUT. Put each exact HUMAN substring describing that known absence in
+evidence_context_quotes so request coverage remains auditable. Still CLARIFY when order_id or the policy reason itself is ambiguous.
 """
 
 _RESULT_SET_REFERENCE = re.compile(
@@ -211,7 +228,8 @@ def _validate_goal_coverage(understanding: TurnUnderstanding, user_message: str)
     if len(clauses) < 2:
         return
     quotes = [*(command.source_quote for command in understanding.commands),
-              *(objective.source_quote for objective in understanding.objectives)]
+              *(objective.source_quote for objective in understanding.objectives),
+              *(quote for objective in understanding.objectives for quote in objective.evidence_context_quotes)]
     uncovered = [clause for clause in clauses if not any(quote in clause for quote in quotes)]
     if uncovered:
         raise AgentError(
@@ -280,7 +298,8 @@ def _validate_grounding(understanding: TurnUnderstanding, user_message: str, his
     sources = _human_sources(user_message, history)
     registry = get_capability_registry()
     quoted = [*(command.source_quote for command in understanding.commands),
-              *(objective.source_quote for objective in understanding.objectives)]
+              *(objective.source_quote for objective in understanding.objectives),
+              *(quote for objective in understanding.objectives for quote in objective.evidence_context_quotes)]
     if any(quote not in user_message for quote in quoted):
         raise AgentError("UNGROUNDED_INTENT", "对话理解必须引用当前用户原文", retryable=False)
     for objective in understanding.objectives:
@@ -428,13 +447,20 @@ def _prompt(user_message: str, history: list | None, pending_action: dict | None
             "concepts": get_catalog_concept_registry().prompt_catalog(),
             "constraint_domain_providers": constraint_provider_prompt_catalog(),
         }
+    runtime = current_runtime()
+    planning_mechanism = runtime.mechanisms.get("planning") if runtime is not None else None
+    evidence_boundary_prompt = (
+        _CASE_FIRST_EVIDENCE_BOUNDARY_PROMPT
+        if getattr(planning_mechanism, "evidence_intake_mode", "model_default") == "case_first"
+        else ""
+    )
     audit_repair = (
         "\nAn independent catalog-request audit rejected the previous interpretation. Correct every issue; "
         "do not merely copy its wording:\n"
         + json.dumps(review_feedback, ensure_ascii=False, separators=(",", ":"))
         if review_feedback else ""
     )
-    return (_PROMPT + audit_repair
+    return (_PROMPT + evidence_boundary_prompt + audit_repair
             + "\nFor follow-up evidence or reassessment use AFTER_SALES_CONTINUE and session_cases. "
             "Select requirement_id only when the current user statement addresses its description. "
             "evidence_text must be an exact current HUMAN substring; omit it for reassessment. "

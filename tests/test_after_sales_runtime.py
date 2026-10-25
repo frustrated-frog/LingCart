@@ -37,6 +37,7 @@ from src.runtime import ReplayPolicy, ToolEffect, ToolRiskLevel, tool_spec
 
 MESSAGE = "订单 1001 的耳机出现间歇性异响，需要建立售后案件处理"
 MULTI_ITEM_MESSAGE = "订单 1001 的行项目 OI-1001-1 出现异响，需要申请售后退款"
+EVIDENCE_MISSING_MESSAGE = "订单 1001 的耳机与描述不符，请建立售后案件；原包装情况稍后才能确认。"
 
 
 class AfterSalesUnderstandingModel:
@@ -111,6 +112,32 @@ class MultiItemAfterSalesUnderstandingModel(AfterSalesUnderstandingModel):
         )
 
 
+class EvidenceBoundaryUnderstandingModel(AfterSalesUnderstandingModel):
+    def invoke(self, prompt):
+        prompt = str(prompt)
+        assert EVIDENCE_MISSING_MESSAGE in prompt
+        assert "Known evidence absence is not missing case-intake information" in prompt
+        return AIMessage(
+            content=json.dumps(
+                {
+                    "reason": "案件受理信息完整，原包装陈述属于后续政策证据",
+                    "commands": [],
+                    "objectives": [
+                        {
+                            "id": "after-sales-case",
+                            "kind": "AFTER_SALES_CASE",
+                            "source_quote": "订单 1001 的耳机与描述不符，请建立售后案件",
+                            "evidence_context_quotes": ["原包装情况稍后才能确认"],
+                            "order_id": 1001,
+                            "reason_code": "NOT_AS_DESCRIBED",
+                        }
+                    ],
+                },
+                ensure_ascii=False,
+            )
+        )
+
+
 class SemanticModelMustNotRun:
     def json_mode(self):
         return self
@@ -133,6 +160,27 @@ def require_authoritative_order_evidence(session):
                 "accepted_sources": ["ORDER_RECORD"],
                 "condition": "AUTHORITATIVE_ORDER",
                 "description": "需要读取权威订单状态",
+            },
+        },
+    }
+    policy.checksum = _checksum(policy.rules)
+    session.commit()
+
+
+def require_original_packaging_evidence(session):
+    policy = session.get(PolicyVersion, DEFAULT_AFTER_SALES_POLICY_VERSION_ID)
+    policy.rules = {
+        **policy.rules,
+        "required_evidence_by_reason": {
+            **policy.rules["required_evidence_by_reason"],
+            "NOT_AS_DESCRIBED": ["ORIGINAL_PACKAGING"],
+        },
+        "evidence_acceptance": {
+            **policy.rules["evidence_acceptance"],
+            "ORIGINAL_PACKAGING": {
+                "accepted_sources": ["CUSTOMER_STATEMENT"],
+                "condition": "CUSTOMER_ATTESTATION",
+                "description": "需要确认原包装及附件是否完整",
             },
         },
     }
@@ -327,6 +375,47 @@ def test_observer_profile_persists_plan_without_consuming_authoritative_action(d
     with tools._session() as session:
         refund = session.scalar(select(Refund).where(Refund.order_id == 1001))
         assert refund.status == "none"
+
+
+def test_evidence_boundary_profile_opens_case_before_waiting_for_customer_statement(database, monkeypatch):
+    from src.harness import get_runner
+
+    with tools._session() as session:
+        require_original_packaging_evidence(session)
+    monkeypatch.setattr(
+        orchestrator,
+        "get_llm",
+        lambda **_kwargs: EvidenceBoundaryUnderstandingModel(),
+    )
+
+    result = run_conversation(
+        EVIDENCE_MISSING_MESSAGE,
+        "evidence-boundary-case",
+        request_id="open-case-before-evidence",
+        runner=get_runner("after-sales-evidence-boundary-v2"),
+    )
+
+    assert result["status"] == "PARTIAL"
+    assert result["terminal_reason"] == "EVIDENCE_UNAVAILABLE"
+    assert result["pending_action"] is None
+    assert [entry["tool"] for entry in result["trace"]] == ["prepare_after_sales_case"]
+    observation = result["trace"][0]["result"]
+    assert observation["case_status"] == "AWAITING_EVIDENCE"
+    assert observation["policy_decision"]["outcome"] == "NEEDS_EVIDENCE"
+    assert result["plan"]["steps"][0]["result"]["autonomous_execution"]["status"] == "WAIT_USER_INPUT"
+    assert any(event["type"] == "case_execution_paused" and event["status"] == "WAIT_USER_INPUT"
+               for event in result["events"])
+    with tools._session() as session:
+        case = AfterSalesCaseService(session).get_case(observation["case_id"])
+        refund = session.scalar(select(Refund).where(Refund.order_id == 1001))
+        continuation = session.scalars(select(ToolLedger).where(
+            ToolLedger.run_id == result["run_id"],
+            ToolLedger.tool_name == "continue_after_sales_case",
+        )).all()
+        assert case.status == "AWAITING_EVIDENCE"
+        assert {item["evidence_type"] for item in case.evidence} == {"ISSUE_DESCRIPTION"}
+        assert refund.status == "none"
+        assert continuation == []
 
 
 def test_multi_item_case_is_routed_to_manual_review_without_order_refund(database, monkeypatch):

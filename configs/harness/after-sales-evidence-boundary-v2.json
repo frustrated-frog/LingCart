@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "profile_id": "after-sales-evidence-boundary-v2",
+  "version": "2.0.0",
+  "display_name": "售后证据边界候选",
+  "description": "明确区分案件受理字段与后续政策证据；已知缺少材料时先建案，再由政策状态等待用户补证。",
+  "engine": {
+    "id": "orchestrator",
+    "version": "1"
+  },
+  "mechanisms": [
+    {"slot": "planning", "id": "evidence-aware-case-execution", "version": "2"},
+    {"slot": "tool_protocol", "id": "runtime-tool-ledger", "version": "2"},
+    {"slot": "verification", "id": "deterministic-business-gates", "version": "2"}
+  ],
+  "capabilities": [
+    "open_set_dialogue_understanding",
+    "after_sales_case_planning",
+    "policy_aware_case_execution",
+    "after_sales_evidence_boundary",
+    "durable_runtime",
+    "approval_guard",
+    "tool_ledger"
+  ],
+  "research": {
+    "status": "candidate",
+    "source_type": "native",
+    "paper_id": null,
+    "hypothesis": "把已知缺失的政策证据与案件受理必填信息分离，可以先持久化案件并安全停在补证边界，而不会放宽审批或退款权限。"
+  }
+}
