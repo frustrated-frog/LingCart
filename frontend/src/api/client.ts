@@ -146,7 +146,7 @@ export const api = {
   pgCatalog: () => request<PGCatalog>('/engineering/pg/catalog'),
   pgJobs: () => request<{ jobs: PGJobSummary[] }>('/engineering/pg/jobs'),
   pgJob: (id: string) => request<PGJob>(`/engineering/pg/jobs/${encodeURIComponent(id)}`),
-  pgStart: (payload: { request_id: string; preset: PGPreset; confirm_full_cost?: boolean }) => request<PGJob>('/engineering/pg/jobs', {
+  pgStart: (payload: { request_id: string; preset: PGPreset; confirm_full_cost?: boolean; evolution_policy?: 'basic-v1' | 'credit-memory-v1' }) => request<PGJob>('/engineering/pg/jobs', {
     method: 'POST', body: JSON.stringify(payload),
   }),
   pgCancel: (id: string) => request<PGJob>(`/engineering/pg/jobs/${encodeURIComponent(id)}/cancel`, { method: 'POST' }),
