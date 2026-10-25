@@ -72,16 +72,27 @@ def test_graph_rejects_unregistered_actions_and_business_facts(change):
         ProceduralGraph.model_validate_json(json.dumps(data))
 
 
-@pytest.mark.parametrize("text", ["不得放宽预算等硬约束", "切勿绕过审批要求", "避免忽略安全限制"])
+@pytest.mark.parametrize("text", [
+    "不得放宽预算等硬约束",
+    "切勿绕过审批要求",
+    "避免忽略安全限制",
+    "放宽约束不得违反硬性预算或授权",
+    "调整软偏好不能突破价格硬约束",
+])
 def test_graph_allows_explicit_safety_preserving_guidance(text):
-    base = graph()
-    edge = base.edges[0].model_copy(update={"pitfalls": text})
-    updated = apply_patch(base, GraphPatch(reason="补充安全边界", source_cases=("PG01",),
-        delete_edges=(edge.id,), add_edges=(edge,)), training_sha256="b" * 64)
-    assert updated.version == 1 and edge.pitfalls == text
+    data = graph().model_dump(mode="json")
+    data["edges"][0]["pitfalls"] = text
+    updated = ProceduralGraph.model_validate_json(json.dumps(data))
+    assert updated.edges[0].pitfalls == text
 
 
-@pytest.mark.parametrize("text", ["建议放宽预算以获得更多候选", "可以绕过审批要求", "直接忽略安全限制"])
+@pytest.mark.parametrize("text", [
+    "建议放宽预算以获得更多候选",
+    "可以绕过审批要求",
+    "直接忽略安全限制",
+    "可以放宽预算，只要不绕过审批",
+    "放宽硬约束后再检查预算",
+])
 def test_graph_still_rejects_guidance_that_weakens_hard_boundaries(text):
     data = graph().model_dump(mode="json")
     data["edges"][0]["pitfalls"] = text
