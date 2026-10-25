@@ -1,10 +1,13 @@
 import json
+from datetime import datetime
 from pathlib import Path
 
 import pytest
 
+from eval.after_sales_autonomy_checks import _latest_case
 from eval.experiment_contract import ExperimentSpec
 from eval.run_live_eval import load_dataset, summarize
+from src.backend import db
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -37,6 +40,39 @@ def test_after_sales_autonomy_dataset_rejects_unfrozen_expectations(tmp_path):
 
     with pytest.raises(ValueError, match="autonomy_expect"):
         load_dataset(path)
+
+
+def test_latest_case_uses_persisted_open_time(tmp_path):
+    engine = db.get_engine(f"sqlite:///{tmp_path / 'autonomy-judge.db'}")
+    db.init_db(engine)
+    with db.get_session_factory(engine)() as session:
+        for case_id, opened_at in (
+            ("older", datetime(2026, 1, 1)),
+            ("newer", datetime(2026, 1, 2)),
+        ):
+            session.add(db.AfterSalesCase(
+                case_id=case_id,
+                request_key=f"request-{case_id}",
+                case_type="REFUND",
+                order_id=1001,
+                order_item_id=None,
+                requested_resolution="REFUND",
+                reason_code="NOT_AS_DESCRIBED",
+                reason_text="测试评测器案件排序",
+                status="OPEN",
+                revision=1,
+                origin_session_id=None,
+                context={},
+                opened_at=opened_at,
+                updated_at=opened_at,
+            ))
+        session.commit()
+
+    latest, evidence, decision = _latest_case({"db": db}, engine)
+
+    assert latest.case_id == "newer"
+    assert evidence == []
+    assert decision is None
 
 
 def test_live_summary_reports_policy_autonomy_without_inventing_cost_savings():

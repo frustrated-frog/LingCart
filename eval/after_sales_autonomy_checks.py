@@ -90,7 +90,10 @@ def apply_fixture(runtime: dict, engine, fixture: dict, *, session=None) -> None
 def _latest_case(runtime: dict, engine):
     db = runtime["db"]
     with db.get_session_factory(engine)() as session:
-        case = session.query(db.AfterSalesCase).order_by(db.AfterSalesCase.created_at.desc()).first()
+        case = session.query(db.AfterSalesCase).order_by(
+            db.AfterSalesCase.opened_at.desc(),
+            db.AfterSalesCase.case_id.desc(),
+        ).first()
         if case is None:
             return None, [], None
         evidence = session.query(db.AfterSalesEvidence).filter_by(case_id=case.case_id, status="ACTIVE").all()
