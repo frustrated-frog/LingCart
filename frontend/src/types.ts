@@ -628,12 +628,14 @@ export interface PGEdge {
 }
 export interface PGConditionClause { fact: string; operator: string; value?: string | boolean | number | string[] | null }
 export interface PGPlan {
+  evolution_policy?: 'basic-v1' | 'credit-memory-v1'; evaluation_scope?: 'dev_only' | 'three_arm_test'
   preset: PGPreset; spec: { repeats: number; iterations: number; max_model_calls_per_run: number
     max_prompt_tokens_per_run?: number; max_completion_tokens_per_run?: number; max_seconds_per_run?: number }
   groups: Record<'train' | 'validation' | 'test', string[]>
   max_samples: number; max_model_attempts: number; max_token_units: number | null; dataset_sha256: string; seed_sha256: string
 }
 export interface PGCatalog {
+  learning_plans?: Record<PGPreset, PGPlan>; learning_seed_graph?: PGGraph
   dataset: { cases: { id: string; learning_partition: 'train' | 'validation' | 'test'; scenario_family: string; category: string; description: string }[] }
   plans: Record<PGPreset, PGPlan>; seed_graph: PGGraph; model_configured: boolean; current_identity: Record<string, unknown>
 }
@@ -677,7 +679,25 @@ export interface PGSampleDetail {
     environment_triggered: boolean; recovered: boolean; failure_stage: string | null }
     turns: { turn_index: number; request: string; passed: boolean; failures: string[]; interventions: PGIntervention[] }[] }
 }
+export interface PGEdgeCredit {
+  edge_id: string; edge_sha256: string; classification: string; support: number; counter: number; unknown: number; case_count: number
+  evidence: { evidence_id: string; sample_ref: string; case_id: string; repetition: number; turn_index: number
+    classification: string; reason: string; condition: string; exposed: boolean; adopted: boolean; information_gain: string
+    task_passed: boolean; later_verified_objective_ids: string[]; guidance_sequence: number }[]
+  contrasts: { case_id: string; successful: { samples: string[]; counts: Record<string, number> }; failed: { samples: string[]; counts: Record<string, number> } }[]
+}
+export interface PGHypothesis {
+  problem: string; failure_mode: string; expected_change: string; target_edges: string[]; source_samples: string[]; evidence_ids: string[]
+}
+export interface PGHypothesisMemory {
+  hypothesis_id: string; hypothesis: PGHypothesis; iteration: number; status: string; reason: string; blocks_retry: boolean
+  validation_summary: { regressed_samples: number; improved_samples: number; compared_samples: number }
+}
 export interface PGSelection {
+  evolution_policy?: string; training_graph?: PGGraph
+  edge_credit?: { graph_sha256: string; graph_id: string; graph_version: number; edges: PGEdgeCredit[]; causal_claim: false; sample_refs: string[] }
+  hypothesis?: PGHypothesis; hypothesis_id?: string; hypothesis_memory?: PGHypothesisMemory[]; memory_entry?: PGHypothesisMemory
+  validation_changes?: { case_id: string; repetition: number; before_passed: boolean; after_passed: boolean; model_attempt_delta: number }[]
   iteration: number; status: string; reason: string; parent_sha256: string; candidate_sha256?: string; retained_sha256: string
   incumbent_metrics?: { score: number; model_attempts: number }
   candidate_metrics?: { score: number; model_attempts: number }
