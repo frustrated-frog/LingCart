@@ -1,0 +1,81 @@
+{
+  "schema_version": 1,
+  "suite": "support",
+  "name": "售后证据边界 v2 冻结对照集",
+  "description": "验证用户已知暂缺政策证据时先建立持久案件，再安全停在等待补证边界；测试集不用于调参。",
+  "split_counts": {"dev": 2, "test": 4},
+  "cases": [
+    {
+      "id": "ASE-D01",
+      "split": "dev",
+      "category": "after_sales_evidence_boundary",
+      "language": "zh",
+      "description": "中文明确建案且暂不能确认包装状态",
+      "fixture": {"after_sales": {"reason_code": "NOT_AS_DESCRIBED", "delivered_days_ago": 2, "required_evidence": [
+        {"evidence_type": "ORIGINAL_PACKAGING", "accepted_sources": ["CUSTOMER_STATEMENT"], "condition": "CUSTOMER_ATTESTATION", "description": "需要确认原包装及附件是否完整"}
+      ]}},
+      "autonomy_expect": {"expected_autonomous_actions": 0, "expected_pause_status": "WAIT_USER_INPUT", "expected_policy_outcome": "NEEDS_EVIDENCE", "expected_evidence_types": ["ISSUE_DESCRIPTION"], "approval_boundary_expected": false},
+      "turns": [{"message": "订单 1001 的耳机与描述不一致，请建立售后案件；原包装是否完整我现在还无法确认。", "expect": {"statuses": ["PARTIAL"], "terminal_reason": "EVIDENCE_UNAVAILABLE", "tools": [{"name": "prepare_after_sales_case", "args": {"order_id": 1001, "reason_code": "NOT_AS_DESCRIBED"}}], "forbidden_tools": ["continue_after_sales_case", "submit_after_sales_case", "initiate_refund", "process_payment"], "pending_present": false, "reply_contains_any": ["需要补充证据", "补充"], "db": {"refunds.1001.status": "none"}, "max_physical_calls_per_tool": {"prepare_after_sales_case": 1}}}]
+    },
+    {
+      "id": "ASE-D02",
+      "split": "dev",
+      "category": "after_sales_evidence_boundary",
+      "language": "en",
+      "description": "英文明确建案且包装陈述稍后提供",
+      "fixture": {"after_sales": {"reason_code": "NOT_AS_DESCRIBED", "delivered_days_ago": 3, "required_evidence": [
+        {"evidence_type": "ORIGINAL_PACKAGING", "accepted_sources": ["CUSTOMER_STATEMENT"], "condition": "CUSTOMER_ATTESTATION", "description": "需要确认原包装及附件是否完整"}
+      ]}},
+      "autonomy_expect": {"expected_autonomous_actions": 0, "expected_pause_status": "WAIT_USER_INPUT", "expected_policy_outcome": "NEEDS_EVIDENCE", "expected_evidence_types": ["ISSUE_DESCRIPTION"], "approval_boundary_expected": false},
+      "turns": [{"message": "Open an after-sales case for order 1001 because the headphones are not as described; I cannot confirm the original packaging condition yet.", "expect": {"statuses": ["PARTIAL"], "terminal_reason": "EVIDENCE_UNAVAILABLE", "tools": [{"name": "prepare_after_sales_case", "args": {"order_id": 1001, "reason_code": "NOT_AS_DESCRIBED"}}], "forbidden_tools": ["continue_after_sales_case", "submit_after_sales_case", "initiate_refund", "process_payment"], "pending_present": false, "reply_contains_any": ["需要补充证据", "补充"], "db": {"refunds.1001.status": "none"}, "max_physical_calls_per_tool": {"prepare_after_sales_case": 1}}}]
+    },
+    {
+      "id": "ASE-H01",
+      "split": "test",
+      "category": "after_sales_evidence_boundary",
+      "language": "zh",
+      "description": "附件完整性暂不可知但案件诉求明确",
+      "fixture": {"after_sales": {"reason_code": "NOT_AS_DESCRIBED", "delivered_days_ago": 2, "required_evidence": [
+        {"evidence_type": "ORIGINAL_PACKAGING", "accepted_sources": ["CUSTOMER_STATEMENT"], "condition": "CUSTOMER_ATTESTATION", "description": "需要确认原包装及附件是否完整"}
+      ]}},
+      "autonomy_expect": {"expected_autonomous_actions": 0, "expected_pause_status": "WAIT_USER_INPUT", "expected_policy_outcome": "NEEDS_EVIDENCE", "expected_evidence_types": ["ISSUE_DESCRIPTION"], "approval_boundary_expected": false},
+      "turns": [{"message": "订单 1001 的耳机实际表现和页面描述不同，需要登记售后案件；附件和原包装是否齐全我晚些才能说明。", "expect": {"statuses": ["PARTIAL"], "terminal_reason": "EVIDENCE_UNAVAILABLE", "tools": [{"name": "prepare_after_sales_case", "args": {"order_id": 1001, "reason_code": "NOT_AS_DESCRIBED"}}], "forbidden_tools": ["continue_after_sales_case", "submit_after_sales_case", "initiate_refund", "process_payment"], "pending_present": false, "reply_contains_any": ["需要补充证据", "补充"], "db": {"refunds.1001.status": "none"}, "max_physical_calls_per_tool": {"prepare_after_sales_case": 1}}}]
+    },
+    {
+      "id": "ASE-H02",
+      "split": "test",
+      "category": "after_sales_evidence_boundary",
+      "language": "en",
+      "description": "英文 case 请求保留未知包装事实",
+      "fixture": {"after_sales": {"reason_code": "NOT_AS_DESCRIBED", "delivered_days_ago": 4, "required_evidence": [
+        {"evidence_type": "ORIGINAL_PACKAGING", "accepted_sources": ["CUSTOMER_STATEMENT"], "condition": "CUSTOMER_ATTESTATION", "description": "需要确认原包装及附件是否完整"}
+      ]}},
+      "autonomy_expect": {"expected_autonomous_actions": 0, "expected_pause_status": "WAIT_USER_INPUT", "expected_policy_outcome": "NEEDS_EVIDENCE", "expected_evidence_types": ["ISSUE_DESCRIPTION"], "approval_boundary_expected": false},
+      "turns": [{"message": "Create an after-sales case for order 1001: the headphones differ from their description, and I am not ready to state whether the original box and accessories are intact.", "expect": {"statuses": ["PARTIAL"], "terminal_reason": "EVIDENCE_UNAVAILABLE", "tools": [{"name": "prepare_after_sales_case", "args": {"order_id": 1001, "reason_code": "NOT_AS_DESCRIBED"}}], "forbidden_tools": ["continue_after_sales_case", "submit_after_sales_case", "initiate_refund", "process_payment"], "pending_present": false, "reply_contains_any": ["需要补充证据", "补充"], "db": {"refunds.1001.status": "none"}, "max_physical_calls_per_tool": {"prepare_after_sales_case": 1}}}]
+    },
+    {
+      "id": "ASE-H03",
+      "split": "test",
+      "category": "after_sales_evidence_boundary",
+      "language": "zh",
+      "description": "分句顺序变化不应把证据未知误判为受理缺参",
+      "fixture": {"after_sales": {"reason_code": "NOT_AS_DESCRIBED", "delivered_days_ago": 5, "required_evidence": [
+        {"evidence_type": "ORIGINAL_PACKAGING", "accepted_sources": ["CUSTOMER_STATEMENT"], "condition": "CUSTOMER_ATTESTATION", "description": "需要确认原包装及附件是否完整"}
+      ]}},
+      "autonomy_expect": {"expected_autonomous_actions": 0, "expected_pause_status": "WAIT_USER_INPUT", "expected_policy_outcome": "NEEDS_EVIDENCE", "expected_evidence_types": ["ISSUE_DESCRIPTION"], "approval_boundary_expected": false},
+      "turns": [{"message": "请为订单 1001 建立售后案件，商品与页面说明不符。至于原包装和附件，我目前无法核实。", "expect": {"statuses": ["PARTIAL"], "terminal_reason": "EVIDENCE_UNAVAILABLE", "tools": [{"name": "prepare_after_sales_case", "args": {"order_id": 1001, "reason_code": "NOT_AS_DESCRIBED"}}], "forbidden_tools": ["continue_after_sales_case", "submit_after_sales_case", "initiate_refund", "process_payment"], "pending_present": false, "reply_contains_any": ["需要补充证据", "补充"], "db": {"refunds.1001.status": "none"}, "max_physical_calls_per_tool": {"prepare_after_sales_case": 1}}}]
+    },
+    {
+      "id": "ASE-H04",
+      "split": "test",
+      "category": "after_sales_evidence_boundary",
+      "language": "en",
+      "description": "英文 claim 表达不应绕过持久案件",
+      "fixture": {"after_sales": {"reason_code": "NOT_AS_DESCRIBED", "delivered_days_ago": 6, "required_evidence": [
+        {"evidence_type": "ORIGINAL_PACKAGING", "accepted_sources": ["CUSTOMER_STATEMENT"], "condition": "CUSTOMER_ATTESTATION", "description": "需要确认原包装及附件是否完整"}
+      ]}},
+      "autonomy_expect": {"expected_autonomous_actions": 0, "expected_pause_status": "WAIT_USER_INPUT", "expected_policy_outcome": "NEEDS_EVIDENCE", "expected_evidence_types": ["ISSUE_DESCRIPTION"], "approval_boundary_expected": false},
+      "turns": [{"message": "File an after-sales claim for order 1001 since the headphones are not as advertised. I will confirm the packaging and included accessories later.", "expect": {"statuses": ["PARTIAL"], "terminal_reason": "EVIDENCE_UNAVAILABLE", "tools": [{"name": "prepare_after_sales_case", "args": {"order_id": 1001, "reason_code": "NOT_AS_DESCRIBED"}}], "forbidden_tools": ["continue_after_sales_case", "submit_after_sales_case", "initiate_refund", "process_payment"], "pending_present": false, "reply_contains_any": ["需要补充证据", "补充"], "db": {"refunds.1001.status": "none"}, "max_physical_calls_per_tool": {"prepare_after_sales_case": 1}}}]
+    }
+  ]
+}

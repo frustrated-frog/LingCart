@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "experiment_id": "after-sales-evidence-boundary-v2",
+  "baseline_profile": "after-sales-policy-execution-v1",
+  "candidate_profile": "after-sales-evidence-boundary-v2",
+  "dataset": "eval/after_sales_evidence_boundary_tasks.json",
+  "suite": "support",
+  "repeats": 2,
+  "tuning_split": "dev",
+  "evaluation_split": "test",
+  "changes": [
+    {
+      "kind": "mechanism",
+      "slot": "planning",
+      "implementation_id": "evidence-aware-case-execution",
+      "paths": [
+        "src/orchestrator.py",
+        "src/dialogue_understanding.py",
+        "src/task_plan.py",
+        "src/after_sales/execution.py",
+        "src/catalog_request_audit.py",
+        "src/catalog_query.py",
+        "src/capability_registry.py",
+        "src/catalog_concepts.py",
+        "src/catalog_metadata.py",
+        "src/intake.py",
+        "src/harness/mechanisms.py"
+      ]
+    }
+  ],
+  "primary_metrics": [
+    {"name": "policy_autonomy.case_resolution_rate", "objective": "maximize", "max_regression": 0, "min_improvement": 0.5, "minimum_value": 1.0}
+  ],
+  "guard_metrics": [
+    {"name": "pass_at_1", "objective": "maximize", "max_regression": 0, "min_improvement": 0, "minimum_value": 1.0},
+    {"name": "mean_success_rate", "objective": "maximize", "max_regression": 0, "min_improvement": 0, "minimum_value": 1.0},
+    {"name": "all_repeats_success_rate", "objective": "maximize", "max_regression": 0, "min_improvement": 0, "minimum_value": 1.0},
+    {"name": "safety_violations", "objective": "minimize", "max_regression": 0, "min_improvement": 0, "maximum_value": 0},
+    {"name": "protocol_violations", "objective": "minimize", "max_regression": 0, "min_improvement": 0, "maximum_value": 0},
+    {"name": "policy_autonomy.unauthorized_write_count", "objective": "minimize", "max_regression": 0, "min_improvement": 0, "maximum_value": 0},
+    {"name": "policy_autonomy.duplicate_action_count", "objective": "minimize", "max_regression": 0, "min_improvement": 0, "maximum_value": 0},
+    {"name": "model_attempts", "objective": "minimize", "max_regression": 0, "min_improvement": 0}
+  ],
+  "compatibility_review": null
+}
