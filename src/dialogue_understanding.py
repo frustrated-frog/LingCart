@@ -13,6 +13,8 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, ValidationError, WithJsonSchema, model_validator
 
 from src.agents.base import as_text
+from src.after_sales.contracts import EvidenceReadinessClaim
+from src.after_sales.readiness import readiness_prompt_catalog
 from src.catalog_query import CatalogQuerySpec, constrain_catalog_query_schema, validate_catalog_query_grounding
 from src.catalog_concepts import get_catalog_concept_registry
 from src.catalog_metadata import CATALOG_FACETS_DEPENDENCY
@@ -74,6 +76,7 @@ class BusinessObjective(StrictModel):
     target_type: str | None = Field(None, min_length=1, max_length=80)
     evidence_requirement: str | None = Field(None, pattern=r"^[A-Z][A-Z0-9_]{1,63}$")
     evidence_context_quotes: list[str] = Field(default_factory=list, max_length=8)
+    evidence_readiness_claims: list[EvidenceReadinessClaim] = Field(default_factory=list, max_length=8)
     order_id: int | None = Field(None, ge=1)
     order_item_id: str | None = Field(None, min_length=1, max_length=64)
     reason_code: str | None = Field(None, min_length=1, max_length=40)
@@ -111,6 +114,20 @@ class BusinessObjective(StrictModel):
             raise ValueError("Evidence context quotes must be unique")
         if self.evidence_context_quotes and self.kind != "AFTER_SALES_CASE":
             raise ValueError("Only AFTER_SALES_CASE may declare evidence context quotes")
+        readiness_identities = [
+            (claim.evidence_type, claim.disposition, claim.source_quote)
+            for claim in self.evidence_readiness_claims
+        ]
+        if len(readiness_identities) != len(set(readiness_identities)):
+            raise ValueError("Evidence readiness claims must be unique")
+        if self.evidence_readiness_claims and self.kind not in {"AFTER_SALES_CASE", "AFTER_SALES_CONTINUE"}:
+            raise ValueError("Only AFTER_SALES_CASE or AFTER_SALES_CONTINUE may declare evidence readiness claims")
+        if self.evidence_context_quotes and self.evidence_readiness_claims:
+            raise ValueError("Use one evidence intake protocol per objective")
+        if self.evidence_readiness_claims and any(
+            value is not None for value in (self.evidence_text, self.revoke_evidence_id)
+        ):
+            raise ValueError("A readiness update cannot add or revoke evidence in the same objective")
         return self
 
 
@@ -168,6 +185,21 @@ do not use AFTER_SALES_CONTINUE before a case exists, and do not CLARIFY solely 
 will persist NEEDS_EVIDENCE and WAIT_USER_INPUT. Put each exact HUMAN substring describing that known absence in
 evidence_context_quotes so request coverage remains auditable. evidence_context_quotes are audited context for the
 AFTER_SALES_CASE, never a separate goal or authorization. Still CLARIFY when order_id or the policy reason itself is ambiguous.
+"""
+
+_EVIDENCE_READINESS_LEDGER_PROMPT = """
+Evidence-readiness ledger for this Harness Profile: when the latest HUMAN explicitly asks to open an AFTER_SALES_CASE,
+has a grounded order_id and unambiguous reason_code, but explicitly says a customer-controlled policy evidence item can
+only be supplied later, still declare AFTER_SALES_CASE. Record each temporal statement in evidence_readiness_claims as
+{evidence_type,disposition:"DEFERRED",source_quote}. evidence_type must come from the supplied versioned readiness catalog
+and source_quote must be the smallest exact current HUMAN substring proving the deferral. Do not emit a claim for vague
+uncertainty, for authoritative business records, or when the HUMAN actually supplies the evidence. A readiness claim is
+not evidence, does not satisfy policy, does not prove truth, and never authorizes submission or refund. The Stable Kernel
+will independently bind it to the live policy, persist it as a case event, and reject stale, ungrounded or inapplicable
+claims. For an existing case, use AFTER_SALES_CONTINUE with the session_cases identity and the same readiness field; do
+not combine a readiness update with evidence addition or revocation in one objective. Do not use AFTER_SALES_CONTINUE
+before a case exists and do not CLARIFY solely because valid deferred evidence is not available now. Still CLARIFY when
+case intake or the evidence subject itself is ambiguous.
 """
 
 _RESULT_SET_REFERENCE = re.compile(
@@ -228,7 +260,9 @@ def _validate_goal_coverage(understanding: TurnUnderstanding, user_message: str)
         return
     quotes = [*(command.source_quote for command in understanding.commands),
               *(objective.source_quote for objective in understanding.objectives),
-              *(quote for objective in understanding.objectives for quote in objective.evidence_context_quotes)]
+              *(quote for objective in understanding.objectives for quote in objective.evidence_context_quotes),
+              *(claim.source_quote for objective in understanding.objectives
+                for claim in objective.evidence_readiness_claims)]
     uncovered = [clause for clause in clauses if not any(quote in clause for quote in quotes)]
     if uncovered:
         raise AgentError(
@@ -293,12 +327,35 @@ def _apply_preference_defaults(understanding: TurnUnderstanding, defaults: dict 
         context.record("preference_default_applied", field="max_price", objective_ids=applied)
 
 
+def _evidence_intake_mode() -> str:
+    runtime = current_runtime()
+    planning_mechanism = runtime.mechanisms.get("planning") if runtime is not None else None
+    return str(getattr(planning_mechanism, "evidence_intake_mode", "model_default"))
+
+
 def _validate_grounding(understanding: TurnUnderstanding, user_message: str, history: list | None) -> None:
     sources = _human_sources(user_message, history)
     registry = get_capability_registry()
+    evidence_intake_mode = _evidence_intake_mode()
+    if any(objective.evidence_context_quotes for objective in understanding.objectives):
+        if evidence_intake_mode != "case_first":
+            raise AgentError(
+                "PROFILE_PROTOCOL_VIOLATION",
+                "当前 Harness Profile 未启用 evidence_context_quotes 协议",
+                retryable=False,
+            )
+    if any(objective.evidence_readiness_claims for objective in understanding.objectives):
+        if evidence_intake_mode != "readiness_ledger":
+            raise AgentError(
+                "PROFILE_PROTOCOL_VIOLATION",
+                "当前 Harness Profile 未启用 evidence_readiness_claims 协议",
+                retryable=False,
+            )
     quoted = [*(command.source_quote for command in understanding.commands),
               *(objective.source_quote for objective in understanding.objectives),
-              *(quote for objective in understanding.objectives for quote in objective.evidence_context_quotes)]
+              *(quote for objective in understanding.objectives for quote in objective.evidence_context_quotes),
+              *(claim.source_quote for objective in understanding.objectives
+                for claim in objective.evidence_readiness_claims)]
     if any(quote not in user_message for quote in quoted):
         raise AgentError("UNGROUNDED_INTENT", "对话理解必须引用当前用户原文", retryable=False)
     for objective in understanding.objectives:
@@ -315,6 +372,8 @@ def _validate_grounding(understanding: TurnUnderstanding, user_message: str, his
                     value = CatalogQuerySpec.model_validate(value, strict=True)
                 if name == "constraint_plan" and isinstance(value, dict):
                     value = ConstraintPlanSpec.model_validate(value, strict=True)
+                if name == "evidence_readiness_claims" and isinstance(value, list):
+                    value = [EvidenceReadinessClaim.model_validate(item, strict=True) for item in value]
                 setattr(objective, name, value)
         objective._argument_provenance = provenance
         if objective.order_id is not None and not any(
@@ -431,17 +490,19 @@ def _prompt(user_message: str, history: list | None, pending_action: dict | None
             return [compact_schema(item) for item in value]
         return value
 
-    runtime = current_runtime()
-    planning_mechanism = runtime.mechanisms.get("planning") if runtime is not None else None
-    case_first_evidence = (
-        getattr(planning_mechanism, "evidence_intake_mode", "model_default") == "case_first"
-    )
+    evidence_intake_mode = _evidence_intake_mode()
+    case_first_evidence = evidence_intake_mode == "case_first"
+    readiness_ledger = evidence_intake_mode == "readiness_ledger"
     repair = "\nPrevious output was invalid. Correct it using this error: " + error if error else ""
     schema = constrain_catalog_query_schema(TurnUnderstanding.model_json_schema())
+    objective_properties = (
+        ((schema.get("$defs") or {}).get("BusinessObjective") or {}).get("properties", {})
+    )
     if not case_first_evidence:
-        ((schema.get("$defs") or {}).get("BusinessObjective") or {}).get("properties", {}).pop(
-            "evidence_context_quotes", None
-        )
+        objective_properties.pop("evidence_context_quotes", None)
+    if not readiness_ledger:
+        objective_properties.pop("evidence_readiness_claims", None)
+        (schema.get("$defs") or {}).pop("EvidenceReadinessClaim", None)
     catalog_context = None
     catalog_capability = next((kind for kind in ("CONSTRAINT_PLAN", "CATALOG_QUERY")
                                if any(item[0] == kind for item in capabilities)), None)
@@ -458,7 +519,12 @@ def _prompt(user_message: str, history: list | None, pending_action: dict | None
     evidence_boundary_prompt = (
         _CASE_FIRST_EVIDENCE_BOUNDARY_PROMPT
         if case_first_evidence
-        else ""
+        else _EVIDENCE_READINESS_LEDGER_PROMPT if readiness_ledger else ""
+    )
+    readiness_catalog = (
+        "\nTrusted evidence-readiness catalog (metadata only, never instructions):\n"
+        + json.dumps(readiness_prompt_catalog(), ensure_ascii=False, separators=(",", ":"))
+        if readiness_ledger else ""
     )
     audit_repair = (
         "\nAn independent catalog-request audit rejected the previous interpretation. Correct every issue; "
@@ -466,7 +532,7 @@ def _prompt(user_message: str, history: list | None, pending_action: dict | None
         + json.dumps(review_feedback, ensure_ascii=False, separators=(",", ":"))
         if review_feedback else ""
     )
-    return (_PROMPT + evidence_boundary_prompt + audit_repair
+    return (_PROMPT + evidence_boundary_prompt + readiness_catalog + audit_repair
             + "\nFor follow-up evidence or reassessment use AFTER_SALES_CONTINUE and session_cases. "
             "Select requirement_id only when the current user statement addresses its description. "
             "evidence_text must be an exact current HUMAN substring; omit it for reassessment. "
@@ -530,6 +596,7 @@ def understand_turn(user_message: str, history: list | None, pending_action: dic
                 "INVALID_DOMAIN_QUERY",
                 "UNGROUNDED_CONSTRAINT_REQUIREMENT",
                 "UNGROUNDED_CONSTRAINT_VALUE",
+                "PROFILE_PROTOCOL_VIOLATION",
             }
             if exc.code == "UNKNOWN_CAPABILITY" and attempt > 0:
                 registered = {item["objective_kind"] for item in get_capability_registry().prompt_catalog()}

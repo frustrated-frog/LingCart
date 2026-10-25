@@ -2,7 +2,7 @@
 from datetime import UTC, datetime
 from sqlalchemy import select
 
-from src.after_sales.contracts import EvidenceCommand
+from src.after_sales.contracts import EvidenceCommand, EvidenceReadinessClaim
 from src.after_sales.policy import AfterSalesPolicyEngine
 from src.after_sales.service import AfterSalesCaseService, AfterSalesDomainError, _checksum
 from src.backend.db import AgentRun, AfterSalesCaseRun, Order
@@ -15,6 +15,90 @@ def case_result(case):
             "revision": case.revision, "policy_decision": decision,
             "requires_confirmation": decision.get("outcome") == "ELIGIBLE" and case.status == "AWAITING_CONFIRMATION",
             "case": case.model_dump(mode="json"), "data_source": "AFTER_SALES_CASE_LEDGER"}
+
+
+def record_readiness(*, case_id, expected_revision, evidence_readiness_claims):
+    """Persist a cross-turn temporal claim without invoking evidence semantics."""
+
+    from src import tools
+    from src.after_sales.readiness import EvidenceReadinessValidationError, validate_readiness_claims
+    from src.runtime import current_runtime
+
+    runtime = current_runtime()
+    if runtime is None:
+        raise AgentError("CASE_SESSION_REQUIRED", "记录证据就绪度需要持久化会话上下文", retryable=False)
+    claims = tuple(sorted(
+        (
+            claim if isinstance(claim, EvidenceReadinessClaim)
+            else EvidenceReadinessClaim.model_validate(claim, strict=True)
+            for claim in evidence_readiness_claims
+        ),
+        key=lambda claim: (claim.evidence_type, claim.disposition, claim.source_quote),
+    ))
+    if not claims:
+        raise AgentError("EVIDENCE_READINESS_REQUIRED", "必须提供至少一项证据就绪度声明", retryable=False)
+    now = datetime.now(UTC).replace(tzinfo=None)
+    try:
+        with tools._session() as session:
+            run = session.get(AgentRun, runtime.run_id)
+            service = AfterSalesCaseService(session)
+            case = service.get_case(case_id)
+            if run is None or case.origin_session_id != run.session_id:
+                raise AgentError("CASE_CONTEXT_FORBIDDEN", "案件不属于当前会话", retryable=False)
+            if case.revision != expected_revision:
+                raise AgentError("CASE_REVISION_CONFLICT", "案件已变化，请重新读取后继续", retryable=False)
+            if case.status.terminal or case.status == "SUBMITTED":
+                raise AgentError("CASE_NOT_CONTINUABLE", "已提交或终止案件不能记录证据就绪度", retryable=False)
+            engine = AfterSalesPolicyEngine(session)
+            policy = engine._applicable_policy(case.case_type, now)
+            rules = engine._validated_rules(policy)
+            try:
+                claims = validate_readiness_claims(
+                    claims,
+                    request=run.request,
+                    reason_code=case.reason_code,
+                    rules=rules,
+                )
+            except EvidenceReadinessValidationError as exc:
+                raise AgentError(exc.code, str(exc), retryable=False) from exc
+            action_identity = _checksum({
+                "case_id": case_id,
+                "run_id": run.run_id,
+                "claims": [claim.model_dump(mode="json") for claim in claims],
+            })[:24]
+            case = service.attach_run(
+                case_id,
+                run.run_id,
+                session_id=run.session_id,
+                role="READINESS_UPDATE",
+                idempotency_key=f"run:{run.run_id}:{action_identity}",
+                expected_revision=case.revision,
+                now=now,
+            )
+            for claim in claims:
+                claim_identity = _checksum(claim.model_dump(mode="json"))[:24]
+                case = service.record_evidence_readiness(
+                    case_id,
+                    claim,
+                    policy_version_id=policy.policy_version_id,
+                    policy_checksum=policy.checksum,
+                    source_ref=f"agent_runs:{run.run_id}:request",
+                    idempotency_key=f"readiness:{run.run_id}:{claim_identity}",
+                    expected_revision=case.revision,
+                    actor_id=run.session_id,
+                    now=now,
+                )
+            evaluation = engine.evaluate(case_id, as_of=now)
+            case = service.record_policy_decision(
+                case_id,
+                evaluation,
+                idempotency_key=f"policy:{evaluation.input_hash}",
+                expected_revision=case.revision,
+            )
+            tools._commit(session)
+            return case_result(case)
+    except AfterSalesDomainError as exc:
+        raise AgentError(exc.code, str(exc), retryable=exc.retryable) from exc
 
 
 def continue_case(*, case_id, expected_revision, requirement_id, evidence_text, revoke_evidence_id):

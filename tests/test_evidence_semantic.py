@@ -8,7 +8,7 @@ from langchain_core.messages import AIMessage
 from sqlalchemy import select
 
 from src import llm, tools
-from src.after_sales.semantic import assess, validate_response
+from src.after_sales.semantic import assess, preparation_key, validate_response
 from src.backend.db import AfterSalesCase, AfterSalesEvidence, AfterSalesSemanticAssessment, PendingAction, Refund
 from src.durable import run_conversation
 from src.runtime import RunRuntime, BudgetLimits, runtime_scope
@@ -22,6 +22,24 @@ def inputs():
             'requirements': [{'requirement_id': 'p:DAMAGE', 'evidence_type': 'DAMAGE', 'description': '说明商品损坏情况'}],
             'evidence': [{'evidence_id': 'new', 'evidence_type': 'DAMAGE',
                           'statement': '包装破了', 'source_text': '不是商品坏了，是包装破了，商品我还没有检查。'}]}
+
+
+def test_semantic_preparation_identity_binds_evidence_readiness_claims():
+    base = {
+        "order_id": 1001,
+        "reason_code": "CHANGED_MIND",
+        "reason_text": "商品不再需要",
+    }
+    deferred = {
+        **base,
+        "evidence_readiness_claims": [{
+            "evidence_type": "ORIGINAL_PACKAGING",
+            "disposition": "DEFERRED",
+            "source_quote": "原包装稍后确认",
+        }],
+    }
+
+    assert preparation_key(base) != preparation_key(deferred)
 
 
 @pytest.mark.parametrize('mode', ['foreign', 'quote', 'missing', 'duplicate', 'withdrawal', 'unasked', 'wrong_type'])

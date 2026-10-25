@@ -16,7 +16,11 @@ from src.after_sales.execution import ACTION_PLANNER_VERSION, decide_next_case_a
 
 
 _PROPOSAL_OPERATIONS = {"prepare_refund", "prepare_payment", "prepare_case_submission"}
-_POLICY_AWARE_CASE_OPERATIONS = {"prepare_after_sales_case", "continue_after_sales_case"}
+_POLICY_AWARE_CASE_OPERATIONS = {
+    "prepare_after_sales_case",
+    "continue_after_sales_case",
+    "record_after_sales_evidence_readiness",
+}
 _MAX_AUTONOMOUS_CASE_ACTIONS = 4
 
 

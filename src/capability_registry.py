@@ -360,7 +360,7 @@ class CapabilityRegistry:
         spec = self.registration(str(objective["kind"])).spec
         protocol_fields = {
             "id", "kind", "source_quote", "desired_outcome", "target_type", "evidence_requirement",
-            "evidence_context_quotes",
+            "evidence_context_quotes", "evidence_readiness_claims",
         }
         supplied = {
             name for name, value in objective.items()
@@ -610,6 +610,8 @@ def _after_sales_case(objective: Mapping[str, object], request: str) -> tuple[Co
     }
     if objective.get("order_item_id"):
         arguments["order_item_id"] = objective["order_item_id"]
+    if objective.get("evidence_readiness_claims"):
+        arguments["evidence_readiness_claims"] = objective["evidence_readiness_claims"]
     return (
         CompiledOperation("case-assessment", "after_sales", "prepare_after_sales_case", arguments),
         CompiledOperation(
@@ -624,6 +626,17 @@ def _after_sales_case(objective: Mapping[str, object], request: str) -> tuple[Co
 
 def _continue_after_sales_case(objective: Mapping[str, object], request: str) -> tuple[CompiledOperation, ...]:
     arguments = {"case_id": objective["case_id"], "expected_revision": objective["case_revision"]}
+    if objective.get("evidence_readiness_claims"):
+        arguments["evidence_readiness_claims"] = objective["evidence_readiness_claims"]
+        return (
+            CompiledOperation(
+                "case-assessment",
+                "after_sales",
+                "record_after_sales_evidence_readiness",
+                arguments,
+            ),
+            CompiledOperation("case-proposal", "after_sales", "prepare_case_submission", {}, ("case-assessment",)),
+        )
     arguments.update(_args(objective, ("requirement_id", "evidence_text", "revoke_evidence_id")))
     return (
         CompiledOperation("case-assessment", "after_sales", "continue_after_sales_case", arguments),
@@ -661,11 +674,26 @@ def _verify_after_sales_case(result: object, arguments: Mapping[str, object]) ->
     )
     if not valid:
         raise AgentError("INVALID_TOOL_RESULT", "售后案件结果缺少可核验的政策裁决", retryable=False)
+    expected_readiness = {
+        (row.get("evidence_type"), row.get("disposition"), row.get("source_quote"))
+        for row in arguments.get("evidence_readiness_claims") or []
+        if isinstance(row, dict)
+    }
+    recorded_readiness = {
+        (payload.get("evidence_type"), payload.get("disposition"), payload.get("source_quote"))
+        for event in case.get("events") or []
+        if isinstance(event, dict) and event.get("event_type") == "EVIDENCE_READINESS_RECORDED"
+        for payload in [event.get("payload")]
+        if isinstance(payload, dict)
+    }
+    if not expected_readiness <= recorded_readiness:
+        raise AgentError("INVALID_TOOL_RESULT", "售后案件缺少已声明的证据就绪度事件", retryable=False)
 
 
 def _render_after_sales_case(result: object, _arguments: Mapping[str, object]) -> str:
     if not isinstance(result, dict):
         raise AgentError("INVALID_TOOL_RESULT", "售后案件结果格式无效", retryable=False)
+    case = result.get("case") or {}
     decision = result["policy_decision"]
     reasons = "、".join(decision.get("reason_codes") or [])
     messages = {
@@ -677,6 +705,24 @@ def _render_after_sales_case(result: object, _arguments: Mapping[str, object]) -
     if result.get("case_status") == "SUBMITTED":
         return f"售后案件 {result['case_id']} 已经提交，无需重复确认。"
     requirements = decision.get("facts", {}).get("evidence_requirements", [])
+    latest_plan = next(reversed(case.get("plans") or []), {})
+    deferred = [
+        action for action in latest_plan.get("next_actions") or []
+        if action.get("kind") == "WAIT_FOR_CUSTOMER_EVIDENCE"
+    ]
+    if deferred:
+        descriptions = {
+            row.get("requirement_id"): row.get("description")
+            for row in requirements
+        }
+        waiting = "；".join(
+            str(descriptions.get(action.get("requirement_id")) or "政策要求的材料")
+            for action in deferred
+        )
+        return (
+            f"售后案件 {result['case_id']} 已保存，并记录你暂时无法提供相关材料。"
+            f"准备好后可继续补充：{waiting}。"
+        )
     missing = [(r.get("semantic_assessment") or {}).get("question") or r["description"]
                for r in requirements if r["status"] != "SATISFIED"]
     return (
@@ -892,11 +938,18 @@ def _builtin_registrations() -> tuple[CapabilityRegistration, ...]:
             side_effect="REQUIRES_APPROVAL",
             missing_question="请明确要继续的售后案件编号或订单号；存在多个案件时我不会猜测。",
             normalizer=normalize_case_continuation, normalizer_version="session-case-ledger/v1",
-            operations={"continue_after_sales_case": OperationContract(
-                handler=tools.continue_after_sales_case,
-                required_result_fields=("case_id", "order_id", "case_status", "revision", "policy_decision", "case"),
-                result_verifier=_verify_after_sales_case, renderer=_render_after_sales_case,
-            )},
+            operations={
+                "continue_after_sales_case": OperationContract(
+                    handler=tools.continue_after_sales_case,
+                    required_result_fields=("case_id", "order_id", "case_status", "revision", "policy_decision", "case"),
+                    result_verifier=_verify_after_sales_case, renderer=_render_after_sales_case,
+                ),
+                "record_after_sales_evidence_readiness": OperationContract(
+                    handler=tools.record_after_sales_evidence_readiness,
+                    required_result_fields=("case_id", "order_id", "case_status", "revision", "policy_decision", "case"),
+                    result_verifier=_verify_after_sales_case, renderer=_render_after_sales_case,
+                ),
+            },
         ),
         _spec(PAYMENT_STATUS, "payment.status.read", "查询订单支付状态", "order", "BUSINESS_DATA",
               _single("payment", "get_payment_status", order_fields), required=order_fields,

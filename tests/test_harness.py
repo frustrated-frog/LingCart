@@ -93,6 +93,27 @@ def test_evidence_boundary_profile_changes_only_the_planning_mechanism():
         get_product_runner("after-sales-evidence-boundary-v2")
 
 
+def test_evidence_readiness_profile_is_a_research_only_planning_mechanism():
+    from src.harness.registry import get_product_runner, get_runner
+
+    boundary = get_runner("after-sales-evidence-boundary-v2").provenance()
+    readiness = get_runner("after-sales-evidence-readiness-v3").provenance()
+
+    assert boundary["engine"] == readiness["engine"]
+    assert [item for item in boundary["mechanisms"] if item["slot"] != "planning"] == [
+        item for item in readiness["mechanisms"] if item["slot"] != "planning"
+    ]
+    planning = next(item for item in readiness["mechanisms"] if item["slot"] == "planning")
+    assert planning["id"] == "evidence-readiness-case-execution"
+    assert planning["version"] == "3"
+    assert planning["configuration"] == {
+        "case_execution_mode": "policy_aware",
+        "evidence_intake_mode": "readiness_ledger",
+    }
+    with pytest.raises(AgentError, match="仅限研究"):
+        get_product_runner("after-sales-evidence-readiness-v3")
+
+
 def test_two_profiles_bind_different_context_implementations_to_same_engine():
     from src.task_plan import TaskPlan, TaskStep
 

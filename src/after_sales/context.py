@@ -39,9 +39,20 @@ def current_case_context() -> list[dict]:
         for row in rows:
             case = service.get_case(row.case_id)
             decision = case.latest_decision or {}
+            requirements = [
+                {
+                    "requirement_id": requirement.get("requirement_id"),
+                    "evidence_type": requirement.get("evidence_type"),
+                    "description": requirement.get("description"),
+                    "status": requirement.get("status"),
+                    "question": (requirement.get("semantic_assessment") or {}).get("question"),
+                }
+                for requirement in decision.get("facts", {}).get("evidence_requirements", [])
+                if isinstance(requirement, dict)
+            ]
             result.append({"case_id": row.case_id, "order_id": row.order_id,
                            "revision": row.revision, "status": row.status,
-                           "requirements": decision.get("facts", {}).get("evidence_requirements", []),
+                           "requirements": requirements,
                            "evidence": [{"evidence_id": e["evidence_id"], "evidence_type": e["evidence_type"],
                                          "statement_excerpt": str(e['payload'].get('statement', ''))[:512],
                                          "status": e["status"]} for e in case.evidence[-32:]]})
@@ -73,6 +84,14 @@ def normalize_case_continuation(objective: dict, sources: tuple[str, ...]):
     requirement_id = objective.get("requirement_id")
     if requirement_id and requirement_id not in {r['requirement_id'] for r in case['requirements']}:
         raise AgentError("EVIDENCE_REQUIREMENT_STALE", "证据要求不属于当前案件政策，请重新读取", retryable=False)
+    readiness_types = {
+        row.get("evidence_type")
+        for row in objective.get("evidence_readiness_claims") or []
+        if isinstance(row, dict)
+    }
+    known_types = {r.get("evidence_type") for r in case['requirements']}
+    if readiness_types - known_types:
+        raise AgentError("EVIDENCE_READINESS_NOT_APPLICABLE", "证据就绪度不属于当前案件政策要求", retryable=False)
     statement = objective.get("evidence_text")
     if statement and (not requirement_id or statement not in quote):
         raise AgentError("UNGROUNDED_EVIDENCE", "补充材料必须引用当前原文并指定政策证据要求", retryable=False)

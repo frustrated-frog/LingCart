@@ -2,6 +2,8 @@
 
 Docstrings are written for the LLM to read when deciding which tool to call.
 """
+from __future__ import annotations
+
 import ast
 from datetime import datetime
 import logging
@@ -30,6 +32,7 @@ from src.backend.db import (
     init_db,
 )
 from src.backend.seed import seed as _seed_data
+from src.after_sales.contracts import EvidenceReadinessClaim
 from src.catalog_metadata import CatalogMetadataProvider
 
 logger = logging.getLogger("support_agent.tools")
@@ -435,6 +438,7 @@ def prepare_after_sales_case(
     reason_taxonomy_version: Annotated[str, Field(min_length=1, max_length=80)],
     reason_taxonomy_fingerprint: Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")],
     order_item_id: str | None = None,
+    evidence_readiness_claims: list[EvidenceReadinessClaim] | None = None,
 ) -> dict:
     """Open and deterministically assess a refund case without submitting a refund.
 
@@ -459,10 +463,16 @@ def prepare_after_sales_case(
         REASON_TAXONOMY_VERSION,
         reason_taxonomy_identity,
     )
+    from src.after_sales.service import _checksum
     from src.errors import AgentError
     from src.runtime import current_runtime
 
     runtime = current_runtime()
+    readiness_claims = tuple(
+        claim if isinstance(claim, EvidenceReadinessClaim)
+        else EvidenceReadinessClaim.model_validate(claim, strict=True)
+        for claim in evidence_readiness_claims or []
+    )
     now = datetime.now(UTC).replace(tzinfo=None)
     run_id = runtime.run_id if runtime else uuid.uuid4().hex
     if (
@@ -508,7 +518,13 @@ def prepare_after_sales_case(
                 prepared = prepared_initial(session, runtime, {
                     "order_id": order_id, "order_item_id": order_item_id, "reason_text": reason_text,
                     "reason_code": reason_code, "reason_taxonomy_version": reason_taxonomy_version,
-                    "reason_taxonomy_fingerprint": reason_taxonomy_fingerprint})
+                    "reason_taxonomy_fingerprint": reason_taxonomy_fingerprint,
+                    **({
+                        "evidence_readiness_claims": [
+                            claim.model_dump(mode="json") for claim in readiness_claims
+                        ],
+                    } if readiness_claims else {}),
+                })
                 policy = AfterSalesPolicyEngine(session)._applicable_policy('REFUND', now)
                 if (policy.policy_version_id != prepared['input']['policy_version_id']
                         or policy.checksum != prepared['input']['policy_checksum']):
@@ -560,6 +576,19 @@ def prepare_after_sales_case(
                     "case": case.model_dump(mode="json"),
                     "data_source": "AFTER_SALES_CASE_LEDGER",
                 }
+            for claim in readiness_claims:
+                readiness_identity = _checksum(claim.model_dump(mode="json"))[:24]
+                case = service.record_evidence_readiness(
+                    case.case_id,
+                    claim,
+                    policy_version_id=policy.policy_version_id,
+                    policy_checksum=policy.checksum,
+                    source_ref=f"agent_runs:{run_id}:request",
+                    idempotency_key=f"readiness:{run_id}:{readiness_identity}",
+                    expected_revision=case.revision,
+                    actor_id=session_id,
+                    now=now,
+                )
             case = service.add_evidence(
                 case.case_id,
                 EvidenceCommand(
@@ -613,6 +642,21 @@ def continue_after_sales_case(
     from src.after_sales.actions import continue_case
     return continue_case(case_id=case_id, expected_revision=expected_revision, requirement_id=requirement_id,
                          evidence_text=evidence_text, revoke_evidence_id=revoke_evidence_id)
+
+
+def record_after_sales_evidence_readiness(
+    case_id: Annotated[str, Field(min_length=1, max_length=64)],
+    expected_revision: Annotated[int, Field(gt=0)],
+    evidence_readiness_claims: Annotated[list[EvidenceReadinessClaim], Field(min_length=1, max_length=8)],
+) -> dict:
+    """Record policy-bound evidence deferrals for an existing case; never add evidence or authorize a refund."""
+    from src.after_sales.actions import record_readiness
+
+    return record_readiness(
+        case_id=case_id,
+        expected_revision=expected_revision,
+        evidence_readiness_claims=evidence_readiness_claims,
+    )
 
 
 def submit_after_sales_case(

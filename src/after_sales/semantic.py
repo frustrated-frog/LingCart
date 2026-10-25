@@ -135,7 +135,8 @@ def preparation_key(args):
     return _checksum({key: args.get(key) for key in
                       ("case_id", "expected_revision", "requirement_id", "evidence_text", "revoke_evidence_id",
                        "order_id", "order_item_id", "reason_code", "reason_text",
-                       "reason_taxonomy_version", "reason_taxonomy_fingerprint")})
+                       "reason_taxonomy_version", "reason_taxonomy_fingerprint",
+                       "evidence_readiness_claims")})
 
 
 def collect_initial_inputs(session, runtime, args, *, now):
@@ -149,14 +150,24 @@ def collect_initial_inputs(session, runtime, args, *, now):
     case = AfterSalesCaseService(session).find_active_case(
         order_id=args['order_id'], order_item_id=args.get('order_item_id'), origin_session_id=run.session_id,
         case_type=CaseType.REFUND, requested_resolution=RequestedResolution.REFUND, reason_text=args['reason_text'])
+    engine = AfterSalesPolicyEngine(session)
+    policy = engine._applicable_policy('REFUND', now)
+    rules = engine._validated_rules(policy)
+    from src.after_sales.readiness import EvidenceReadinessValidationError, validate_readiness_claims
+    try:
+        validate_readiness_claims(
+            args.get('evidence_readiness_claims') or [],
+            request=run.request,
+            reason_code=args['reason_code'],
+            rules=rules,
+        )
+    except EvidenceReadinessValidationError as exc:
+        raise AgentError(exc.code, str(exc), retryable=False) from exc
     if case:
         if case.status == 'SUBMITTED':
             return {'case_id': case.case_id, 'skip': True}
         inputs = collect_inputs(session, runtime, {'case_id': case.case_id, 'expected_revision': case.revision}, now=now)
     else:
-        engine = AfterSalesPolicyEngine(session)
-        policy = engine._applicable_policy('REFUND', now)
-        rules = engine._validated_rules(policy)
         requirements = []
         for kind in rules['required_evidence_by_reason'].get(args['reason_code'], []):
             rule = rules.get('evidence_acceptance', {}).get(kind, {})

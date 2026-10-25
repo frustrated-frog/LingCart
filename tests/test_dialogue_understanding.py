@@ -8,6 +8,7 @@ from src.adaptive import run_adaptive
 from src.backend.db import Payment, get_engine, get_session_factory
 from src.backend.seed import seed
 from src.dialogue_understanding import TurnUnderstanding, _prompt, to_task_plan, understand_turn
+from src.errors import AgentError
 from src.runtime import BudgetLimits, RunRuntime, runtime_scope
 from src.task_plan import execute_plan
 
@@ -44,11 +45,45 @@ def test_evidence_boundary_profile_adds_case_first_instruction_only_for_candidat
 
     baseline_prompt = prompt_for("after-sales-policy-execution-v1")
     candidate_prompt = prompt_for("after-sales-evidence-boundary-v2")
+    readiness_prompt = prompt_for("after-sales-evidence-readiness-v3")
 
     assert "Known evidence absence is not missing case-intake information" not in baseline_prompt
     assert "evidence_context_quotes" not in baseline_prompt
+    assert "evidence_readiness_claims" not in baseline_prompt
+    assert "EvidenceReadinessClaim" not in baseline_prompt
     assert "Known evidence absence is not missing case-intake information" in candidate_prompt
     assert "evidence_context_quotes" in candidate_prompt
+    assert "evidence_readiness_claims" not in candidate_prompt
+    assert "EvidenceReadinessClaim" not in candidate_prompt
+    assert "Evidence-readiness ledger for this Harness Profile" in readiness_prompt
+    assert "evidence_context_quotes" not in readiness_prompt
+    assert "evidence_readiness_claims" in readiness_prompt
+    assert "after-sales-evidence-readiness/2026-01" in readiness_prompt
+
+
+def test_evidence_protocol_fields_are_rejected_outside_the_bound_profile():
+    from src.harness import get_runner
+
+    message = "订单 1001 商品不想要了，请建立售后案件；原包装稍后确认"
+    payload = interpretation(objectives=[{
+        "id": "case",
+        "kind": "AFTER_SALES_CASE",
+        "source_quote": "订单 1001 商品不想要了，请建立售后案件",
+        "evidence_readiness_claims": [{
+            "evidence_type": "ORIGINAL_PACKAGING",
+            "disposition": "DEFERRED",
+            "source_quote": "原包装稍后确认",
+        }],
+        "order_id": 1001,
+        "reason_code": "CHANGED_MIND",
+    }])
+    runtime = RunRuntime("after-sales-policy-execution-v1", BudgetLimits())
+    with runtime_scope(runtime):
+        get_runner("after-sales-policy-execution-v1").bind(runtime)
+        with pytest.raises(AgentError) as blocked:
+            understand_turn(message, None, None, model=ScriptedModel(payload, payload))
+
+    assert blocked.value.code == "PROFILE_PROTOCOL_VIOLATION"
 
 
 def test_evidence_context_quotes_are_scoped_to_after_sales_cases():
@@ -62,6 +97,73 @@ def test_evidence_context_quotes_are_scoped_to_after_sales_cases():
                 "source_quote": "查询订单 1001",
                 "evidence_context_quotes": ["再看看物流"],
                 "order_id": 1001,
+            }],
+        })
+
+
+def test_evidence_readiness_claims_are_scoped_and_compile_into_the_guarded_tool():
+    with pytest.raises(ValueError, match="Only AFTER_SALES_CASE"):
+        TurnUnderstanding.model_validate({
+            "reason": "不能用证据延期隐藏订单查询目标",
+            "commands": [],
+            "objectives": [{
+                "id": "order-status",
+                "kind": "ORDER_STATUS",
+                "source_quote": "查询订单 1001",
+                "evidence_readiness_claims": [{
+                    "evidence_type": "ORIGINAL_PACKAGING",
+                    "disposition": "DEFERRED",
+                    "source_quote": "原包装稍后确认",
+                }],
+                "order_id": 1001,
+            }],
+        })
+
+    understanding = TurnUnderstanding.model_validate({
+        "reason": "案件信息完整，政策材料被明确延期",
+        "commands": [],
+        "objectives": [{
+            "id": "case",
+            "kind": "AFTER_SALES_CASE",
+            "source_quote": "订单 1001 商品不想要了，请建立售后案件",
+            "evidence_readiness_claims": [{
+                "evidence_type": "ORIGINAL_PACKAGING",
+                "disposition": "DEFERRED",
+                "source_quote": "原包装稍后确认",
+            }],
+            "order_id": 1001,
+            "reason_code": "CHANGED_MIND",
+        }],
+    })
+
+    _intake, plan = to_task_plan(
+        understanding,
+        "订单 1001 商品不想要了，请建立售后案件；原包装稍后确认",
+    )
+
+    assert plan.steps[0].tool == "prepare_after_sales_case"
+    assert plan.steps[0].args["evidence_readiness_claims"] == [{
+        "evidence_type": "ORIGINAL_PACKAGING",
+        "disposition": "DEFERRED",
+        "source_quote": "原包装稍后确认",
+    }]
+
+    with pytest.raises(ValueError, match="cannot add or revoke evidence"):
+        TurnUnderstanding.model_validate({
+            "reason": "同一目标不能混淆时间声明与证据写入",
+            "commands": [],
+            "objectives": [{
+                "id": "case-update",
+                "kind": "AFTER_SALES_CONTINUE",
+                "source_quote": "原包装稍后确认，但先记为包装完整",
+                "case_id": "case-1",
+                "case_revision": 1,
+                "evidence_text": "包装完整",
+                "evidence_readiness_claims": [{
+                    "evidence_type": "ORIGINAL_PACKAGING",
+                    "disposition": "DEFERRED",
+                    "source_quote": "原包装稍后确认",
+                }],
             }],
         })
 

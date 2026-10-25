@@ -237,6 +237,11 @@ def built_in_mechanisms() -> tuple[HarnessMechanism, ...]:
         "src/capability_registry.py", "src/catalog_concepts.py", "src/catalog_metadata.py", "src/intake.py",
         "src/harness/mechanisms.py",
     )
+    evidence_readiness_sources = after_sales_planning_sources + (
+        "src/after_sales/readiness.py", "src/after_sales/planning.py", "src/after_sales/policy.py",
+        "src/after_sales/service.py", "src/after_sales/contracts.py", "src/after_sales/actions.py",
+        "src/runtime.py", "src/tools.py",
+    )
     return (
         EmbeddedMechanism("planning", "structured-dialogue-understanding", "1", ("orchestrator",),
                           ("src/orchestrator.py", "src/dialogue_understanding.py",
@@ -256,6 +261,12 @@ def built_in_mechanisms() -> tuple[HarnessMechanism, ...]:
             after_sales_planning_sources,
             case_execution_mode="policy_aware",
             evidence_intake_mode="case_first",
+        ),
+        AfterSalesPlanningMechanism(
+            "planning", "evidence-readiness-case-execution", "3", ("orchestrator",),
+            evidence_readiness_sources,
+            case_execution_mode="policy_aware",
+            evidence_intake_mode="readiness_ledger",
         ),
         EmbeddedMechanism("tool_protocol", "runtime-tool-ledger", "2", ("orchestrator",),
                           ("src/runtime.py", "src/persistence.py")),

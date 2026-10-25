@@ -38,6 +38,7 @@ from src.runtime import ReplayPolicy, ToolEffect, ToolRiskLevel, tool_spec
 MESSAGE = "订单 1001 的耳机出现间歇性异响，需要建立售后案件处理"
 MULTI_ITEM_MESSAGE = "订单 1001 的行项目 OI-1001-1 出现异响，需要申请售后退款"
 EVIDENCE_MISSING_MESSAGE = "订单 1001 的耳机与描述不符，请建立售后案件；原包装情况稍后才能确认。"
+EVIDENCE_DEFERRED_FOLLOWUP = "原包装情况稍后才能确认"
 
 
 class AfterSalesUnderstandingModel:
@@ -138,6 +139,70 @@ class EvidenceBoundaryUnderstandingModel(AfterSalesUnderstandingModel):
         )
 
 
+class EvidenceReadinessUnderstandingModel(AfterSalesUnderstandingModel):
+    def invoke(self, prompt):
+        prompt = str(prompt)
+        assert EVIDENCE_MISSING_MESSAGE in prompt
+        assert "Evidence-readiness ledger for this Harness Profile" in prompt
+        assert "after-sales-evidence-readiness/2026-01" in prompt
+        return AIMessage(
+            content=json.dumps(
+                {
+                    "reason": "案件受理信息完整，用户明确把原包装说明延期",
+                    "commands": [],
+                    "objectives": [
+                        {
+                            "id": "after-sales-case",
+                            "kind": "AFTER_SALES_CASE",
+                            "source_quote": "订单 1001 的耳机与描述不符，请建立售后案件",
+                            "evidence_readiness_claims": [
+                                {
+                                    "evidence_type": "ORIGINAL_PACKAGING",
+                                    "disposition": "DEFERRED",
+                                    "source_quote": "原包装情况稍后才能确认",
+                                }
+                            ],
+                            "order_id": 1001,
+                            "reason_code": "NOT_AS_DESCRIBED",
+                        }
+                    ],
+                },
+                ensure_ascii=False,
+            )
+        )
+
+
+class ExistingCaseReadinessUnderstandingModel(AfterSalesUnderstandingModel):
+    def invoke(self, prompt):
+        prompt = str(prompt)
+        assert EVIDENCE_DEFERRED_FOLLOWUP in prompt
+        assert "Evidence-readiness ledger for this Harness Profile" in prompt
+        assert '"session_cases":[{' in prompt
+        return AIMessage(
+            content=json.dumps(
+                {
+                    "reason": "现有案件的政策材料被用户明确延期",
+                    "commands": [],
+                    "objectives": [
+                        {
+                            "id": "after-sales-readiness",
+                            "kind": "AFTER_SALES_CONTINUE",
+                            "source_quote": EVIDENCE_DEFERRED_FOLLOWUP,
+                            "evidence_readiness_claims": [
+                                {
+                                    "evidence_type": "ORIGINAL_PACKAGING",
+                                    "disposition": "DEFERRED",
+                                    "source_quote": EVIDENCE_DEFERRED_FOLLOWUP,
+                                }
+                            ],
+                        }
+                    ],
+                },
+                ensure_ascii=False,
+            )
+        )
+
+
 class SemanticModelMustNotRun:
     def json_mode(self):
         return self
@@ -213,12 +278,21 @@ def database(tmp_path, monkeypatch):
 
 def test_after_sales_tools_declare_distinct_write_and_approval_policies(database):
     prepare = tool_spec("prepare_after_sales_case", tools.prepare_after_sales_case)
+    readiness = tool_spec(
+        "record_after_sales_evidence_readiness",
+        tools.record_after_sales_evidence_readiness,
+    )
     submit = tool_spec("submit_after_sales_case", tools.submit_after_sales_case)
 
     assert prepare.effect == ToolEffect.WRITE
     assert prepare.risk_level == ToolRiskLevel.GUARDED
     assert prepare.replay_policy == ReplayPolicy.IDEMPOTENT_WRITE
     assert prepare.transactional is True
+    assert readiness.effect == ToolEffect.WRITE
+    assert readiness.risk_level == ToolRiskLevel.GUARDED
+    assert readiness.replay_policy == ReplayPolicy.IDEMPOTENT_WRITE
+    assert readiness.transactional is True
+    assert readiness.preflight is None
     assert submit.replay_policy == ReplayPolicy.REQUIRES_APPROVAL
     assert submit.approval_action == "SUBMIT_AFTER_SALES_CASE"
     assert submit.transactional is True
@@ -418,6 +492,97 @@ def test_evidence_boundary_profile_opens_case_before_waiting_for_customer_statem
         assert continuation == []
 
 
+def test_evidence_readiness_profile_persists_deferral_without_treating_it_as_evidence(database, monkeypatch):
+    from src.harness import get_runner
+
+    with tools._session() as session:
+        require_original_packaging_evidence(session)
+    monkeypatch.setattr(
+        orchestrator,
+        "get_llm",
+        lambda **_kwargs: EvidenceReadinessUnderstandingModel(),
+    )
+
+    result = run_conversation(
+        EVIDENCE_MISSING_MESSAGE,
+        "evidence-readiness-case",
+        request_id="open-case-with-readiness",
+        runner=get_runner("after-sales-evidence-readiness-v3"),
+    )
+
+    assert result["status"] == "PARTIAL"
+    assert result["terminal_reason"] == "EVIDENCE_UNAVAILABLE"
+    assert result["pending_action"] is None
+    assert [entry["tool"] for entry in result["trace"]] == ["prepare_after_sales_case"]
+    args = result["trace"][0]["args"]
+    assert args["evidence_readiness_claims"] == [{
+        "evidence_type": "ORIGINAL_PACKAGING",
+        "disposition": "DEFERRED",
+        "source_quote": "原包装情况稍后才能确认",
+    }]
+    observation = result["trace"][0]["result"]
+    autonomous = result["plan"]["steps"][0]["result"]["autonomous_execution"]
+    assert autonomous["status"] == "WAIT_USER_INPUT"
+    assert autonomous["reason_code"] == "CUSTOMER_EVIDENCE_DEFERRED"
+    assert "暂时无法提供" in result["reply"]
+    with tools._session() as session:
+        case = AfterSalesCaseService(session).get_case(observation["case_id"])
+        readiness_events = [event for event in case.events
+                            if event["event_type"] == "EVIDENCE_READINESS_RECORDED"]
+        assert len(readiness_events) == 1
+        assert readiness_events[0]["payload"]["evidence_type"] == "ORIGINAL_PACKAGING"
+        assert readiness_events[0]["payload"]["source_quote"] == "原包装情况稍后才能确认"
+        assert {item["evidence_type"] for item in case.evidence} == {"ISSUE_DESCRIPTION"}
+        plan = case.plans[-1]
+        deferred = next(action for action in plan["next_actions"]
+                        if action["requirement_id"].endswith(":ORIGINAL_PACKAGING"))
+        assert deferred["kind"] == "WAIT_FOR_CUSTOMER_EVIDENCE"
+        assert deferred["claim_id"] == readiness_events[0]["payload"]["claim_id"]
+        refund = session.scalar(select(Refund).where(Refund.order_id == 1001))
+        assert refund.status == "none"
+
+
+def test_evidence_readiness_profile_records_cross_turn_deferral_without_semantic_reassessment(database, monkeypatch):
+    from src import llm
+    from src.harness import get_runner
+
+    with tools._session() as session:
+        require_original_packaging_evidence(session)
+    runner = get_runner("after-sales-evidence-readiness-v3")
+    first = run_conversation(
+        MESSAGE,
+        "cross-turn-readiness",
+        request_id="open-case-before-readiness",
+        runner=runner,
+    )
+    assert first["status"] == "PARTIAL"
+    assert first["terminal_reason"] == "EVIDENCE_UNAVAILABLE"
+
+    monkeypatch.setattr(orchestrator, "get_llm", lambda **_kwargs: ExistingCaseReadinessUnderstandingModel())
+    monkeypatch.setattr(llm, "get_llm", lambda **_kwargs: SemanticModelMustNotRun())
+    second = run_conversation(
+        EVIDENCE_DEFERRED_FOLLOWUP,
+        "cross-turn-readiness",
+        request_id="record-readiness-followup",
+        runner=runner,
+    )
+
+    assert second["status"] == "PARTIAL"
+    assert second["terminal_reason"] == "EVIDENCE_UNAVAILABLE"
+    assert [entry["tool"] for entry in second["trace"]] == ["record_after_sales_evidence_readiness"]
+    result = second["trace"][0]["result"]
+    autonomous = second["plan"]["steps"][0]["result"]["autonomous_execution"]
+    assert autonomous["reason_code"] == "CUSTOMER_EVIDENCE_DEFERRED"
+    with tools._session() as session:
+        case = AfterSalesCaseService(session).get_case(result["case_id"])
+        assert {item["evidence_type"] for item in case.evidence} == {"ISSUE_DESCRIPTION"}
+        assert [run.role for run in session.scalars(select(AfterSalesCaseRun).where(
+            AfterSalesCaseRun.case_id == case.case_id,
+        ).order_by(AfterSalesCaseRun.linked_at)).all()] == ["INTAKE", "READINESS_UPDATE"]
+        assert case.plans[-1]["next_actions"][0]["kind"] == "WAIT_FOR_CUSTOMER_EVIDENCE"
+        assert session.scalar(select(Refund).where(Refund.order_id == 1001)).status == "none"
+
+
 def test_multi_item_case_is_routed_to_manual_review_without_order_refund(database, monkeypatch):
     with tools._session() as session:
         session.add(
@@ -552,6 +717,15 @@ class CrashAfterAutonomousCaseToolResult(RunStore):
         super().save_checkpoint(run_id, token, snapshot, event)
 
 
+class CrashAfterReadinessToolResult(RunStore):
+    def save_checkpoint(self, run_id, token, snapshot, event=None):
+        if (event and event.get("type") == "tool_result"
+                and event.get("tool") == "record_after_sales_evidence_readiness"
+                and not event.get("reused")):
+            raise CrashAfterCaseWrite()
+        super().save_checkpoint(run_id, token, snapshot, event)
+
+
 def test_case_creation_reuses_transactional_ledger_after_process_restart(database):
     with pytest.raises(CrashAfterCaseWrite):
         run_conversation(
@@ -612,6 +786,52 @@ def test_autonomous_case_step_reuses_transactional_ledger_after_process_restart(
         )).all()
         assert len(order_evidence) == 1
         assert len(continuation_rows) == 1
+
+
+def test_cross_turn_readiness_reuses_transactional_ledger_after_process_restart(database, monkeypatch):
+    from src import llm
+    from src.harness import get_runner
+
+    with tools._session() as session:
+        require_original_packaging_evidence(session)
+    runner = get_runner("after-sales-evidence-readiness-v3")
+    opened = run_conversation(
+        MESSAGE,
+        "readiness-recovery",
+        request_id="open-before-readiness-recovery",
+        runner=runner,
+    )
+    case_id = opened["trace"][0]["result"]["case_id"]
+    monkeypatch.setattr(orchestrator, "get_llm", lambda **_kwargs: ExistingCaseReadinessUnderstandingModel())
+    monkeypatch.setattr(llm, "get_llm", lambda **_kwargs: SemanticModelMustNotRun())
+
+    with pytest.raises(CrashAfterCaseWrite):
+        run_conversation(
+            EVIDENCE_DEFERRED_FOLLOWUP,
+            "readiness-recovery",
+            request_id="recoverable-readiness",
+            runner=runner,
+            store=CrashAfterReadinessToolResult(),
+        )
+    active_run_id = RunStore().conversation("readiness-recovery")["active_run_id"]
+    with tools._session() as session:
+        case = AfterSalesCaseService(session).get_case(case_id)
+        assert len([event for event in case.events
+                    if event["event_type"] == "EVIDENCE_READINESS_RECORDED"]) == 1
+        assert len(session.scalars(select(ToolLedger).where(
+            ToolLedger.run_id == active_run_id,
+            ToolLedger.tool_name == "record_after_sales_evidence_readiness",
+        )).all()) == 1
+
+    resumed = resume_run("readiness-recovery", active_run_id)
+
+    assert resumed["status"] == "PARTIAL"
+    assert resumed["trace"][0]["status"] == "REUSED"
+    with tools._session() as session:
+        case = AfterSalesCaseService(session).get_case(case_id)
+        assert len([event for event in case.events
+                    if event["event_type"] == "EVIDENCE_READINESS_RECORDED"]) == 1
+        assert session.scalar(select(Refund).where(Refund.order_id == 1001)).status == "none"
 
 
 def test_after_sales_read_api_returns_case_timeline_policy_and_refund_link(database):
