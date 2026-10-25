@@ -47,3 +47,8 @@
 .pg-credit-pair { display:grid; grid-template-columns:60px 1fr 1fr; gap:12px; padding:10px 0; border-top:1px solid var(--pg-line); }
 .pg-hypothesis dl { display:grid; grid-template-columns:110px 1fr; gap:7px 16px; }.pg-hypothesis dt { color:var(--pg-muted); }.pg-hypothesis dd { margin:0; overflow-wrap:anywhere; }
 .pg-memory-result { padding:10px 14px; background:#eef6ed; border-left:3px solid #4a855a; }
+.pg-dev-scope { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border: 1px solid var(--pg-line); border-radius: 6px; overflow: hidden; }
+.pg-dev-scope > div { display: grid; align-content: start; gap: 9px; padding: 20px; background: var(--surface); }
+.pg-dev-scope > div + div { border-left: 1px solid var(--pg-line); }
+.pg-dev-scope code { overflow-wrap: anywhere; font-size: 12px; }
+.pg-dev-scope small { color: var(--pg-muted); }

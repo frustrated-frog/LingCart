@@ -184,3 +184,30 @@ def test_control_and_candidate_freeze_the_same_online_mechanism_and_budget():
         right.pop(key)
     assert left == right
     assert left['online_profile'] == 'adaptive-pg-context-v4'
+
+
+@pytest.mark.parametrize('invalid,reason', [('source', 'HYPOTHESIS_SOURCE_MISMATCH'),
+    ('evidence', 'HYPOTHESIS_EVIDENCE_MISMATCH'), ('target', 'HYPOTHESIS_TARGET_MISMATCH')])
+def test_invalid_hypothesis_preserves_proposal_without_validation_or_blacklisting(tmp_path, invalid, reason):
+    current = graph()
+    bad = proposal(current)
+    if invalid == 'source': bad['patch']['source_cases'] = ['A01:1']
+    if invalid == 'evidence': bad['hypothesis']['evidence_ids'] = ['validation-evidence']
+    if invalid == 'target': bad['hypothesis']['target_edges'] = ['goal-search']
+    class Refiner:
+        def propose(self, *args): return {'proposal': json.dumps(bad), 'error': None}
+    labels = []
+    def evaluator(g, cases, label):
+        labels.append(label)
+        data = make_report(g, cases)
+        data['manifest']['harness_profile']['mechanisms'][0]['version'] = '4'
+        if cases == ('A01',): data['samples'] = [sample(g)]
+        return data
+    spec = EvolutionSpec(experiment_id='credit-test', dataset='eval/adaptive_tasks.json', train_cases=('A01',),
+        validation_cases=('A02',), repeats=1, iterations=1, evolution_policy='credit-memory-v1',
+        online_profile='adaptive-pg-context-v4')
+    retained, result = evolve(current, spec, evaluator=evaluator, refiner=Refiner(), output_dir=tmp_path / 'evolve',
+                              execution_source='test_harness')
+    assert retained == current and result['history'][0]['reason'] == reason
+    assert result['history'][0]['hypothesis']['problem'] == bad['hypothesis']['problem']
+    assert not result['hypothesis_memory'] and labels == ['seed-validation', 'iteration-01-training']
