@@ -3,7 +3,8 @@ from __future__ import annotations
 
 import argparse
 from collections import defaultdict
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
+from enum import Enum
 import hashlib
 import json
 import os
@@ -48,6 +49,24 @@ ADAPTIVE_EXPECT_KEYS = frozenset({
 })
 CONSTRAINT_KEYS = frozenset({'description', 'source_quote', 'field', 'op', 'value'})
 CONSTRAINT_OPERATORS = frozenset({'eq', 'ne', 'contains', 'not_contains', 'lte', 'gte', 'in', 'not_in'})
+
+
+def _report_json_default(value):
+    """Serialize known protocol values without silently stringifying arbitrary objects."""
+    if isinstance(value, (date, datetime)):
+        return value.isoformat()
+    if isinstance(value, Enum):
+        return value.value
+    if isinstance(value, Path):
+        return value.as_posix()
+    model_dump = getattr(value, 'model_dump', None)
+    if callable(model_dump):
+        return model_dump(mode='json')
+    raise TypeError(f'Object of type {value.__class__.__name__} is not JSON serializable')
+
+
+def _report_json_dumps(value, **kwargs):
+    return json.dumps(value, ensure_ascii=False, default=_report_json_default, **kwargs)
 
 
 def _validate_constraint(value, label):
@@ -697,8 +716,8 @@ def main(argv=None):
         report['gate'] = {'passed': not failures, 'failures': failures}
     if args.output:
         args.output.parent.mkdir(parents=True, exist_ok=True)
-        args.output.write_text(json.dumps(report, ensure_ascii=False, indent=2) + '\n')
-    print(json.dumps({key: value for key, value in report.items() if key not in {'samples', 'manifest'}}, ensure_ascii=False, indent=2))
+        args.output.write_text(_report_json_dumps(report, indent=2) + '\n')
+    print(_report_json_dumps({key: value for key, value in report.items() if key not in {'samples', 'manifest'}}, indent=2))
     return 0 if args.dry_run and not failures else (0 if report.get('status') == 'COMPLETED' and
         (args.gate or all(s['passed'] for s in report['samples'])) and not failures else 2)
 

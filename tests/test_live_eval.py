@@ -1,9 +1,20 @@
 import copy
 import json
+from datetime import UTC, datetime
 
 import pytest
 
 from eval import run_live_eval as live
+
+
+def test_live_report_serializer_normalizes_temporal_tool_values():
+    encoded = live._report_json_dumps({
+        'observed_at': datetime(2026, 10, 26, 2, 48, tzinfo=UTC),
+    })
+
+    assert json.loads(encoded) == {'observed_at': '2026-10-26T02:48:00+00:00'}
+    with pytest.raises(TypeError, match='not JSON serializable'):
+        live._report_json_dumps({'unexpected': object()})
 
 
 def test_live_dataset_has_frozen_split_and_no_scripted_model():
