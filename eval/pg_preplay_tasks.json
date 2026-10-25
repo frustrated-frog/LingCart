@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "suite": "pg_preplay_contract",
+  "description": "离线验证 PG V6 有界预演的首步建议、未知传播、终态和主动弃权；不作为真实任务收益证据。",
+  "graph": "research/graphs/pg-seed-v2.json",
+  "cases": [
+    {
+      "id": "PGP01",
+      "trajectory": {"goal_defined": false, "objectives": [], "recent_actions": [], "unresolved_objective_kinds": [], "pending_steps": [], "all_objectives_verified": false, "feedback_code": null, "edge_feedback": {}},
+      "expected_status": "READY", "expected_first_action": "set_goal", "expected_edge_ids": ["start-goal"]
+    },
+    {
+      "id": "PGP02",
+      "trajectory": {"goal_defined": true, "objectives": [{"status": "PENDING", "evidence_refs": []}], "recent_actions": [], "unresolved_objective_kinds": ["recommend"], "pending_steps": [], "all_objectives_verified": false, "feedback_code": null, "edge_feedback": {}},
+      "expected_status": "READY", "expected_first_action": "search_products", "expected_edge_ids": ["goal-search", "search-inspect", "inspect-recommend"]
+    },
+    {
+      "id": "PGP03",
+      "trajectory": {"goal_defined": true, "objectives": [{"status": "PENDING", "evidence_refs": []}], "recent_actions": [{"action": "search_products", "outcome": "EMPTY"}], "unresolved_objective_kinds": ["recommend"], "pending_steps": [], "all_objectives_verified": false, "feedback_code": "EMPTY_CATALOG_RESULT", "edge_feedback": {}},
+      "expected_status": "ABSTAINED", "expected_first_action": null, "expected_edge_ids": []
+    },
+    {
+      "id": "PGP04",
+      "trajectory": {"goal_defined": true, "objectives": [{"status": "PENDING", "evidence_refs": []}], "recent_actions": [{"action": "search_products", "outcome": "NON_EMPTY"}], "unresolved_objective_kinds": ["recommend"], "pending_steps": [], "all_objectives_verified": false, "feedback_code": null, "edge_feedback": {}},
+      "expected_status": "READY", "expected_first_action": "inspect", "expected_edge_ids": ["search-inspect", "inspect-recommend"]
+    },
+    {
+      "id": "PGP05",
+      "trajectory": {"goal_defined": true, "objectives": [{"status": "PENDING", "evidence_refs": []}], "recent_actions": [{"action": "inspect", "outcome": "SUCCESS"}], "unresolved_objective_kinds": ["recommend"], "pending_steps": [], "all_objectives_verified": false, "feedback_code": null, "edge_feedback": {}},
+      "expected_status": "READY", "expected_first_action": "recommend", "expected_edge_ids": ["inspect-recommend"]
+    },
+    {
+      "id": "PGP06",
+      "trajectory": {"goal_defined": true, "objectives": [{"status": "PENDING", "evidence_refs": []}], "recent_actions": [], "unresolved_objective_kinds": ["recommend"], "pending_steps": [], "all_objectives_verified": false, "feedback_code": "MISSING_REQUIRED_INPUT", "edge_feedback": {}},
+      "expected_status": "READY", "expected_first_action": "search_products", "expected_edge_ids": ["goal-search", "search-inspect", "inspect-recommend"]
+    },
+    {
+      "id": "PGP07",
+      "trajectory": {"goal_defined": true, "objectives": [{"status": "VERIFIED", "evidence_refs": ["s1"]}], "recent_actions": [{"action": "recommend", "outcome": "SUCCESS"}], "unresolved_objective_kinds": [], "pending_steps": [], "all_objectives_verified": true, "feedback_code": null, "edge_feedback": {}},
+      "expected_status": "TERMINAL", "expected_first_action": null, "expected_edge_ids": ["complete-end"]
+    },
+    {
+      "id": "PGP08",
+      "trajectory": {"goal_defined": true, "objectives": [{"status": "PENDING", "evidence_refs": []}], "recent_actions": [{"action": "search_products", "outcome": "UNKNOWN"}], "unresolved_objective_kinds": ["recommend"], "pending_steps": [], "all_objectives_verified": false, "feedback_code": null, "edge_feedback": {}},
+      "expected_status": "ABSTAINED", "expected_first_action": null, "expected_edge_ids": []
+    }
+  ]
+}

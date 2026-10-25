@@ -41,6 +41,9 @@ def test_recovery_and_repeated_empty_calls_have_explicit_denominators():
     assert metrics['recovery_rate'] == 1 and metrics['pg_exposure_rate'] == 0
     assert metrics['pg_localization_abstentions'] == 0
     assert metrics['pg_shadow_disagreements'] == 0
+    assert metrics['pg_preplay_interventions'] == 0
+    assert metrics['pg_prediction_supported'] == 0
+    assert metrics['pg_prediction_countered'] == 0
     assert metrics['tokens']['total_tokens'] is None
     assert behavior_metrics({'samples': []})['recovery_rate'] is None
 
@@ -122,12 +125,13 @@ def test_worker_stops_when_persisted_usage_crosses_frozen_budget(tmp_path):
 
 
 @pytest.mark.parametrize('accept', [False, True])
-def test_worker_three_arms_are_after_learning_and_test_never_reaches_refiner(tmp_path, accept):
+@pytest.mark.parametrize('policy', ['basic-v1', 'credit-memory-v1'])
+def test_worker_three_arms_are_after_learning_and_test_never_reaches_refiner(tmp_path, accept, policy):
     from eval.run_pg_lab import run_job
     from src.harness import get_runner
     from eval.run_live_eval import summarize, environment_manifest
     store = JobStore(tmp_path)
-    job = store.create(StartExperiment(request_id=f'complete-worker-{accept}', preset='smoke'), launch=False)
+    job = store.create(StartExperiment(request_id=f'complete-worker-{accept}', preset='smoke', evolution_policy=policy), launch=False)
     order, refinements = [], []
     class Refiner:
         def propose(self, graph, report, rejected):
@@ -136,6 +140,12 @@ def test_worker_three_arms_are_after_learning_and_test_never_reaches_refiner(tmp
             from tests.test_pg_learning import proposal
             patch = proposal()
             patch['source_cases'] = ['PG01']
+            if policy == 'credit-memory-v1':
+                from tests.test_pg_credit import proposal as structured_proposal
+                patch = structured_proposal(graph)
+                patch['patch']['source_cases'] = ['PG01']
+                patch['hypothesis']['source_samples'] = ['PG01:1']
+                assert report['edge_credit']['sample_refs'] == ['PG01:1']
             return dict(proposal=json.dumps(patch) if accept else None,
                         error=None if accept else 'SCRIPTED_REJECTION', events=[])
     def evaluator(dataset, **kwargs):
@@ -162,13 +172,17 @@ def test_worker_three_arms_are_after_learning_and_test_never_reaches_refiner(tmp
                 execution_source='test_harness', graph_root=Path(graphs))
     saved = store.get(job['job_id'])
     assert saved['status'] == 'COMPLETED', saved
-    assert order == ['dev', 'dev', 'refine', *(['dev'] if accept else []), 'test', 'test', 'test']
+    assert order == ['dev', 'dev', 'refine', *(['dev'] if accept else []),
+                     *(['test', 'test', 'test'] if policy == 'basic-v1' else [])]
     assert refinements == [job['frozen']['groups']['train']]
-    assert saved['comparison']['conclusion'] == 'SMOKE_ONLY'
+    assert saved['comparison']['conclusion'] == ('SMOKE_ONLY' if policy == 'basic-v1' else 'DEV_ONLY')
     assert saved['comparison']['evidence_valid'] is False
     assert saved['comparison']['failures'] == []
     assert saved['history'][0]['status'] == ('ACCEPTED' if accept else 'REJECTED')
-    assert set(saved['arms']) == {'baseline', 'seed', 'evolved'}
+    assert set(saved['arms']) == ({'baseline', 'seed', 'evolved'} if policy == 'basic-v1' else set())
+    if policy == 'credit-memory-v1':
+        assert saved['history'][0]['edge_credit']['graph_sha256'] == job['frozen']['seed_sha256']
+        assert saved['frozen']['groups']['test'] == []
 
 
 def test_empty_search_fault_is_once_and_does_not_mutate_business_data(monkeypatch):

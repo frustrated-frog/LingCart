@@ -67,3 +67,25 @@ def test_trace_projector_surfaces_liveplan_monitor_advisor_and_intervention_evid
     assert projected["summary"]["advisor_calls"] == 1
     assert projected["summary"]["interventions"] == 1
     assert projected["summary"]["action_rejections"] == 1
+
+
+def test_trace_projector_surfaces_policy_aware_case_execution_phases():
+    projected = project_trace([
+        {"run_id": "case-run", "sequence": 1, "type": "case_state_projected"},
+        {"run_id": "case-run", "sequence": 2, "type": "case_obligation_verified"},
+        {"run_id": "case-run", "sequence": 3, "type": "case_autonomous_action_selected"},
+        {"run_id": "case-run", "sequence": 4, "type": "case_autonomous_action_completed"},
+        {"run_id": "case-run", "sequence": 5, "type": "case_execution_paused"},
+        {"run_id": "case-run", "sequence": 6, "type": "terminal", "status": "WAITING_APPROVAL"},
+    ])
+
+    assert [item["phase"] for item in projected["timeline"][:5]] == [
+        "CONTEXT", "VERIFY", "PLAN", "TOOL", "GUARD",
+    ]
+    assert [item["label"] for item in projected["timeline"][:5]] == [
+        "已投影政策约束下的案件状态",
+        "已核验下一项政策义务",
+        "已选择受限自主动作",
+        "受限自主动作已产生版本进展",
+        "政策感知执行已在边界处暂停",
+    ]

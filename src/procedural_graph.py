@@ -36,11 +36,25 @@ def strategy_text(value: str) -> str:
     import re
     if re.search(r"(?<![A-Za-z0-9])P\d{4}S?(?![A-Za-z0-9])", value, re.I):
         raise ValueError("程序知识不能固化商品编号")
-    unsafe = re.compile(r"(?:放宽|放松|忽略|绕过|取消).{0,12}(?:预算|价格|硬约束|排除项|审批|安全)")
+    unsafe = re.compile(
+        r"(?P<action>放宽|放松|忽略|绕过|取消)"
+        r"(?P<scope>.{0,12})"
+        r"(?P<boundary>预算|价格|硬约束|排除项|审批|授权|安全)"
+    )
     for match in unsafe.finditer(value):
         prefix = value[max(0, match.start() - 6):match.start()]
         # Refiner 必须能够表达“禁止绕过审批”这类安全约束；只豁免紧邻动作的明确否定。
         if re.search(r"(?:不得|不能|不可|不要|禁止|严禁|切勿|避免)\s*$", prefix):
+            continue
+        # “放宽约束不得违反硬预算”中的保护对象属于后置的禁止性谓词，
+        # 不是“放宽”的宾语。只接受明确的禁止词 + 违反/突破类谓词，避免
+        # 将“可以放宽预算，只要……”之类允许性指导误判为安全说明。
+        if re.search(
+            r"(?:不得|不能|不可|不要|禁止|严禁|切勿|避免)\s*"
+            r"(?:违反|突破|超出|绕过|取消|忽略|削弱)"
+            r"[^，。；;]{0,6}$",
+            match.group("scope"),
+        ):
             continue
         raise ValueError("程序知识不能放宽硬约束")
     if re.search(r"(?:订单|order)[\s:#：-]*\d+|\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b|(?:api[_ -]?key|bearer)\s*[:= ]\s*\S+", value, re.I):

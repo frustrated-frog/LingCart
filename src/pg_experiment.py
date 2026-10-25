@@ -36,13 +36,16 @@ def challenge_dataset():
     return dataset
 
 
-def plan(preset):
+def plan(preset, evolution_policy='basic-v1'):
     if preset not in {'smoke', 'full'}:
         raise ValueError('未知实验配置')
+    if evolution_policy not in {'basic-v1', 'credit-memory-v1'}:
+        raise ValueError('未知演化策略')
     dataset = challenge_dataset()
     groups = {part: [c['id'] for c in dataset['cases'] if c['learning_partition'] == part]
               for part in ('train', 'validation', 'test')}
-    spec = EvolutionSpec.model_validate_json((ROOT / 'research/experiments/pg-localization-v2/evolution-spec.json').read_text())
+    folder = 'pg-credit-memory-v1' if evolution_policy == 'credit-memory-v1' else 'pg-localization-v2'
+    spec = EvolutionSpec.model_validate_json((ROOT / f'research/experiments/{folder}/evolution-spec.json').read_text())
     spec.validate_dataset(dataset)
     if (list(spec.train_cases) != groups['train'] or list(spec.validation_cases) != groups['validation']
             or spec.dataset != DATASET.relative_to(ROOT).as_posix()):
@@ -64,15 +67,19 @@ def plan(preset):
             'max_refiner_completion_tokens': 1500,
             'max_provider_attempts_per_call': 1,
         })
+    if evolution_policy == 'credit-memory-v1':
+        groups['test'] = []  # 本阶段只验证开发闭环，不重新使用已参与诊断的旧测试集。
+    seed_path = 'research/graphs/pg-seed-v2.json' if evolution_policy == 'credit-memory-v1' else SEED.relative_to(ROOT).as_posix()
     repeats, iterations = spec.repeats, spec.iterations
     samples = repeats * (len(groups['validation']) + iterations * (len(groups['train']) + len(groups['validation']))
                          + 3 * len(groups['test']))
     max_model_attempts = samples * spec.max_model_calls_per_run + iterations * 2
     max_token_units = (samples * (spec.max_prompt_tokens_per_run + spec.max_completion_tokens_per_run)
                        + iterations * (spec.max_refiner_prompt_tokens + spec.max_refiner_completion_tokens))
-    return dict(preset=preset, spec=spec.model_dump(mode='json'), groups=groups,
+    return dict(preset=preset, spec=spec.model_dump(mode='json'), groups=groups, seed_path=seed_path,
+                evolution_policy=evolution_policy, evaluation_scope='dev_only' if not groups['test'] else 'three_arm_test',
                 max_samples=samples, max_model_attempts=max_model_attempts, max_token_units=max_token_units,
-                dataset_sha256=evaluation_fingerprint(dataset), seed_sha256=ProceduralGraph.from_path(SEED).fingerprint,
+                dataset_sha256=evaluation_fingerprint(dataset), seed_sha256=ProceduralGraph.from_path(ROOT / seed_path).fingerprint,
                 cost_guard=dict(max_extra_model_attempts_per_sample=2, max_tool_call_regression=0,
                                 max_model_attempts=max_model_attempts, max_token_units=max_token_units))
 
@@ -120,6 +127,15 @@ def behavior_metrics(report):
                                                    for item in interventions),
             'pg_typed_applicability_interventions': sum(
                 bool(item.get('applicability', {}).get('strategy')) for item in interventions),
+            'pg_preplay_interventions': sum(bool(item.get('preplay')) for item in interventions),
+            'pg_prediction_supported': sum(
+                (item.get('prediction_outcome') or {}).get('status') == 'SUPPORT' for item in interventions),
+            'pg_prediction_countered': sum(
+                (item.get('prediction_outcome') or {}).get('status') == 'COUNTER' for item in interventions),
+            'pg_prediction_diverged': sum(
+                (item.get('prediction_outcome') or {}).get('status') == 'DIVERGED' for item in interventions),
+            'pg_prediction_unknown': sum(
+                (item.get('prediction_outcome') or {}).get('status') == 'UNKNOWN' for item in interventions),
             'pg_actions_progressed': sum(
                 (item.get('action_progress') or {}).get('status') == 'PROGRESSED' for item in interventions),
             'pg_actions_without_progress': sum(

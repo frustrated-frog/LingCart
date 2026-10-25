@@ -69,6 +69,33 @@ describe('RunsPage LivePlan evidence', () => {
   })
 })
 
+describe('RunsPage policy-aware case execution evidence', () => {
+  it('shows authoritative progress and the explicit approval boundary', async () => {
+    const caseDetail: RunDetail = { ...detail, status: 'WAITING_APPROVAL', result: { trace: [], events: [
+      { type: 'case_state_projected', sequence: 1, state: {
+        case_id: 'CASE-1', case_revision: 3, policy_version_id: 'policy-v1',
+        policy_decision_id: 'decision-1', plan_id: 'plan-1', plan_revision: 3,
+      } },
+      { type: 'case_autonomous_action_selected', sequence: 2, operation: 'continue_after_sales_case',
+        reason_code: 'AUTHORITATIVE_EVIDENCE_AVAILABLE', case_revision: 2 },
+      { type: 'case_autonomous_action_completed', sequence: 3, operation: 'continue_after_sales_case',
+        from_revision: 2, to_revision: 3 },
+      { type: 'case_execution_paused', sequence: 4, status: 'WAIT_APPROVAL',
+        reason_code: 'EXPLICIT_APPROVAL_REQUIRED', case_revision: 3 },
+    ] } }
+    vi.spyOn(api, 'runs').mockResolvedValue({ runs: [summary] })
+    vi.spyOn(api, 'run').mockResolvedValue(caseDetail)
+
+    renderPage()
+
+    expect(await screen.findByText('政策感知自主执行')).toBeInTheDocument()
+    expect(screen.getAllByText('等待用户明确确认').length).toBeGreaterThan(0)
+    expect(screen.getByText('政策允许读取权威订单事实')).toBeInTheDocument()
+    expect(screen.getByText('退款等写操作必须由用户明确确认')).toBeInTheDocument()
+    expect(screen.getByText('REV 2 → REV 3')).toBeInTheDocument()
+  })
+})
+
 describe('RunsPage PG evidence', () => {
   it('distinguishes generated guidance, exposure, budget skip and committed action', async () => {
     const pgDetail: RunDetail = { ...detail, checkpoint: { context: { procedural_graph: {
@@ -143,10 +170,14 @@ describe('RunsPage PG evidence', () => {
             target: 'inspect', status: 'TRUE', reason: 'CONDITION_SATISFIED', evaluation: { evidence_bindings: [
               { fact: 'trajectory.latest_outcome', actual: 'NON_EMPTY', source: 'trajectory_state.recent_actions[-1].outcome' },
             ] } }] },
+        preplay: { plan_id: 'preplay-plan-1', status: 'READY', reason: 'BOUNDED_PATH_SELECTED',
+          selected_path: { first_action: 'inspect', score: 0.811, edge_ids: ['search-inspect', 'inspect-recommend'] } },
         guidance_contract: { contract_id: 'contract-12345678', policy: 'ADVISORY_EXCEPT_EXACT_NO_PROGRESS_REPEAT' } },
       { type: 'evidence_context', sequence: 2, pg_decision_key: 'contract-decision', pg_status: 'EXPOSED' },
       { type: 'pg_decision_reviewed', sequence: 3, decision_key: 'contract-decision', status: 'BLOCKED',
         blocked: true, actual_action: 'search_products', review_id: 'review-1' },
+      { type: 'pg_prediction_outcome', sequence: 4, preplay_plan_id: 'preplay-plan-1', status: 'DIVERGED',
+        expected_action: 'inspect', actual_action: 'search_products' },
     ] } })
     renderPage()
     fireEvent.click(await screen.findByRole('tab', { name: '程序图指导' }))
@@ -154,6 +185,10 @@ describe('RunsPage PG evidence', () => {
     expect(screen.getByText(/额外模型调用：0/)).toBeInTheDocument()
     expect(screen.getByText(/后续行动：search_products · 采用审查：BLOCKED（提交前阻断）/)).toBeInTheDocument()
     expect(screen.getByText(/条件证据：APPLICABLE · TRUE 1 · FALSE 0 · UNKNOWN 0/)).toBeInTheDocument()
+    expect(screen.getByText('有界程序预演')).toBeInTheDocument()
+    expect(screen.getByText('当前可执行')).toBeInTheDocument()
+    expect(screen.getByText('预测路径')).toBeInTheDocument()
+    expect(screen.getByText(/预测核对：DIVERGED/)).toBeInTheDocument()
     expect(screen.getByText('查看每条关系的条件求值证据')).toBeInTheDocument()
   })
 })

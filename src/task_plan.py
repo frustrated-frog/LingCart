@@ -12,9 +12,12 @@ from src.errors import AgentError
 from src.intake import (FAQ, ORDER_DETAILS, ORDER_STATUS, PAYMENT_PROCESS, PAYMENT_STATUS, PRODUCT_COMPARE,
                         PRODUCT_DISCOVERY, PRODUCT_SEARCH, REFUND_ELIGIBILITY, REFUND_REQUEST, SHIPMENT_TRACKING)
 from src.runtime import ToolExecutor, TraceRecorder, current_runtime
+from src.after_sales.execution import decide_next_case_action, project_case_execution_state
 
 
 _PROPOSAL_OPERATIONS = {"prepare_refund", "prepare_payment", "prepare_case_submission"}
+_POLICY_AWARE_CASE_OPERATIONS = {"prepare_after_sales_case", "continue_after_sales_case"}
+_MAX_AUTONOMOUS_CASE_ACTIONS = 4
 
 
 @dataclass
@@ -223,6 +226,110 @@ def verify_observation(step):
         raise AgentError("INVALID_TOOL_RESULT", "工具结果未包含本步骤所需的业务证据", retryable=False)
 
 
+def _advance_after_sales_case(result, *, executor, recorder, trace, run_id, max_actions):
+    """Consume persisted CasePlan actions without creating a second runtime or bypassing ToolExecutor."""
+    current = result
+    executed = []
+    initial_state_id = None
+    final_state_id = None
+    final_status = "ABSTAINED"
+    final_reason = "CASE_STATE_NOT_EXECUTABLE"
+    for index in range(max_actions + 1):
+        state = project_case_execution_state(current)
+        initial_state_id = initial_state_id or state.state_id
+        final_state_id = state.state_id
+        recorder.record(
+            "case_state_projected",
+            state=state.model_dump(mode="json"),
+            autonomous_action_index=index,
+        )
+        directive = decide_next_case_action(state)
+        recorder.record(
+            "case_obligation_verified",
+            directive=directive.model_dump(mode="json"),
+            autonomous_action_index=index,
+        )
+        final_status, final_reason = directive.status, directive.reason_code
+        if directive.status != "EXECUTE":
+            recorder.record(
+                "case_execution_paused",
+                case_id=state.case_id,
+                case_revision=state.case_revision,
+                state_id=state.state_id,
+                status=directive.status,
+                reason_code=directive.reason_code,
+                question=directive.question,
+            )
+            break
+        if index >= max_actions:
+            final_status, final_reason = "ABSTAINED", "AUTONOMOUS_STEP_BUDGET_EXHAUSTED"
+            recorder.record(
+                "case_execution_paused",
+                case_id=state.case_id,
+                case_revision=state.case_revision,
+                state_id=state.state_id,
+                status=final_status,
+                reason_code=final_reason,
+            )
+            break
+        recorder.record(
+            "case_autonomous_action_selected",
+            case_id=state.case_id,
+            case_revision=state.case_revision,
+            state_id=state.state_id,
+            directive_id=directive.directive_id,
+            operation=directive.operation,
+            arguments=directive.arguments,
+            reason_code=directive.reason_code,
+        )
+        next_result, event = executor.execute(directive.operation, directive.arguments)
+        trace.append(_trace_entry(
+            run_id,
+            "after_sales",
+            directive.operation,
+            directive.arguments,
+            next_result,
+            event,
+        ))
+        contract = get_capability_registry().operation_contract(directive.operation)
+        if contract is None:
+            raise AgentError("UNKNOWN_CAPABILITY_OPERATION", "案件自主执行动作没有注册输出契约", retryable=False)
+        contract.verify_result(next_result, directive.arguments)
+        next_revision = next_result.get("revision") if isinstance(next_result, dict) else None
+        if type(next_revision) is not int or next_revision <= state.case_revision:
+            raise AgentError("CASE_AUTONOMOUS_NO_PROGRESS", "案件自主执行没有产生可验证的版本进展", retryable=False)
+        executed.append({
+            "directive_id": directive.directive_id,
+            "operation": directive.operation,
+            "arguments": directive.arguments,
+            "from_revision": state.case_revision,
+            "to_revision": next_revision,
+            "tool_status": event["status"],
+        })
+        recorder.record(
+            "case_autonomous_action_completed",
+            case_id=state.case_id,
+            directive_id=directive.directive_id,
+            operation=directive.operation,
+            from_revision=state.case_revision,
+            to_revision=next_revision,
+            tool_status=event["status"],
+        )
+        current = next_result
+    return {
+        **current,
+        "autonomous_execution": {
+            "schema_version": 1,
+            "planner_version": "policy-aware-next-action-v1",
+            "initial_state_id": initial_state_id,
+            "final_state_id": final_state_id,
+            "executed_actions": executed,
+            "status": final_status,
+            "reason_code": final_reason,
+        },
+    }
+
+
 def execute_plan(intake, run_id, *, plan=None, source="deterministic", incomplete_reason=None):
     context = current_runtime()
     recorder = TraceRecorder(run_id)
@@ -372,6 +479,19 @@ def execute_plan(intake, run_id, *, plan=None, source="deterministic", incomplet
                                 else "INVALID_UTILITY_REQUEST" if step.tool in {"read_clock", "calculate"}
                                 else "BUSINESS_DATA_NOT_FOUND")
                         raise AgentError(code, step.result["error"], retryable=False)
+                    if step.tool in _POLICY_AWARE_CASE_OPERATIONS:
+                        autonomous_budget = max(
+                            0,
+                            (context.limits.max_steps if context else 8) - len(plan.steps),
+                        )
+                        step.result = _advance_after_sales_case(
+                            step.result,
+                            executor=executor,
+                            recorder=recorder,
+                            trace=trace,
+                            run_id=run_id,
+                            max_actions=min(_MAX_AUTONOMOUS_CASE_ACTIONS, autonomous_budget),
+                        )
                     verify_observation(step)
                     if step.tool == CATALOG_QUERY_OPERATION:
                         verification = step.result["artifact"]["verification"]

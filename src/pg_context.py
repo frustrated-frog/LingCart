@@ -22,7 +22,8 @@ from src.pg_retrieval import (
     shadow_action_anchor,
 )
 from src.pg_guidance import (compile_guidance_contract, decision_fingerprint,
-                             render_guidance_contract, review_guidance_contract)
+                             decision_action, render_guidance_contract, review_guidance_contract)
+from src.pg_preplay import compare_preplay_prediction, plan_preplay
 from src.pg_progress import assess_action_progress, progress_snapshot
 from src.runtime import current_runtime
 
@@ -77,13 +78,18 @@ class PGContextMechanism:
     guidance_strategy: str = "model-contextualization-v1"
     applicability_strategy: str = "none"
     path_ranking_strategy: str = "none"
+    preplay_strategy: str = "none"
+    preplay_max_depth: int = 1
+    preplay_beam_width: int = 1
+    preplay_max_paths: int = 1
 
     def configure(self, configuration):
         base_keys = {"graph_path", "hops", "max_graph_chars"}
         v2_keys = base_keys | {"retrieval_strategy", "max_local_edges", "min_localization_score"}
         v3_keys = v2_keys | {"guidance_strategy"}
         v4_keys = v3_keys | {"applicability_strategy", "path_ranking_strategy"}
-        expected = (v4_keys if self.mechanism_version == "4" else v3_keys
+        v6_keys = v4_keys | {"preplay_strategy", "preplay_max_depth", "preplay_beam_width", "preplay_max_paths"}
+        expected = (v6_keys if self.mechanism_version == "6" else v4_keys if self.mechanism_version == "4" else v3_keys
                     if self.mechanism_version == "3" else v2_keys
                     if self.mechanism_version == "2" else base_keys)
         if set(configuration) != expected:
@@ -99,7 +105,7 @@ class PGContextMechanism:
             raise ValueError("PG 跳数无效")
         if type(configuration["max_graph_chars"]) is not int or not 512 <= configuration["max_graph_chars"] <= 16000:
             raise ValueError("PG 图预算无效")
-        if self.mechanism_version in {"2", "3", "4"}:
+        if self.mechanism_version in {"2", "3", "4", "6"}:
             if configuration["retrieval_strategy"] != "trajectory-state-v2":
                 raise ValueError("PG v2+ 必须使用轨迹状态定位")
             if type(configuration["max_local_edges"]) is not int or not 1 <= configuration["max_local_edges"] <= 16:
@@ -107,29 +113,41 @@ class PGContextMechanism:
             if (type(configuration["min_localization_score"]) is not int
                     or not 1 <= configuration["min_localization_score"] <= 100):
                 raise ValueError("PG 定位置信阈值无效")
-        if self.mechanism_version in {"3", "4"} and configuration["guidance_strategy"] != "deterministic-contract-v1":
+        if self.mechanism_version in {"3", "4", "6"} and configuration["guidance_strategy"] != "deterministic-contract-v1":
             raise ValueError("PG v3+ 必须使用确定性指导契约")
-        if self.mechanism_version == "4":
+        if self.mechanism_version in {"4", "6"}:
             if configuration["applicability_strategy"] != "typed-evidence-v1":
                 raise ValueError("PG v4 必须使用类型化证据适用性")
             if configuration["path_ranking_strategy"] != "goal-progress-cost-v1":
                 raise ValueError("PG v4 必须使用目标进展与成本排序")
             if graph.schema_version != 2:
                 raise ValueError("PG v4 必须绑定包含类型化边条件的 v2 图")
+        if self.mechanism_version == "6":
+            if configuration["preplay_strategy"] != "bounded-transition-search-v1":
+                raise ValueError("PG v6 必须使用有界状态转移预演")
+            if type(configuration["preplay_max_depth"]) is not int or not 1 <= configuration["preplay_max_depth"] <= 4:
+                raise ValueError("PG v6 预演深度无效")
+            if type(configuration["preplay_beam_width"]) is not int or not 1 <= configuration["preplay_beam_width"] <= 8:
+                raise ValueError("PG v6 Beam 宽度无效")
+            if type(configuration["preplay_max_paths"]) is not int or not 1 <= configuration["preplay_max_paths"] <= 12:
+                raise ValueError("PG v6 路径上限无效")
         return replace(self, **configuration, graph_sha256=graph.fingerprint)
 
     @property
     def configuration(self):
         result = {"graph_path": self.graph_path, "graph_sha256": self.graph_sha256,
                   "hops": self.hops, "max_graph_chars": self.max_graph_chars}
-        if self.mechanism_version in {"2", "3", "4"}:
+        if self.mechanism_version in {"2", "3", "4", "6"}:
             result.update(retrieval_strategy=self.retrieval_strategy, max_local_edges=self.max_local_edges,
                           min_localization_score=self.min_localization_score)
-        if self.mechanism_version in {"3", "4"}:
+        if self.mechanism_version in {"3", "4", "6"}:
             result["guidance_strategy"] = self.guidance_strategy
-        if self.mechanism_version == "4":
+        if self.mechanism_version in {"4", "6"}:
             result.update(applicability_strategy=self.applicability_strategy,
                           path_ranking_strategy=self.path_ranking_strategy)
+        if self.mechanism_version == "6":
+            result.update(preplay_strategy=self.preplay_strategy, preplay_max_depth=self.preplay_max_depth,
+                          preplay_beam_width=self.preplay_beam_width, preplay_max_paths=self.preplay_max_paths)
         return result
 
     def install(self, context):
@@ -138,9 +156,11 @@ class PGContextMechanism:
     def provenance(self):
         from src.harness.mechanisms import source_fingerprint
         implementation = (("src/pg_guidance.py", "src/adaptive.py")
-                          if self.mechanism_version in {"3", "4"} else ())
-        if self.mechanism_version == "4":
+                          if self.mechanism_version in {"3", "4", "6"} else ())
+        if self.mechanism_version in {"4", "6"}:
             implementation += ("src/pg_conditions.py", "src/pg_progress.py")
+        if self.mechanism_version == "6":
+            implementation += ("src/pg_preplay.py",)
         files = self.source_files + implementation + ((self.graph_path,) if self.graph_path else ())
         return {"slot": self.slot, "id": self.mechanism_id, "version": self.mechanism_version,
                 "source_files": list(files), "implementation_sha256": source_fingerprint(files),
@@ -159,14 +179,19 @@ class PGContextMechanism:
                                min_localization_score=self.min_localization_score / 100,
                                guidance_strategy=self.guidance_strategy,
                                applicability_strategy=self.applicability_strategy,
-                               path_ranking_strategy=self.path_ranking_strategy)
+                               path_ranking_strategy=self.path_ranking_strategy,
+                               preplay_strategy=self.preplay_strategy,
+                               preplay_max_depth=self.preplay_max_depth,
+                               preplay_beam_width=self.preplay_beam_width,
+                               preplay_max_paths=self.preplay_max_paths)
 
 
 class PGContextEngine:
     def __init__(self, base, graph, *, hops=2, max_graph_chars=10000, mechanism_version="1",
                  retrieval_strategy="action-anchor-v1", max_local_edges=6, min_localization_score=0.55,
                  guidance_strategy="model-contextualization-v1", applicability_strategy="none",
-                 path_ranking_strategy="none"):
+                 path_ranking_strategy="none", preplay_strategy="none", preplay_max_depth=1,
+                 preplay_beam_width=1, preplay_max_paths=1):
         self.base, self.graph, self.hops, self.max_graph_chars = base, graph, hops, max_graph_chars
         self.mechanism_version = mechanism_version
         self.retrieval_strategy = retrieval_strategy
@@ -175,6 +200,10 @@ class PGContextEngine:
         self.guidance_strategy = guidance_strategy
         self.applicability_strategy = applicability_strategy
         self.path_ranking_strategy = path_ranking_strategy
+        self.preplay_strategy = preplay_strategy
+        self.preplay_max_depth = preplay_max_depth
+        self.preplay_beam_width = preplay_beam_width
+        self.preplay_max_paths = preplay_max_paths
 
     def __getattr__(self, name):
         return getattr(self.base, name)
@@ -207,6 +236,23 @@ class PGContextEngine:
                              confidence=1.0 if not selection["fallback"] else 0.0,
                              abstained=False, candidates=[])
             shadow = None
+        if self.preplay_strategy == "bounded-transition-search-v1":
+            preplay = plan_preplay(
+                self.graph,
+                selection,
+                trajectory,
+                max_depth=self.preplay_max_depth,
+                beam_width=self.preplay_beam_width,
+                max_paths=self.preplay_max_paths,
+            )
+            selection = {**selection, "preplay": preplay}
+            selected = preplay.get("selected_path") or {}
+            first_edge = (selected.get("edge_ids") or [None])[0]
+            if first_edge:
+                selection["edges"] = sorted(
+                    selection.get("edges") or [],
+                    key=lambda row: (row.get("id") != first_edge, -float(row.get("path_score") or 0), str(row.get("id"))),
+                )
         prompt_trajectory = trajectory
         if self.guidance_strategy != "deterministic-contract-v1":
             prompt_trajectory = deepcopy(trajectory)
@@ -244,10 +290,17 @@ class PGContextEngine:
                  },
                  "applicability": deepcopy(selection.get("applicability")),
                  "projected_paths": deepcopy(selection.get("paths") or []),
+                 "preplay": deepcopy(selection.get("preplay")),
                  "state_snapshot": bounded_trajectory_snapshot(prompt_trajectory),
                  "guidance": "", "guidance_contract": None,
                  "generation": {"mode": self.guidance_strategy, "model_calls": 0},
                  "status": "SKIPPED", "reason": None}
+        if isinstance(event.get("preplay"), dict):
+            previous_prediction = next((item for item in reversed(runtime.events)
+                if item.get("type") == "pg_prediction_outcome"
+                and item.get("preplay_plan_id") != event["preplay"].get("plan_id")), None)
+            event["preplay"]["replanned_from"] = (
+                previous_prediction.get("preplay_plan_id") if previous_prediction else None)
         cached_model = str(runtime.model_cursor + 1) in runtime.models
         model_calls_before = runtime.counters["model_calls"]
         contract = (compile_guidance_contract(self.graph, selection, trajectory)
@@ -355,7 +408,7 @@ class PGContextEngine:
         if previous is not None:
             return previous
         before = (progress_snapshot(state, plan, runtime)
-                  if self.mechanism_version == "4" and isinstance(state, dict) and plan is not None else None)
+                  if self.mechanism_version in {"4", "6"} and isinstance(state, dict) and plan is not None else None)
         return runtime.record("pg_decision_reviewed", review_id=review_id,
             decision_key=guidance["decision_key"], contract_id=guidance["guidance_contract"]["contract_id"],
             goal_revision=state.get("goal_revision", 0) if isinstance(state, dict) else None,
@@ -369,7 +422,7 @@ class PGContextEngine:
 
     def review_outcome(self, runtime, state, plan, *, review_id, decision, step=None):
         """把一次采用审查和随后发生的真实状态变化连接为幂等证据。"""
-        if self.mechanism_version != "4" or not review_id:
+        if self.mechanism_version not in {"4", "6"} or not review_id:
             return None
         review = next((event for event in reversed(runtime.events)
                        if event.get("type") == "pg_decision_reviewed"
@@ -380,22 +433,49 @@ class PGContextEngine:
         previous = next((event for event in reversed(runtime.events)
                          if event.get("type") == "pg_action_outcome"
                          and event.get("outcome_id") == outcome_id), None)
-        if previous is not None:
-            return previous
-        after = progress_snapshot(state, plan, runtime)
-        payload = decision.model_dump(mode="json") if hasattr(decision, "model_dump") else deepcopy(decision)
-        assessment = assess_action_progress(review["progress_before"], after, payload, step=step)
-        return runtime.record(
-            "pg_action_outcome",
-            outcome_id=outcome_id,
-            review_id=review_id,
-            decision_key=review.get("decision_key"),
-            contract_id=review.get("contract_id"),
-            goal_revision=state.get("goal_revision", 0),
-            decision_fingerprint=review.get("actual_decision_fingerprint"),
-            raw_decision_fingerprint=review.get("raw_decision_fingerprint"),
-            matched_edge_ids=deepcopy(review.get("matched_edge_ids") or []),
-            progress_before=deepcopy(review["progress_before"]),
-            progress_after=after,
-            **assessment,
-        )
+        if previous is None:
+            after = progress_snapshot(state, plan, runtime)
+            payload = decision.model_dump(mode="json") if hasattr(decision, "model_dump") else deepcopy(decision)
+            assessment = assess_action_progress(review["progress_before"], after, payload, step=step)
+            previous = runtime.record(
+                "pg_action_outcome",
+                outcome_id=outcome_id,
+                review_id=review_id,
+                decision_key=review.get("decision_key"),
+                contract_id=review.get("contract_id"),
+                goal_revision=state.get("goal_revision", 0),
+                decision_fingerprint=review.get("actual_decision_fingerprint"),
+                raw_decision_fingerprint=review.get("raw_decision_fingerprint"),
+                matched_edge_ids=deepcopy(review.get("matched_edge_ids") or []),
+                progress_before=deepcopy(review["progress_before"]),
+                progress_after=after,
+                **assessment,
+            )
+        if self.mechanism_version == "6":
+            guidance = next((event for event in reversed(runtime.events)
+                             if event.get("type") == "pg_guidance"
+                             and event.get("decision_key") == review.get("decision_key")
+                             and isinstance(event.get("preplay"), dict)), None)
+            if guidance is not None:
+                comparison = compare_preplay_prediction(
+                    guidance["preplay"], previous, actual_action=decision_action(
+                        decision.model_dump(mode="json") if hasattr(decision, "model_dump") else decision),
+                )
+                prediction_outcome_id = fingerprint({
+                    "comparison_id": comparison["comparison_id"],
+                    "review_id": review_id,
+                    "outcome_id": outcome_id,
+                })
+                recorded = next((event for event in reversed(runtime.events)
+                                 if event.get("type") == "pg_prediction_outcome"
+                                 and event.get("prediction_outcome_id") == prediction_outcome_id), None)
+                if recorded is None:
+                    runtime.record(
+                        "pg_prediction_outcome",
+                        prediction_outcome_id=prediction_outcome_id,
+                        outcome_id=outcome_id,
+                        review_id=review_id,
+                        goal_revision=state.get("goal_revision", 0),
+                        **comparison,
+                    )
+        return previous

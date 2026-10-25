@@ -91,6 +91,8 @@ export const CAPABILITY_LABELS: Record<string, string> = {
   deterministic_guidance_contract: '确定性指导契约', guidance_adoption_audit: '指导采用审计',
   typed_edge_conditions: '类型化程序边条件', evidence_grounded_applicability: '证据约束的适用性判定',
   condition_aware_path_ranking: '条件感知路径排序', action_progress_attribution: '行动进展归因',
+  bounded_procedural_preplay: '有界程序预演', prediction_outcome_audit: '预测结果审计',
+  online_replanning: '在线重规划',
   no_progress_replay_guard: '无进展重放保护',
   goal_verification: '目标核验', durable_resume: '持久化恢复', runtime_steering: '运行时调整',
   deterministic_trajectory_monitoring: '确定性轨迹监控', conditional_corrective_advice: '条件式纠偏建议',
@@ -136,6 +138,11 @@ export const METRIC_LABELS: Record<string, string> = {
 
 const EVENT_LABELS: Record<string, [string, string]> = {
   case_plan_revised: ['案件', '修订证据与行动计划'],
+  case_state_projected: ['案件', '投影政策约束案件状态'],
+  case_obligation_verified: ['核验', '核验下一项政策义务'],
+  case_autonomous_action_selected: ['决策', '选择受限自主动作'],
+  case_autonomous_action_completed: ['进展', '自主动作产生版本进展'],
+  case_execution_paused: ['边界', '政策感知执行暂停'],
   evidence_semantic_assessed: ['核验', '检查材料充分性与冲突'],
   evidence_semantic_reused: ['核验', '复用材料语义核验'],
   agent_status_changed: ['状态', 'Agent 执行状态'], response_started: ['回答', '开始生成回答'],
@@ -159,6 +166,7 @@ const EVENT_LABELS: Record<string, [string, string]> = {
   pg_guidance: ['程序图', '生成程序图情境指导'],
   pg_decision_reviewed: ['程序图', '审查程序图指导采用'],
   pg_action_outcome: ['程序图', '记录程序图指导后的真实进展'],
+  pg_prediction_outcome: ['程序图', '核对程序预演与真实结果'],
   goal_arguments_normalized: ['语义', '规范化目标目录编码'],
   tool_arguments_normalized: ['语义', '规范化工具目录参数'],
   evidence_read: ['证据', '读取证据'], constraint_binding_proposed: ['约束', '生成映射提案'],

@@ -79,6 +79,21 @@ describe('ExecutionSpine', () => {
     expect(screen.getByText('生成纠偏建议')).toBeInTheDocument()
     expect(screen.getByText('应用受限干预')).toBeInTheDocument()
   })
+
+  it('renders policy-aware case execution evidence in Chinese', () => {
+    render(<ExecutionSpine events={[
+      { type: 'case_state_projected', sequence: 1 },
+      { type: 'case_obligation_verified', sequence: 2 },
+      { type: 'case_autonomous_action_selected', sequence: 3 },
+      { type: 'case_autonomous_action_completed', sequence: 4 },
+      { type: 'case_execution_paused', sequence: 5 },
+    ]} />)
+    expect(screen.getByText('投影政策约束案件状态')).toBeInTheDocument()
+    expect(screen.getByText('核验下一项政策义务')).toBeInTheDocument()
+    expect(screen.getByText('选择受限自主动作')).toBeInTheDocument()
+    expect(screen.getByText('自主动作产生版本进展')).toBeInTheDocument()
+    expect(screen.getByText('政策感知执行暂停')).toBeInTheDocument()
+  })
 })
 
 describe('engineering copy localization', () => {
