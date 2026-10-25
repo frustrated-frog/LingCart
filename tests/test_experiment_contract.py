@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from eval.experiment_contract import ExperimentSpec
+from eval.experiment_contract import ExperimentSpec, MetricRule
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -18,6 +18,28 @@ def test_template_and_first_experiment_are_machine_validated():
     assert template.tuning_split == 'dev' and template.evaluation_split == 'test'
     assert experiment.dataset == 'eval/adaptive_tasks.json'
     assert experiment.candidate_profile == 'adaptive-objective-context-v1'
+    assert all(rule.minimum_value is None and rule.maximum_value is None
+               for rule in (*template.primary_metrics, *template.guard_metrics))
+
+
+def test_metric_rule_accepts_absolute_range_and_rejects_inversion():
+    rule = MetricRule(
+        name='policy_autonomy.case_resolution_rate',
+        objective='maximize',
+        max_regression=0,
+        min_improvement=0.5,
+        minimum_value=1.0,
+        maximum_value=1.0,
+    )
+
+    assert rule.minimum_value == rule.maximum_value == 1.0
+    with pytest.raises(ValidationError, match='绝对下限'):
+        MetricRule(
+            name='mean_success_rate',
+            objective='maximize',
+            minimum_value=1.0,
+            maximum_value=0.75,
+        )
 
 
 def test_liveplan_experiment_freezes_one_steering_mechanism_and_cost_guard():

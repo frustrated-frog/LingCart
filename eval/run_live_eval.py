@@ -250,6 +250,8 @@ def summarize(samples, repeats):
                                   / len(drifted_samples) if drifted_samples else 0),
             },
             'policy_autonomy': {
+                'case_resolution_rate': (sum(item.get('resolved') is True for item in autonomy)
+                                         / len(autonomy) if autonomy else 0),
                 'autonomous_resolution_rate': (sum(item.get('resolved') is True for item in resolvable)
                                                / len(resolvable) if resolvable else 0),
                 'avoidable_pause_rate': (sum(item.get('avoidable_pause') is True for item in resolvable)
@@ -643,6 +645,14 @@ def _validate_experiment_contract(report, baseline, payload):
         if current is None or previous is None:
             failures.append(f'实验指标 {rule.name} 缺少可比较数值')
             continue
+        if rule.minimum_value is not None and current < rule.minimum_value:
+            failures.append(
+                f'实验指标 {rule.name} 当前值 {current:g} 低于绝对下限 {rule.minimum_value:g}'
+            )
+        if rule.maximum_value is not None and current > rule.maximum_value:
+            failures.append(
+                f'实验指标 {rule.name} 当前值 {current:g} 高于绝对上限 {rule.maximum_value:g}'
+            )
         improvement = current - previous if rule.objective == 'maximize' else previous - current
         if improvement < -rule.max_regression:
             failures.append(f'实验指标 {rule.name} 退化 {abs(improvement):g}，超过允许值 {rule.max_regression:g}')

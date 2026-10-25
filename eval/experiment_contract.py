@@ -40,6 +40,15 @@ class MetricRule(BaseModel):
     objective: Literal["maximize", "minimize"]
     max_regression: float = Field(default=0, ge=0)
     min_improvement: float = Field(default=0, ge=0)
+    minimum_value: float | None = None
+    maximum_value: float | None = None
+
+    @model_validator(mode="after")
+    def absolute_range_is_valid(self):
+        if (self.minimum_value is not None and self.maximum_value is not None
+                and self.minimum_value > self.maximum_value):
+            raise ValueError("指标绝对下限不能高于绝对上限")
+        return self
 
 
 class ExperimentSpec(BaseModel):

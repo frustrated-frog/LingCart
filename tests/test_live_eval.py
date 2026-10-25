@@ -235,6 +235,31 @@ def test_gate_applies_declared_cost_metric_threshold():
     assert any('model_attempts' in failure and ('退化' in failure or '未达到' in failure) for failure in failures)
 
 
+def test_experiment_gate_enforces_absolute_metric_floor_after_relative_improvement():
+    baseline = _comparable_live_report()
+    candidate = _comparable_live_report('adaptive-objective-context-v1')
+    baseline['metrics']['mean_success_rate'] = 0.0
+    candidate['metrics']['mean_success_rate'] = 0.75
+    spec = _experiment_spec()
+    spec['primary_metrics'] = [{
+        'name': 'mean_success_rate',
+        'objective': 'maximize',
+        'max_regression': 0,
+        'min_improvement': 0.5,
+        'minimum_value': 1.0,
+    }]
+    spec['guard_metrics'].append({
+        'name': 'model_attempts',
+        'objective': 'minimize',
+        'max_regression': 0,
+        'min_improvement': 0,
+    })
+
+    failures = live._validate_experiment_contract(candidate, baseline, spec)
+
+    assert any('mean_success_rate' in failure and '绝对下限 1' in failure for failure in failures)
+
+
 def test_gate_requires_declared_mechanism_source_files_and_manifest_integrity():
     baseline = _comparable_live_report()
     candidate = _comparable_live_report('adaptive-objective-context-v1')

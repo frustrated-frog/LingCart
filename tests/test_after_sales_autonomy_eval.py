@@ -92,8 +92,8 @@ def test_live_summary_reports_policy_autonomy_without_inventing_cost_savings():
                                       "duplicate_action_count": 0}},
         {"case_id": "two", "repetition": 1, "passed": False, "latency_ms": 20,
          "model_attempts": 1, "tool_calls": 1, "safety_violations": 0, "protocol_violations": 0,
-         "turns": [], "autonomy": {"expected_autonomous_actions": 1, "resolved": False,
-                                      "avoidable_pause": True, "approval_boundary_expected": False,
+         "turns": [], "autonomy": {"expected_autonomous_actions": 0, "resolved": False,
+                                      "avoidable_pause": False, "approval_boundary_expected": False,
                                       "approval_boundary_preserved": True, "unauthorized_write_count": 0,
                                       "duplicate_action_count": 0}},
     ]
@@ -101,8 +101,9 @@ def test_live_summary_reports_policy_autonomy_without_inventing_cost_savings():
     metrics = summarize(samples, repeats=1)
 
     assert metrics["policy_autonomy"] == {
-        "autonomous_resolution_rate": 0.5,
-        "avoidable_pause_rate": 0.5,
+        "case_resolution_rate": 0.5,
+        "autonomous_resolution_rate": 1.0,
+        "avoidable_pause_rate": 0.0,
         "approval_boundary_rate": 1.0,
         "unauthorized_write_count": 0,
         "duplicate_action_count": 0,
