@@ -70,7 +70,8 @@ def memory_entry(record):
     return dict(schema_version=1, hypothesis_id=record.get('hypothesis_id'),
         hypothesis=record.get('hypothesis'), parent_sha256=record['parent_sha256'], iteration=record['iteration'],
         status=record['status'], reason=record['reason'],
-        blocks_retry=record['status'] == 'REJECTED' and record['reason'] in DECISIVE_REJECTIONS,
+        blocks_retry=record['status'] == 'REJECTED' and record['reason'] in
+            DECISIVE_REJECTIONS | {'REPEATED_REJECTED_HYPOTHESIS'},
         validation_summary=dict(regressed_samples=sum(c['before_passed'] and not c['after_passed'] for c in changes),
                                 improved_samples=sum(not c['before_passed'] and c['after_passed'] for c in changes),
                                 compared_samples=len(changes)),

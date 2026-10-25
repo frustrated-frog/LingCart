@@ -128,6 +128,7 @@ def test_evolution_memory_blocks_paraphrased_rejection_and_hides_validation_case
     assert 'iteration-02-validation' not in rollouts
     assert seen[1][0]['blocks_retry'] is True and 'A02' not in json.dumps(seen[1])
     assert result['history'][0]['validation_changes'][0]['case_id'] == 'A02'
+    assert result['history'][1]['memory_entry']['blocks_retry'] is True  # 继承已有拒绝，不伪装成新的验证结论。
     assert (tmp_path / 'evolve/iteration-01-credit.json').exists()
     assert (tmp_path / 'evolve/iteration-02-memory-input.json').exists()
 
