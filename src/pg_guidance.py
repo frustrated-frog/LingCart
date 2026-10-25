@@ -106,6 +106,21 @@ def compile_guidance_contract(graph, selection: dict, trajectory: dict) -> dict:
             condition_evaluations=deepcopy(selection["applicability"].get("evaluations") or []),
             projected_paths=deepcopy(selection.get("paths") or []),
         )
+    preplay = selection.get("preplay") if isinstance(selection.get("preplay"), dict) else None
+    if preplay is not None:
+        selected = preplay.get("selected_path") if isinstance(preplay.get("selected_path"), dict) else None
+        basis["schema_version"] = 3
+        basis["preplay"] = {
+            "plan_id": preplay.get("plan_id"),
+            "method": preplay.get("method"),
+            "status": preplay.get("status"),
+            "reason": preplay.get("reason"),
+            "causal_claim": False,
+            "selected_path": ({key: selected.get(key) for key in (
+                "path_id", "edge_ids", "node_ids", "first_action", "score",
+                "executable_prefix", "future_edges_require_revalidation",
+            )} if selected else None),
+        }
     return {**basis, "contract_id": fingerprint(basis), "instructions": instructions}
 
 
@@ -131,6 +146,16 @@ def render_guidance_contract(contract: dict) -> str:
         parts.append(row + "。")
     if contract.get("projected_paths"):
         parts.append("路径中只有第一条边是当前适用建议；后续边必须在状态变化后重新求值，不能提前执行。")
+    preplay = contract.get("preplay") if isinstance(contract.get("preplay"), dict) else {}
+    selected = preplay.get("selected_path") if isinstance(preplay.get("selected_path"), dict) else {}
+    if selected and selected.get("first_action"):
+        parts.append(
+            "有界程序预演首选当前行动："
+            + str(selected.get("first_action") or "无行动")
+            + "；后续路径是预测假设，不是事实、授权或完成证据，每次真实观察后必须重新规划。"
+        )
+    elif selected and preplay.get("status") == "TERMINAL":
+        parts.append("有界程序预演仅到达终态，不生成额外行动建议；任务完成仍以独立目标核验为准。")
     if contract.get("forbidden_repeats"):
         parts.append("不得原样重复已返回空结果或错误的相同决策；可以改变有依据的参数、选择其他目标或如实停止。")
     return "\n".join(parts)

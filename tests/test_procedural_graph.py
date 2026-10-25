@@ -350,6 +350,32 @@ def test_v4_profile_adds_typed_applicability_without_promoting_product_use():
         get_product_runner("adaptive-pg-context-v4")
 
 
+def test_v6_profile_adds_bounded_preplay_without_model_calls_or_product_promotion(monkeypatch):
+    monkeypatch.setattr("src.pg_context.get_llm", lambda **_: pytest.fail("确定性预演不能调用模型"))
+    v4 = get_runner("adaptive-pg-context-v4")
+    v6 = get_runner("adaptive-pg-preplay-v6")
+    engine = v6.build_context("推荐耳机")
+    assert engine.graph.fingerprint == v4.build_context("推荐耳机").graph.fingerprint
+    assert engine.preplay_strategy == "bounded-transition-search-v1"
+    assert (engine.preplay_max_depth, engine.preplay_beam_width, engine.preplay_max_paths) == (3, 4, 4)
+
+    runtime = RunRuntime("pg-v6", BudgetLimits(max_model_calls=4))
+    current = {**state(), "goal": {"objectives": [{"id": "choice", "kind": "recommend"}]},
+               "objective_ledger": [{"objective_id": "choice", "status": "PENDING",
+                                      "evidence_refs": [], "failures": []}]}
+    with runtime_scope(runtime):
+        _, manifest = engine.decision_messages("系统", current, TaskPlan([], []), [], max_chars=16000)
+    event = next(item for item in runtime.events if item["type"] == "pg_guidance")
+    assert event["preplay"]["status"] == "READY"
+    assert event["preplay"]["selected_path"]["first_action"] == "search_products"
+    assert event["guidance_contract"]["schema_version"] == 3
+    assert manifest["pg_status"] == "EXPOSED"
+    assert runtime.counters["model_calls"] == 0
+    assert v6.provenance()["research"]["status"] == "candidate"
+    with pytest.raises(AgentError, match="仅限研究"):
+        get_product_runner("adaptive-pg-preplay-v6")
+
+
 def test_shared_graph_control_changes_applicability_without_changing_artifact(monkeypatch):
     monkeypatch.setattr('src.pg_context.get_llm', lambda **_: pytest.fail('同图确定性对照不能调用模型'))
     first = Decision(action='tool', tool='search_products', args={'query': '耳机'})

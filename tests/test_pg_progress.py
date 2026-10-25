@@ -212,3 +212,36 @@ def test_restored_review_produces_one_idempotent_content_based_outcome():
     repeated = engine.review_outcome(runtime, state(), TaskPlan([], [first, second]), **kwargs)
     assert repeated == outcome and outcome["progress_status"] == "NO_PROGRESS"
     assert len([event for event in runtime.events if event["type"] == "pg_action_outcome"]) == 1
+
+
+def test_v6_records_one_prediction_comparison_from_real_outcome():
+    import json
+    from pathlib import Path
+    from src.context_engine import ContextEngine
+    from src.pg_context import PGContextEngine
+    from src.procedural_graph import ProceduralGraph
+
+    runtime = RunRuntime("prediction-outcome", BudgetLimits())
+    before = progress_snapshot(state(), TaskPlan([], []), runtime)
+    runtime.events.extend(json.loads(json.dumps([
+        {"type": "pg_guidance", "decision_key": "decision", "preplay": {
+            "plan_id": "plan-1", "selected_path": {"predictions": [{
+                "action": "search_products", "effect_hypotheses": ["INFORMATION_GAIN"],
+            }]},
+        }},
+        {"type": "pg_decision_reviewed", "review_id": "review", "decision_key": "decision",
+         "contract_id": "contract", "progress_before": before, "matched_edge_ids": ["goal-search"]},
+    ])))
+    observed_step = observed("s1")
+    engine = PGContextEngine(ContextEngine("test"),
+        ProceduralGraph.from_path(Path("research/graphs/pg-seed-v2.json")), mechanism_version="6")
+    kwargs = dict(review_id="review", decision={"action": "tool", "tool": "search_products"}, step=observed_step)
+    outcome = engine.review_outcome(runtime, state(), TaskPlan([], [observed_step]), **kwargs)
+    repeated = engine.review_outcome(runtime, state(), TaskPlan([], [observed_step]), **kwargs)
+    comparisons = [event for event in runtime.events if event["type"] == "pg_prediction_outcome"]
+
+    assert repeated == outcome and outcome["information_gain"]["status"] == "NEW_INFORMATION"
+    assert len(comparisons) == 1
+    assert comparisons[0]["status"] == "SUPPORT"
+    assert comparisons[0]["preplay_plan_id"] == "plan-1"
+    assert comparisons[0]["causal_claim"] is False
