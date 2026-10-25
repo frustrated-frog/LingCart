@@ -660,6 +660,8 @@ export interface PGIntervention {
   action_alignment: { status: string; matched_edge_ids: string[]; expected_actions?: string[]; actual_action?: string; reason?: string
     blocked?: boolean; review_id?: string }
   action_progress?: { status?: string; reason?: string; signals?: string[]; cost_delta?: { model_calls?: number; tool_calls?: number }
+    schema_version?: number | null; execution_progress?: boolean | null; learning_eligible?: boolean | null
+    information_gain?: { status: string; changed_observation_scopes?: string[]; new_evidence_count?: number; newly_verified_objective_ids?: string[] } | null
     outcome_id?: string; review_id?: string; matched_edge_ids?: string[]; before_sha256?: string; after_sha256?: string } | null
   tool: { name: string; args: Record<string, unknown>; status: string; sequence: number; result: unknown; invalid_result: boolean } | null
   verification: Record<string, unknown> | null

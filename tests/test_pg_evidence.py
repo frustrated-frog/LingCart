@@ -126,12 +126,16 @@ def test_projection_links_typed_applicability_review_and_real_progress():
         'progress_reason': 'VERIFIABLE_STATE_CHANGE', 'signals': ['TRUSTED_OBSERVATION_ADDED'],
         'cost_delta': {'model_calls': 0, 'tool_calls': 1}, 'matched_edge_ids': ['start-search'],
         'before_sha256': 'a' * 64, 'after_sha256': 'b' * 64,
+        'schema_version': 2, 'execution_progress': True, 'learning_eligible': True,
+        'information_gain': {'status': 'NEW_INFORMATION', 'changed_observation_scopes': ['c' * 64]},
     })
 
     projection = project_sample_evidence(value)
     intervention = projection['turns'][0]['interventions'][0]
     assert intervention['applicability']['selected_edge_ids'] == ['start-search']
     assert intervention['action_progress']['status'] == 'PROGRESSED'
+    assert intervention['action_progress']['information_gain']['status'] == 'NEW_INFORMATION'
+    assert intervention['action_progress']['execution_progress'] is True
     assert intervention['action_progress']['signals'] == ['TRUSTED_OBSERVATION_ADDED']
     assert projection['summary']['typed_applicability_interventions'] == 1
     assert projection['summary']['progressed_actions'] == 1

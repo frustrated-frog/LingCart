@@ -8,6 +8,20 @@ from src.task_plan import TaskPlan, TaskStep
 SEED = Path("research/graphs/pg-seed-v1.json")
 
 
+def test_edge_feedback_excludes_legacy_progress_rewards():
+    events = [
+        {"type": "pg_action_outcome", "progress_status": "PROGRESSED", "matched_edge_ids": ["legacy"]},
+        {"type": "pg_action_outcome", "schema_version": 2, "progress_status": "PROGRESSED",
+         "learning_eligible": True, "matched_edge_ids": ["new"]},
+        {"type": "pg_action_outcome", "schema_version": 2, "progress_status": "NO_PROGRESS",
+         "learning_eligible": False, "matched_edge_ids": ["repeat"]},
+    ]
+    feedback = build_trajectory_state(goal_state(), TaskPlan([], []), events)["edge_feedback"]
+    assert "legacy" not in feedback
+    assert feedback["new"]["progressed"] == 1
+    assert feedback["repeat"]["no_progress"] == 1
+
+
 def graph():
     return ProceduralGraph.from_path(SEED)
 
