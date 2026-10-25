@@ -46,6 +46,8 @@ class LabCatalog(BaseModel):
     seed_graph: dict
     model_configured: bool
     current_identity: dict
+    learning_plans: dict
+    learning_seed_graph: dict
 
 
 class JobList(BaseModel):

@@ -17,9 +17,11 @@ DEFAULT_GRAPH = ROOT / "research/graphs/pg-seed-v1.json"
 PROFILE_TEMPLATE = ROOT / "configs/harness/adaptive-pg-context-v2.json"
 
 
-def graph_profile(graph, path):
-    payload = json.loads(PROFILE_TEMPLATE.read_text())
-    payload["profile_id"] = f"pg-{graph.fingerprint[:16]}-{fingerprint(str(path))[:8]}"
+def graph_profile(graph, path, *, online_profile='adaptive-pg-context-v2'):
+    if online_profile not in {'adaptive-pg-context-v2', 'adaptive-pg-context-v4'}:
+        raise ValueError('未知在线 PG 配置')
+    payload = json.loads((ROOT / f'configs/harness/{online_profile}.json').read_text())
+    payload["profile_id"] = f"pg-{graph.fingerprint[:16]}-{fingerprint([str(path), online_profile])[:8]}"
     payload["display_name"] = f"PG 冻结图版本 {graph.version} 候选"
     for mechanism in payload["mechanisms"]:
         if mechanism["slot"] == "context":
@@ -57,19 +59,26 @@ def main(argv=None):
         if current.fingerprint not in profiles:
             path = output / f"graph-{current.fingerprint}.json"
             write_artifact(path, current.model_dump(mode="json"))
-            profile = graph_profile(current, path)
+            profile = graph_profile(current, path, online_profile=spec.online_profile)
             write_artifact(output / f"profile-{current.fingerprint}.json", profile.model_dump(mode="json"))
             registry.register_profile(profile)
             profiles[current.fingerprint] = profile
         return evaluate(dataset, repeats=spec.repeats, split="dev", case_ids=cases,
                         execution_mode="adaptive", harness_profile=profiles[current.fingerprint].profile_id,
-                        dataset_path=dataset_path, max_model_calls_per_run=spec.max_model_calls_per_run)
+                        dataset_path=dataset_path, max_model_calls_per_run=spec.max_model_calls_per_run,
+                        max_prompt_tokens_per_run=spec.max_prompt_tokens_per_run,
+                        max_completion_tokens_per_run=spec.max_completion_tokens_per_run,
+                        max_seconds_per_run=spec.max_seconds_per_run,
+                        max_provider_attempts_per_call=spec.max_provider_attempts_per_call)
 
-    retained, report = evolve(graph, spec, evaluator=evaluator, refiner=ModelGraphRefiner(), output_dir=output)
+    retained, report = evolve(graph, spec, evaluator=evaluator, refiner=ModelGraphRefiner(
+        evolution_policy=spec.evolution_policy, max_prompt_tokens=spec.max_refiner_prompt_tokens,
+        max_completion_tokens=spec.max_refiner_completion_tokens,
+        max_provider_attempts=spec.max_provider_attempts_per_call), output_dir=output)
     write_artifact(output / "retained-profile.json", profiles[retained.fingerprint].model_dump(mode="json"))
     # 冻结后的 test 对照契约：区分 PG 指导效果与图演化效果。
     template = json.loads((ROOT / "research/experiments/pg-localization-v2/experiment-spec.json").read_text())
-    for label, baseline in (("baseline", "adaptive-v1"), ("static", "adaptive-pg-context-v1")):
+    for label, baseline in (("baseline", "adaptive-v1"), ("static", profiles[graph.fingerprint].profile_id)):
         contract = json.loads(json.dumps(template))
         contract.update(experiment_id=f"pg-evolved-vs-{label}", baseline_profile=baseline,
                         candidate_profile=profiles[retained.fingerprint].profile_id)
