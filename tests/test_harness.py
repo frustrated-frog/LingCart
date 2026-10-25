@@ -49,6 +49,24 @@ def test_built_in_profiles_are_versioned_and_reproducible():
     assert all(len(item.fingerprint) == 64 for item in profiles.values())
 
 
+def test_after_sales_experiment_profiles_change_only_the_planning_mechanism():
+    from src.harness.registry import get_product_runner, get_runner
+
+    baseline = get_runner("after-sales-plan-observer-v0")
+    candidate = get_runner("after-sales-policy-execution-v1")
+    left, right = baseline.provenance(), candidate.provenance()
+
+    assert left["engine"] == right["engine"]
+    assert [item for item in left["mechanisms"] if item["slot"] != "planning"] == [
+        item for item in right["mechanisms"] if item["slot"] != "planning"
+    ]
+    assert left["mechanisms"][0]["configuration"]["case_execution_mode"] == "observe_only"
+    assert right["mechanisms"][0]["configuration"]["case_execution_mode"] == "policy_aware"
+    for profile_id in ("after-sales-plan-observer-v0", "after-sales-policy-execution-v1"):
+        with pytest.raises(AgentError, match="仅限研究"):
+            get_product_runner(profile_id)
+
+
 def test_two_profiles_bind_different_context_implementations_to_same_engine():
     from src.task_plan import TaskPlan, TaskStep
 

@@ -32,8 +32,9 @@ TOOLS = {
     "check_refund_eligibility", "initiate_refund", "get_payment_status",
     "process_payment", "answer_faq", "escalate_to_human", "search_products",
     "get_catalog_facets", "discover_products", "compare_products",
+    "prepare_after_sales_case", "continue_after_sales_case", "submit_after_sales_case",
 }
-MUTATIONS = {"process_payment", "initiate_refund"}
+MUTATIONS = {"process_payment", "initiate_refund", "submit_after_sales_case"}
 STATUSES = {
     "SUCCEEDED", "FAILED", "WAITING_APPROVAL", "WAITING_CLARIFICATION",
     "ESCALATED", "WAITING_HUMAN", "CANCELLED", "REJECTED", "PARTIAL",
@@ -215,6 +216,13 @@ def _isolated_db(runtime: dict, fixture: dict):
                     row = session.query(cls).filter_by(**{id_key: identifier}).one()
                     for key, value in updates.items():
                         setattr(row, key, value)
+            if fixture.get("after_sales"):
+                try:
+                    from eval.after_sales_autonomy_checks import apply_fixture
+                except ModuleNotFoundError:
+                    from after_sales_autonomy_checks import apply_fixture
+
+                apply_fixture(runtime, engine, fixture["after_sales"], session=session)
             session.commit()
         yield engine
     finally:

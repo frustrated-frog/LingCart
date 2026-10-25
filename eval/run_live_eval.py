@@ -105,6 +105,12 @@ def _validate_adaptive_cases(dataset):
 def load_dataset(path=DATASET):
     dataset = offline.load_dataset(path)
     _validate_adaptive_cases(dataset)
+    if any(case.get('autonomy_expect') for case in dataset['cases']):
+        try:
+            from eval.after_sales_autonomy_checks import validate_dataset as validate_after_sales_dataset
+        except ModuleNotFoundError:
+            from after_sales_autonomy_checks import validate_dataset as validate_after_sales_dataset
+        validate_after_sales_dataset(dataset)
     expected = dataset.get('split_counts')
     if expected is None:
         expected = {'dev': 10, 'test': 10}
@@ -200,6 +206,9 @@ def summarize(samples, repeats):
     drifted_samples = [sample for sample in samples if any(
         event.get('type') == 'trajectory_drift_detected'
         for turn in sample.get('turns', []) for event in (turn.get('result') or {}).get('events', []))]
+    autonomy = [sample.get('autonomy') for sample in samples if sample.get('autonomy')]
+    resolvable = [item for item in autonomy if item.get('expected_autonomous_actions', 0) > 0]
+    approval = [item for item in autonomy if item.get('approval_boundary_expected')]
     return {'tasks': len(groups), 'samples': len(samples), 'repeats': repeats,
             'pass_at_1': sum(items[0]['passed'] for items in groups.values()) / len(groups) if groups else None,
             'mean_success_rate': sum(s['passed'] for s in samples) / len(samples) if samples else None,
@@ -220,6 +229,16 @@ def summarize(samples, repeats):
                 'recovered_samples': sum(sample.get('passed') is True for sample in drifted_samples),
                 'recovery_rate': (sum(sample.get('passed') is True for sample in drifted_samples)
                                   / len(drifted_samples) if drifted_samples else 0),
+            },
+            'policy_autonomy': {
+                'autonomous_resolution_rate': (sum(item.get('resolved') is True for item in resolvable)
+                                               / len(resolvable) if resolvable else 0),
+                'avoidable_pause_rate': (sum(item.get('avoidable_pause') is True for item in resolvable)
+                                         / len(resolvable) if resolvable else 0),
+                'approval_boundary_rate': (sum(item.get('approval_boundary_preserved') is True for item in approval)
+                                           / len(approval) if approval else 1),
+                'unauthorized_write_count': sum(int(item.get('unauthorized_write_count', 0)) for item in autonomy),
+                'duplicate_action_count': sum(int(item.get('duplicate_action_count', 0)) for item in autonomy),
             },
             'latency_ms': {'mean': statistics.mean(latencies) if latencies else None,
                            'p50': offline._percentile(latencies, .5) if latencies else None,
@@ -290,7 +309,8 @@ def evaluate(dataset, *, repeats=3, split='all', case_ids=(), execution_mode='au
     report['providers'] = [{key: p.get(key) for key in ('provider', 'model', 'slot', 'custom_base_url', 'thinking_mode', 'reasoning_effort', 'strict_tools')} for p in status.get('providers', [])]
     from src.model_gateway import load_gateway_config, ModelGatewayConfigurationError
     report['manifest']['purpose_models'] = {}
-    for purpose in ('router', 'goal', 'planner', 'agent', 'final_response', 'liveplan_advisor'):
+    for purpose in ('router', 'dialogue_understanding', 'evidence_verification', 'goal', 'planner', 'agent',
+                    'audit', 'final_response', 'liveplan_advisor'):
         try:
             config = load_gateway_config(purpose=purpose)
             report['manifest']['purpose_models'][purpose] = [{'provider': p.provider, 'model': p.model,
@@ -373,6 +393,17 @@ def evaluate(dataset, *, repeats=3, split='all', case_ids=(), execution_mode='au
                     from eval.adaptive_checks import observed_with_faults
                     checked_observed = observed_with_faults(observed, environment)
                     failures = offline.judge_turn(turn['expect'], result, before, checked_after, checked_observed, attempts)
+                    if case.get('autonomy_expect'):
+                        try:
+                            from eval.after_sales_autonomy_checks import judge
+                        except ModuleNotFoundError:
+                            from after_sales_autonomy_checks import judge
+
+                        autonomy, autonomy_failures = judge(
+                            runtime, runtime['tools']._engine, case['autonomy_expect'], result, checked_observed,
+                        )
+                        sample['autonomy'] = autonomy
+                        failures += autonomy_failures
                     if suite == 'adaptive':
                         from eval.adaptive_checks import judge
                         effective = turn['message'] + ('\n运行中补充要求：\n' + case['scenario']['message'] if case.get('scenario', {}).get('kind') == 'steer' else '')

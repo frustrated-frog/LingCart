@@ -305,6 +305,30 @@ def test_policy_aware_loop_collects_authoritative_evidence_before_requesting_app
         assert len(continuation_rows) == 1
 
 
+def test_observer_profile_persists_plan_without_consuming_authoritative_action(database):
+    from src.harness import get_runner
+
+    with tools._session() as session:
+        require_authoritative_order_evidence(session)
+
+    result = run_conversation(
+        MESSAGE,
+        "observer-after-sales",
+        request_id="open-case",
+        runner=get_runner("after-sales-plan-observer-v0"),
+    )
+
+    assert [entry["tool"] for entry in result["trace"]] == ["prepare_after_sales_case"]
+    assert result["pending_action"] is None
+    assert result["plan"]["steps"][0]["result"]["policy_decision"]["outcome"] == "NEEDS_EVIDENCE"
+    assert not any(event["type"].startswith("case_autonomous_") for event in result["events"])
+    assert any(event["type"] == "mechanism_applied"
+               and event["mechanism_id"] == "case-plan-observer" for event in result["events"])
+    with tools._session() as session:
+        refund = session.scalar(select(Refund).where(Refund.order_id == 1001))
+        assert refund.status == "none"
+
+
 def test_multi_item_case_is_routed_to_manual_review_without_order_refund(database, monkeypatch):
     with tools._session() as session:
         session.add(

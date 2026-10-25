@@ -20,6 +20,11 @@ _POLICY_AWARE_CASE_OPERATIONS = {"prepare_after_sales_case", "continue_after_sal
 _MAX_AUTONOMOUS_CASE_ACTIONS = 4
 
 
+def _case_execution_mode(context) -> str:
+    mechanism = (context.mechanisms or {}).get("planning") if context else None
+    return getattr(mechanism, "case_execution_mode", "policy_aware")
+
+
 @dataclass
 class TaskStep:
     step_id: str
@@ -479,7 +484,8 @@ def execute_plan(intake, run_id, *, plan=None, source="deterministic", incomplet
                                 else "INVALID_UTILITY_REQUEST" if step.tool in {"read_clock", "calculate"}
                                 else "BUSINESS_DATA_NOT_FOUND")
                         raise AgentError(code, step.result["error"], retryable=False)
-                    if step.tool in _POLICY_AWARE_CASE_OPERATIONS:
+                    if (step.tool in _POLICY_AWARE_CASE_OPERATIONS
+                            and _case_execution_mode(context) == "policy_aware"):
                         autonomous_budget = max(
                             0,
                             (context.limits.max_steps if context else 8) - len(plan.steps),

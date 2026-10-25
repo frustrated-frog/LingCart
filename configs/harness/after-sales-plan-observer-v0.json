@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "profile_id": "after-sales-plan-observer-v0",
+  "version": "0.1.0",
+  "display_name": "售后计划观察基线",
+  "description": "冻结只生成和展示案件计划、不自动消费下一步动作的研究基线。",
+  "engine": {
+    "id": "orchestrator",
+    "version": "1"
+  },
+  "mechanisms": [
+    {"slot": "planning", "id": "case-plan-observer", "version": "0"},
+    {"slot": "tool_protocol", "id": "runtime-tool-ledger", "version": "2"},
+    {"slot": "verification", "id": "deterministic-business-gates", "version": "2"}
+  ],
+  "capabilities": [
+    "open_set_dialogue_understanding",
+    "after_sales_case_planning",
+    "durable_runtime",
+    "approval_guard",
+    "tool_ledger"
+  ],
+  "research": {
+    "status": "candidate",
+    "source_type": "native",
+    "paper_id": null,
+    "hypothesis": "作为观察基线，仅持久化案件计划而不消费安全读取动作。"
+  }
+}

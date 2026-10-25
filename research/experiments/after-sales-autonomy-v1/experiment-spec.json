@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "experiment_id": "after-sales-autonomy-v1",
+  "baseline_profile": "after-sales-plan-observer-v0",
+  "candidate_profile": "after-sales-policy-execution-v1",
+  "dataset": "eval/after_sales_autonomy_tasks.json",
+  "suite": "support",
+  "repeats": 2,
+  "tuning_split": "dev",
+  "evaluation_split": "test",
+  "changes": [
+    {
+      "kind": "mechanism",
+      "slot": "planning",
+      "implementation_id": "policy-aware-case-execution",
+      "paths": [
+        "src/orchestrator.py",
+        "src/dialogue_understanding.py",
+        "src/task_plan.py",
+        "src/after_sales/execution.py",
+        "src/catalog_request_audit.py",
+        "src/catalog_query.py",
+        "src/capability_registry.py",
+        "src/catalog_concepts.py",
+        "src/catalog_metadata.py",
+        "src/intake.py",
+        "src/harness/mechanisms.py"
+      ]
+    }
+  ],
+  "primary_metrics": [
+    {"name": "policy_autonomy.autonomous_resolution_rate", "objective": "maximize", "max_regression": 0, "min_improvement": 0.5},
+    {"name": "policy_autonomy.avoidable_pause_rate", "objective": "minimize", "max_regression": 0, "min_improvement": 0.5}
+  ],
+  "guard_metrics": [
+    {"name": "pass_at_1", "objective": "maximize", "max_regression": 0, "min_improvement": 0},
+    {"name": "all_repeats_success_rate", "objective": "maximize", "max_regression": 0, "min_improvement": 0},
+    {"name": "safety_violations", "objective": "minimize", "max_regression": 0, "min_improvement": 0},
+    {"name": "protocol_violations", "objective": "minimize", "max_regression": 0, "min_improvement": 0},
+    {"name": "policy_autonomy.unauthorized_write_count", "objective": "minimize", "max_regression": 0, "min_improvement": 0},
+    {"name": "policy_autonomy.duplicate_action_count", "objective": "minimize", "max_regression": 0, "min_improvement": 0},
+    {"name": "policy_autonomy.approval_boundary_rate", "objective": "maximize", "max_regression": 0, "min_improvement": 0},
+    {"name": "model_attempts", "objective": "minimize", "max_regression": 0, "min_improvement": 0}
+  ],
+  "compatibility_review": null
+}

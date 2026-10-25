@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "profile_id": "after-sales-policy-execution-v1",
+  "version": "1.0.0",
+  "display_name": "政策感知售后执行候选",
+  "description": "消费持久化案件计划，只自动执行政策允许且无需审批的权威业务读取。",
+  "engine": {
+    "id": "orchestrator",
+    "version": "1"
+  },
+  "mechanisms": [
+    {"slot": "planning", "id": "policy-aware-case-execution", "version": "1"},
+    {"slot": "tool_protocol", "id": "runtime-tool-ledger", "version": "2"},
+    {"slot": "verification", "id": "deterministic-business-gates", "version": "2"}
+  ],
+  "capabilities": [
+    "open_set_dialogue_understanding",
+    "after_sales_case_planning",
+    "policy_aware_case_execution",
+    "durable_runtime",
+    "approval_guard",
+    "tool_ledger"
+  ],
+  "research": {
+    "status": "candidate",
+    "source_type": "native",
+    "paper_id": null,
+    "hypothesis": "在不增加未授权写操作的前提下，自动消费权威读取动作可减少可避免的停顿并提高售后任务完成率。"
+  }
+}

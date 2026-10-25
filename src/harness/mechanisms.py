@@ -77,6 +77,29 @@ class EvidenceVerificationMechanism(EmbeddedMechanism):
 
 
 @dataclass(frozen=True)
+class AfterSalesPlanningMechanism(EmbeddedMechanism):
+    """研究对照用的售后计划消费策略，不改变 Stable Kernel 执行边界。"""
+
+    case_execution_mode: str = "policy_aware"
+
+    def install(self, context) -> None:
+        super().install(context)
+        context.record(
+            "mechanism_applied",
+            slot=self.slot,
+            mechanism_id=self.mechanism_id,
+            mechanism_version=self.mechanism_version,
+            configuration={"case_execution_mode": self.case_execution_mode},
+        )
+
+    def provenance(self) -> dict:
+        return {
+            **super().provenance(),
+            "configuration": {"case_execution_mode": self.case_execution_mode},
+        }
+
+
+@dataclass(frozen=True)
 class ContextMechanism(EmbeddedMechanism):
     """A real context seam used by durable execution before the engine starts."""
 
@@ -201,12 +224,26 @@ def built_in_mechanisms() -> tuple[HarnessMechanism, ...]:
     from src.liveplan import LivePlanSteeringMechanism
     from src.pg_context import PGContextMechanism
 
+    after_sales_planning_sources = (
+        "src/orchestrator.py", "src/dialogue_understanding.py", "src/task_plan.py",
+        "src/after_sales/execution.py", "src/catalog_request_audit.py", "src/catalog_query.py",
+        "src/capability_registry.py", "src/catalog_concepts.py", "src/catalog_metadata.py", "src/intake.py",
+        "src/harness/mechanisms.py",
+    )
     return (
         EmbeddedMechanism("planning", "structured-dialogue-understanding", "1", ("orchestrator",),
                           ("src/orchestrator.py", "src/dialogue_understanding.py",
                            "src/catalog_request_audit.py", "src/catalog_query.py",
                            "src/capability_registry.py", "src/catalog_concepts.py",
                            "src/catalog_metadata.py", "src/intake.py")),
+        AfterSalesPlanningMechanism(
+            "planning", "case-plan-observer", "0", ("orchestrator",),
+            after_sales_planning_sources, "observe_only",
+        ),
+        AfterSalesPlanningMechanism(
+            "planning", "policy-aware-case-execution", "1", ("orchestrator",),
+            after_sales_planning_sources, "policy_aware",
+        ),
         EmbeddedMechanism("tool_protocol", "runtime-tool-ledger", "2", ("orchestrator",),
                           ("src/runtime.py", "src/persistence.py")),
         EvidenceVerificationMechanism("verification", "deterministic-business-gates", "2", ("orchestrator",),
