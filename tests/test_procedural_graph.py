@@ -337,3 +337,26 @@ def test_v4_profile_adds_typed_applicability_without_promoting_product_use():
     assert v4.provenance()["research"]["status"] == "candidate"
     with pytest.raises(AgentError, match="仅限研究"):
         get_product_runner("adaptive-pg-context-v4")
+
+
+def test_shared_graph_control_changes_applicability_without_changing_artifact(monkeypatch):
+    monkeypatch.setattr('src.pg_context.get_llm', lambda **_: pytest.fail('同图确定性对照不能调用模型'))
+    first = Decision(action='tool', tool='search_products', args={'query': '耳机'})
+    plan = TaskPlan([], [TaskStep('s1', 'shopping', first.tool, first.args, status='SUCCEEDED',
+                                 result={'products': []})])
+    current = {**state(), 'goal': {'objectives': [{'id': 'choice', 'kind': 'recommend'}]},
+               'objective_ledger': [{'objective_id': 'choice', 'status': 'PENDING', 'evidence_refs': []}]}
+    events, graphs = [], []
+    for profile_id in ('adaptive-pg-v3-shared-graph-v1', 'adaptive-pg-context-v4'):
+        engine = get_runner(profile_id).build_context('推荐耳机')
+        graphs.append(engine.graph.fingerprint)
+        runtime = RunRuntime(profile_id, BudgetLimits(max_model_calls=4))
+        runtime.record('adaptive_decision', goal_revision=0, decision=first.model_dump(mode='json'), step_id='s1')
+        with runtime_scope(runtime):
+            engine.decision_messages('系统', current, plan, [], max_chars=10000)
+        events.append(next(event for event in runtime.events if event['type'] == 'pg_guidance'))
+        assert runtime.counters['model_calls'] == 0
+    assert graphs[0] == graphs[1]
+    assert 'inspect' in events[0]['guidance_contract']['recommended_actions']
+    assert 'inspect' not in events[1]['guidance_contract']['recommended_actions']
+    assert 'search-inspect' in events[1]['applicability']['false_edge_ids']

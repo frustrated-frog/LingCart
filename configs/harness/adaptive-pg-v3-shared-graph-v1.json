@@ -1,0 +1,68 @@
+{
+  "schema_version": 1,
+  "profile_id": "adaptive-pg-v3-shared-graph-v1",
+  "version": "1.0.0",
+  "display_name": "PG V3 同图对照基线",
+  "description": "使用与 V4 相同的 V2 图产物，保持 V3 直接编译指导的行为，不启用类型化条件过滤和路径排序。",
+  "engine": {
+    "id": "adaptive",
+    "version": "1"
+  },
+  "mechanisms": [
+    {
+      "slot": "planning",
+      "id": "bounded-model-loop",
+      "version": "1"
+    },
+    {
+      "slot": "context",
+      "id": "procedural-graph-context",
+      "version": "3",
+      "configuration": {
+        "graph_path": "research/graphs/pg-seed-v2.json",
+        "hops": 2,
+        "max_graph_chars": 10000,
+        "retrieval_strategy": "trajectory-state-v2",
+        "max_local_edges": 6,
+        "min_localization_score": 55,
+        "guidance_strategy": "deterministic-contract-v1"
+      }
+    },
+    {
+      "slot": "memory",
+      "id": "objective-ledger",
+      "version": "1"
+    },
+    {
+      "slot": "verification",
+      "id": "independent-request-audit",
+      "version": "2"
+    },
+    {
+      "slot": "tool_protocol",
+      "id": "native-strict-tools",
+      "version": "1"
+    }
+  ],
+  "capabilities": [
+    "model_directed_planning",
+    "bounded_replanning",
+    "evidence_retrieval",
+    "goal_verification",
+    "durable_resume",
+    "runtime_steering",
+    "procedural_graph_guidance",
+    "trajectory_state_localization",
+    "bounded_subgraph_retrieval",
+    "deterministic_guidance_contract",
+    "guidance_adoption_audit",
+    "no_progress_replay_guard",
+    "offline_graph_evolution"
+  ],
+  "research": {
+    "status": "candidate",
+    "source_type": "hybrid",
+    "paper_id": "arXiv:2609.09153v1",
+    "hypothesis": "研究对照基线：固定 V2 图、定位器、确定性契约、模型和预算，比较是否启用状态条件筛选与后继排序。"
+  }
+}
