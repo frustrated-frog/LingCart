@@ -92,6 +92,10 @@ def build_trajectory_state(state: dict, plan, events: list[dict], *, recent_limi
         if event.get("type") != "pg_action_outcome" or event.get("goal_revision", revision) != revision:
             continue
         status = str(event.get("progress_status") or "").lower()
+        # 旧版按步骤数奖励的事件只供审计，不能进入新的正向排序反馈。
+        if status == "progressed" and not (event.get("schema_version") == 2
+                                            and event.get("learning_eligible") is True):
+            continue
         key = {"progressed": "progressed", "no_progress": "no_progress", "failed": "failed"}.get(status)
         if key is None:
             continue

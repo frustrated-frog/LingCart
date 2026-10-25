@@ -82,6 +82,59 @@ def test_pg_state_condition_experiment_uses_v3_baseline_and_fresh_holdout():
     assert all(case['id'].startswith('PGS-H') for case in dataset['cases'] if case['split'] == 'test')
     assert 'PG13' not in {case['id'] for case in dataset['cases']}
 
+
+def test_pg_state_condition_v2_pins_same_graph_and_all_non_context_mechanisms():
+    from src.harness.registry import get_runner, get_product_runner
+    from src.errors import AgentError
+
+    experiment = ExperimentSpec.from_path(
+        ROOT / 'research/experiments/pg-state-conditioned-planning-v2/experiment-spec.json')
+    baseline = get_runner(experiment.baseline_profile)
+    candidate = get_runner(experiment.candidate_profile)
+    left, right = baseline.provenance(), candidate.provenance()
+    assert left['engine'] == right['engine']
+    assert [m for m in left['mechanisms'] if m['slot'] != 'context'] == [
+        m for m in right['mechanisms'] if m['slot'] != 'context']
+    lconfig = next(m['configuration'] for m in left['mechanisms'] if m['slot'] == 'context')
+    rconfig = next(m['configuration'] for m in right['mechanisms'] if m['slot'] == 'context')
+    assert {key: rconfig[key] for key in lconfig} == lconfig
+    assert set(rconfig) - set(lconfig) == {'applicability_strategy', 'path_ranking_strategy'}
+    assert lconfig['graph_path'] == 'research/graphs/pg-seed-v2.json'
+    assert len(lconfig['graph_sha256']) == 64
+    assert baseline.build_context('test').applicability_strategy == 'none'
+    assert candidate.build_context('test').applicability_strategy == 'typed-evidence-v1'
+    assert experiment.dataset == 'eval/pg_state_condition_holdout_tasks.json'
+    assert experiment.repeats == 3
+    for profile_id in (experiment.baseline_profile, experiment.candidate_profile):
+        with pytest.raises(AgentError, match='仅限研究'):
+            get_product_runner(profile_id)
+
+
+def test_preplay_contract_freezes_v4_and_only_adds_bounded_transition_search():
+    from src.harness.registry import get_runner, get_product_runner
+    from src.errors import AgentError
+
+    experiment = ExperimentSpec.from_path(
+        ROOT / 'research/experiments/pg-preplay-v6/experiment-spec.json')
+    baseline = get_runner(experiment.baseline_profile)
+    candidate = get_runner(experiment.candidate_profile)
+    left, right = baseline.provenance(), candidate.provenance()
+    assert left['engine'] == right['engine']
+    assert [m for m in left['mechanisms'] if m['slot'] != 'context'] == [
+        m for m in right['mechanisms'] if m['slot'] != 'context']
+    lconfig = next(m['configuration'] for m in left['mechanisms'] if m['slot'] == 'context')
+    rconfig = next(m['configuration'] for m in right['mechanisms'] if m['slot'] == 'context')
+    assert {key: rconfig[key] for key in lconfig} == lconfig
+    assert set(rconfig) - set(lconfig) == {
+        'preplay_strategy', 'preplay_max_depth', 'preplay_beam_width', 'preplay_max_paths'}
+    assert lconfig['graph_sha256'] == rconfig['graph_sha256']
+    assert candidate.build_context('test').preplay_strategy == 'bounded-transition-search-v1'
+    assert experiment.repeats == 3 and experiment.evaluation_split == 'test'
+    for profile_id in (experiment.baseline_profile, experiment.candidate_profile):
+        with pytest.raises(AgentError, match='仅限研究'):
+            get_product_runner(profile_id)
+
+
 def test_contract_rejects_reversed_guards_and_requires_a_cost_metric():
     payload = json.loads((ROOT / 'research/templates/experiment-spec.json').read_text())
     payload['guard_metrics'][0]['objective'] = 'minimize'

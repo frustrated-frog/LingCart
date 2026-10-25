@@ -285,6 +285,36 @@ def test_repeated_refreshes_do_not_create_artificial_dependency_depth():
         assert decision.evidence_refs == [f'step-{i - 1}']
 
 
+def test_pg_v4_repeated_real_product_reads_record_execution_without_information_gain(monkeypatch):
+    from src.context_engine import ContextEngine
+    from src.pg_context import PGContextEngine
+    from src.pg_retrieval import build_trajectory_state
+    from src.procedural_graph import ProceduralGraph
+    from src.runtime import RunRuntime, runtime_scope
+
+    model(monkeypatch, search(first=True), search(), clarification)
+    context = RunRuntime('pg-repeat-products', BudgetLimits(max_model_calls=8))
+    context.context_engine = PGContextEngine(ContextEngine('推荐预算500的耳机'),
+        ProceduralGraph.from_path(Path('research/graphs/pg-seed-v2.json')),
+        mechanism_version='4', retrieval_strategy='trajectory-state-v2',
+        guidance_strategy='deterministic-contract-v1', applicability_strategy='typed-evidence-v1',
+        path_ranking_strategy='goal-progress-cost-v1')
+    with runtime_scope(context):
+        result = run_adaptive('推荐预算500的耳机')
+    assert result['status'] == 'WAITING_CLARIFICATION'
+    outcomes = [event for event in result['events'] if event['type'] == 'pg_action_outcome'
+                and event['action'] == 'search_products']
+    assert len(outcomes) == 2
+    assert outcomes[0]['information_gain']['status'] == 'NEW_INFORMATION'
+    assert outcomes[1]['progress_status'] == 'NO_PROGRESS'
+    assert outcomes[1]['execution_progress'] is True
+    assert outcomes[1]['learning_eligible'] is False
+    # 持久事件恢复后仍然不能将第二次读取奖励给程序边。
+    restored = json.loads(json.dumps(result['events']))
+    feedback = build_trajectory_state({'goal_revision': 0}, TaskPlan([], []), restored)['edge_feedback']
+    assert sum(row['progressed'] for row in feedback.values()) <= len(outcomes[0]['matched_edge_ids'])
+
+
 def test_final_audit_format_error_is_repairable_and_reaches_auditor(monkeypatch):
     script = model(monkeypatch, search(first=True), recommendation, complete(('shopping', ['step-2'])))
     seen = audit_sequence(monkeypatch, None, {})

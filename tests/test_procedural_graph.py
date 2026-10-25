@@ -72,16 +72,27 @@ def test_graph_rejects_unregistered_actions_and_business_facts(change):
         ProceduralGraph.model_validate_json(json.dumps(data))
 
 
-@pytest.mark.parametrize("text", ["不得放宽预算等硬约束", "切勿绕过审批要求", "避免忽略安全限制"])
+@pytest.mark.parametrize("text", [
+    "不得放宽预算等硬约束",
+    "切勿绕过审批要求",
+    "避免忽略安全限制",
+    "放宽约束不得违反硬性预算或授权",
+    "调整软偏好不能突破价格硬约束",
+])
 def test_graph_allows_explicit_safety_preserving_guidance(text):
-    base = graph()
-    edge = base.edges[0].model_copy(update={"pitfalls": text})
-    updated = apply_patch(base, GraphPatch(reason="补充安全边界", source_cases=("PG01",),
-        delete_edges=(edge.id,), add_edges=(edge,)), training_sha256="b" * 64)
-    assert updated.version == 1 and edge.pitfalls == text
+    data = graph().model_dump(mode="json")
+    data["edges"][0]["pitfalls"] = text
+    updated = ProceduralGraph.model_validate_json(json.dumps(data))
+    assert updated.edges[0].pitfalls == text
 
 
-@pytest.mark.parametrize("text", ["建议放宽预算以获得更多候选", "可以绕过审批要求", "直接忽略安全限制"])
+@pytest.mark.parametrize("text", [
+    "建议放宽预算以获得更多候选",
+    "可以绕过审批要求",
+    "直接忽略安全限制",
+    "可以放宽预算，只要不绕过审批",
+    "放宽硬约束后再检查预算",
+])
 def test_graph_still_rejects_guidance_that_weakens_hard_boundaries(text):
     data = graph().model_dump(mode="json")
     data["edges"][0]["pitfalls"] = text
@@ -337,3 +348,52 @@ def test_v4_profile_adds_typed_applicability_without_promoting_product_use():
     assert v4.provenance()["research"]["status"] == "candidate"
     with pytest.raises(AgentError, match="仅限研究"):
         get_product_runner("adaptive-pg-context-v4")
+
+
+def test_v6_profile_adds_bounded_preplay_without_model_calls_or_product_promotion(monkeypatch):
+    monkeypatch.setattr("src.pg_context.get_llm", lambda **_: pytest.fail("确定性预演不能调用模型"))
+    v4 = get_runner("adaptive-pg-context-v4")
+    v6 = get_runner("adaptive-pg-preplay-v6")
+    engine = v6.build_context("推荐耳机")
+    assert engine.graph.fingerprint == v4.build_context("推荐耳机").graph.fingerprint
+    assert engine.preplay_strategy == "bounded-transition-search-v1"
+    assert (engine.preplay_max_depth, engine.preplay_beam_width, engine.preplay_max_paths) == (3, 4, 4)
+
+    runtime = RunRuntime("pg-v6", BudgetLimits(max_model_calls=4))
+    current = {**state(), "goal": {"objectives": [{"id": "choice", "kind": "recommend"}]},
+               "objective_ledger": [{"objective_id": "choice", "status": "PENDING",
+                                      "evidence_refs": [], "failures": []}]}
+    with runtime_scope(runtime):
+        _, manifest = engine.decision_messages("系统", current, TaskPlan([], []), [], max_chars=16000)
+    event = next(item for item in runtime.events if item["type"] == "pg_guidance")
+    assert event["preplay"]["status"] == "READY"
+    assert event["preplay"]["selected_path"]["first_action"] == "search_products"
+    assert event["guidance_contract"]["schema_version"] == 3
+    assert manifest["pg_status"] == "EXPOSED"
+    assert runtime.counters["model_calls"] == 0
+    assert v6.provenance()["research"]["status"] == "candidate"
+    with pytest.raises(AgentError, match="仅限研究"):
+        get_product_runner("adaptive-pg-preplay-v6")
+
+
+def test_shared_graph_control_changes_applicability_without_changing_artifact(monkeypatch):
+    monkeypatch.setattr('src.pg_context.get_llm', lambda **_: pytest.fail('同图确定性对照不能调用模型'))
+    first = Decision(action='tool', tool='search_products', args={'query': '耳机'})
+    plan = TaskPlan([], [TaskStep('s1', 'shopping', first.tool, first.args, status='SUCCEEDED',
+                                 result={'products': []})])
+    current = {**state(), 'goal': {'objectives': [{'id': 'choice', 'kind': 'recommend'}]},
+               'objective_ledger': [{'objective_id': 'choice', 'status': 'PENDING', 'evidence_refs': []}]}
+    events, graphs = [], []
+    for profile_id in ('adaptive-pg-v3-shared-graph-v1', 'adaptive-pg-context-v4'):
+        engine = get_runner(profile_id).build_context('推荐耳机')
+        graphs.append(engine.graph.fingerprint)
+        runtime = RunRuntime(profile_id, BudgetLimits(max_model_calls=4))
+        runtime.record('adaptive_decision', goal_revision=0, decision=first.model_dump(mode='json'), step_id='s1')
+        with runtime_scope(runtime):
+            engine.decision_messages('系统', current, plan, [], max_chars=10000)
+        events.append(next(event for event in runtime.events if event['type'] == 'pg_guidance'))
+        assert runtime.counters['model_calls'] == 0
+    assert graphs[0] == graphs[1]
+    assert 'inspect' in events[0]['guidance_contract']['recommended_actions']
+    assert 'inspect' not in events[1]['guidance_contract']['recommended_actions']
+    assert 'search-inspect' in events[1]['applicability']['false_edge_ids']

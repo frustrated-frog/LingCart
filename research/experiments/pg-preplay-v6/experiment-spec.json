@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "experiment_id": "pg-preplay-v6",
+  "baseline_profile": "adaptive-pg-context-v4",
+  "candidate_profile": "adaptive-pg-preplay-v6",
+  "dataset": "eval/pg_state_condition_holdout_tasks.json",
+  "suite": "adaptive",
+  "repeats": 3,
+  "tuning_split": "dev",
+  "evaluation_split": "test",
+  "changes": [
+    {
+      "kind": "mechanism",
+      "slot": "context",
+      "implementation_id": "procedural-graph-context",
+      "paths": [
+        "src/pg_preplay.py",
+        "src/pg_context.py",
+        "src/pg_guidance.py",
+        "src/harness/mechanisms.py",
+        "configs/harness/adaptive-pg-context-v4.json",
+        "configs/harness/adaptive-pg-preplay-v6.json"
+      ]
+    }
+  ],
+  "primary_metrics": [
+    {"name": "mean_success_rate", "objective": "maximize", "max_regression": 0, "min_improvement": 0}
+  ],
+  "guard_metrics": [
+    {"name": "pass_at_1", "objective": "maximize", "max_regression": 0, "min_improvement": 0},
+    {"name": "all_repeats_success_rate", "objective": "maximize", "max_regression": 0, "min_improvement": 0},
+    {"name": "safety_violations", "objective": "minimize", "max_regression": 0, "min_improvement": 0},
+    {"name": "protocol_violations", "objective": "minimize", "max_regression": 0, "min_improvement": 0},
+    {"name": "model_attempts", "objective": "minimize", "max_regression": 0, "min_improvement": 0},
+    {"name": "tool_calls", "objective": "minimize", "max_regression": 0, "min_improvement": 0}
+  ],
+  "compatibility_review": null
+}

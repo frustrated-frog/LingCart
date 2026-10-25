@@ -25,6 +25,7 @@ class StartExperiment(BaseModel):
     request_id: str = Field(pattern=r'^[a-zA-Z0-9_-]{8,80}$')
     preset: Literal['smoke', 'full']
     confirm_full_cost: bool = False
+    evolution_policy: Literal['basic-v1', 'credit-memory-v1'] = 'basic-v1'
 
 
 class LabError(Exception):
@@ -50,7 +51,7 @@ def identity():
     return {key: manifest[key] for key in ('dataset_sha256', 'source_tree_sha256', 'dependency_lock_sha256',
             'evaluation_protocol_sha256', 'business_protocol_sha256', 'python_runtime')} | {
             'purpose_models': models, 'seed_sha256': ProceduralGraph.from_path(SEED).fingerprint,
-            'plan_sha256': fingerprint(plan('full'))}
+            'plan_sha256': fingerprint([plan('full'), plan('full', 'credit-memory-v1')])}
 
 
 class JobStore:
@@ -106,9 +107,10 @@ class JobStore:
     def create(self, request, *, launch=True):
         # 重试先返回原任务；不因代码更新或模型暂时不可用而再次计费。
         with self.connect() as db:
-            row = db.execute('SELECT id,preset FROM jobs WHERE request_id=?', (request.request_id,)).fetchone()
+            row = db.execute('SELECT id,preset,data FROM jobs WHERE request_id=?', (request.request_id,)).fetchone()
         if row:
-            if row['preset'] != request.preset:
+            if (row['preset'] != request.preset or
+                    json.loads(row['data'])['frozen'].get('evolution_policy', 'basic-v1') != request.evolution_policy):
                 raise LabError('PG_IDEMPOTENCY_CONFLICT', '同一请求不能更换实验配置')
             return self.get(row['id'])
         if request.preset == 'full' and not request.confirm_full_cost:
@@ -116,12 +118,12 @@ class JobStore:
         from src.llm import get_model_status
         if launch and not get_model_status().get('configured'):
             raise LabError('MODEL_NOT_CONFIGURED', '请先配置 Model Gateway，再启动真实实验', 422)
-        frozen = plan(request.preset)
+        frozen = plan(request.preset, request.evolution_policy)
         job_id = 'pg-' + uuid.uuid4().hex
         data = dict(job_id=job_id, created_at=datetime.now(UTC).isoformat(), preset=request.preset,
                     frozen=frozen, identity=identity(), stage='queued', stage_completed=0, stage_total=0,
                     completed_samples=0, history=[], arms={}, comparison=None, error=None,
-                    execution_source='live_provider', seed_graph=ProceduralGraph.from_path(SEED).model_dump(mode='json'),
+                    execution_source='live_provider', seed_graph=ProceduralGraph.from_path(ROOT / frozen['seed_path']).model_dump(mode='json'),
                     cases=[{k: c[k] for k in ('id', 'learning_partition', 'scenario_family', 'category', 'description')}
                            for c in challenge_dataset()['cases']],
                     learning_cost={'rollout_model_attempts': 0, 'refiner_model_attempts': 0,
@@ -131,9 +133,10 @@ class JobStore:
             db.execute('BEGIN IMMEDIATE')
             self._expire(db)
             # 并发相同请求也必须返回同一任务。
-            row = db.execute('SELECT id,preset FROM jobs WHERE request_id=?', (request.request_id,)).fetchone()
+            row = db.execute('SELECT id,preset,data FROM jobs WHERE request_id=?', (request.request_id,)).fetchone()
             if row:
-                if row['preset'] != request.preset:
+                if (row['preset'] != request.preset or
+                        json.loads(row['data'])['frozen'].get('evolution_policy', 'basic-v1') != request.evolution_policy):
                     raise LabError('PG_IDEMPOTENCY_CONFLICT', '同一请求不能更换实验配置')
                 job_id = row['id']
                 launch = False
@@ -183,6 +186,8 @@ class JobStore:
 def catalog():
     from src.llm import get_model_status
     return dict(dataset=challenge_dataset(), plans={key: plan(key) for key in ('smoke', 'full')},
+                learning_plans={key: plan(key, 'credit-memory-v1') for key in ('smoke', 'full')},
+                learning_seed_graph=ProceduralGraph.from_path(ROOT / 'research/graphs/pg-seed-v2.json').model_dump(mode='json'),
                 seed_graph=ProceduralGraph.from_path(SEED).model_dump(mode='json'),
                 model_configured=bool(get_model_status().get('configured')), current_identity=identity())
 

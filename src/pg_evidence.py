@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from collections import Counter
+from copy import deepcopy
 import hashlib
 import json
 
@@ -85,6 +86,8 @@ def project_turn(turn, turn_index=0):
                        and event.get("decision_key") == guidance.get("decision_key")), None)
         outcome = next((event for event in window if event.get("type") == "pg_action_outcome"
                         and (not review or event.get("review_id") == review.get("review_id"))), None)
+        prediction_outcome = next((event for event in window if event.get("type") == "pg_prediction_outcome"
+                                   and (not outcome or event.get("outcome_id") == outcome.get("outcome_id"))), None)
         decision = next((event for event in window if event.get("type") == "adaptive_decision"), None)
         decision_sequence = _sequence(decision, -1) if decision else -1
         action = _record(_record(decision).get("decision"))
@@ -139,6 +142,7 @@ def project_turn(turn, turn_index=0):
                 "unknown_edge_ids": list(_record(guidance.get("applicability")).get("unknown_edge_ids") or []),
                 "projected_paths": list(guidance.get("projected_paths") or []),
             },
+            "preplay": deepcopy(guidance.get("preplay")) if isinstance(guidance.get("preplay"), dict) else None,
             "guidance": {
                 "status": status,
                 "reason": guidance.get("reason"),
@@ -153,6 +157,10 @@ def project_turn(turn, turn_index=0):
                           "source": decision.get("source"), "payload": action} if decision else None),
             "action_alignment": _alignment(guidance, decision, review),
             "action_progress": ({
+                "schema_version": outcome.get("schema_version"),
+                "execution_progress": outcome.get("execution_progress"),
+                "information_gain": outcome.get("information_gain"),
+                "learning_eligible": outcome.get("learning_eligible"),
                 "status": outcome.get("progress_status"),
                 "reason": outcome.get("progress_reason"),
                 "signals": list(outcome.get("signals") or []),
@@ -163,6 +171,16 @@ def project_turn(turn, turn_index=0):
                 "before_sha256": outcome.get("before_sha256"),
                 "after_sha256": outcome.get("after_sha256"),
             } if outcome else None),
+            "prediction_outcome": ({
+                "prediction_outcome_id": prediction_outcome.get("prediction_outcome_id"),
+                "preplay_plan_id": prediction_outcome.get("preplay_plan_id"),
+                "status": prediction_outcome.get("status"),
+                "action_match": prediction_outcome.get("action_match"),
+                "expected_action": prediction_outcome.get("expected_action"),
+                "actual_action": prediction_outcome.get("actual_action"),
+                "effects": list(prediction_outcome.get("effects") or []),
+                "causal_claim": bool(prediction_outcome.get("causal_claim")),
+            } if prediction_outcome else None),
             "tool": ({"name": tool_result.get("tool"), "args": tool_result.get("args"),
                       "status": tool_result.get("status"), "sequence": _sequence(tool_result, tool_result["_order"]),
                       "result": _bounded(tool_result.get("result")),
@@ -222,7 +240,7 @@ def project_sample_evidence(sample):
     fired = any(turn["environment"]["fired"] for turn in turns)
     passed = bool(sample.get("passed"))
     return {
-        "schema_version": 4,
+        "schema_version": 5,
         "case_id": sample.get("case_id"),
         "repetition": sample.get("repetition"),
         "passed": passed,
@@ -240,6 +258,15 @@ def project_sample_evidence(sample):
             "unknown_progress_actions": progress["UNKNOWN"],
             "typed_applicability_interventions": sum(
                 bool(item["applicability"].get("strategy")) for item in interventions),
+            "preplay_interventions": sum(bool(item.get("preplay")) for item in interventions),
+            "prediction_supported": sum(
+                _record(item.get("prediction_outcome")).get("status") == "SUPPORT" for item in interventions),
+            "prediction_countered": sum(
+                _record(item.get("prediction_outcome")).get("status") == "COUNTER" for item in interventions),
+            "prediction_diverged": sum(
+                _record(item.get("prediction_outcome")).get("status") == "DIVERGED" for item in interventions),
+            "prediction_unknown": sum(
+                _record(item.get("prediction_outcome")).get("status") == "UNKNOWN" for item in interventions),
             "deterministic_contracts": sum(
                 item["guidance"]["generation_mode"] == "deterministic-contract-v1" for item in interventions),
             "guidance_model_calls": sum(

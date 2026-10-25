@@ -10,6 +10,23 @@ from src.procedural_graph import canonical
 from tests.test_procedural_graph import graph
 
 
+def test_refiner_distinguishes_execution_from_information_and_distrusts_legacy_rewards():
+    from src.pg_learning import training_examples
+    events = [
+        {"type": "pg_action_outcome", "progress_status": "PROGRESSED", "signals": ["TRUSTED_OBSERVATION_ADDED"]},
+        {"type": "pg_action_outcome", "schema_version": 2, "progress_status": "NO_PROGRESS",
+         "learning_eligible": False, "execution_progress": True, "information_gain": {"status": "NO_NEW_INFORMATION"}},
+        {"type": "pg_action_outcome", "schema_version": 2, "progress_status": "PROGRESSED",
+         "learning_eligible": True, "information_gain": {"status": "NEW_INFORMATION"}},
+    ]
+    projected = training_examples(report(graph(), ("A01",), events=events))[0]["turns"][0]["events"]
+    assert projected[0]["learning_eligible"] is False
+    assert projected[0]["information_gain"]["status"] == "UNKNOWN"
+    assert projected[1]["execution_progress"] is True and projected[1]["learning_eligible"] is False
+    assert projected[2]["learning_eligible"] is True
+    assert "learning_eligible" not in events[0]  # 不回写历史报告。
+
+
 def spec(**updates):
     return EvolutionSpec(experiment_id="pg-test", dataset="eval/adaptive_tasks.json",
                          train_cases=("A01",), validation_cases=("A02",), repeats=1,

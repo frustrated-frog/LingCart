@@ -1,0 +1,81 @@
+{
+  "schema_version": 1,
+  "profile_id": "adaptive-pg-preplay-v6",
+  "version": "6.0.0",
+  "display_name": "PG 状态转移预演候选",
+  "description": "冻结 V4 状态条件检索与确定性契约，增加不篡改权威事实的有界状态转移预演、第一步建议和真实结果偏差记录。",
+  "engine": {
+    "id": "adaptive",
+    "version": "1"
+  },
+  "mechanisms": [
+    {
+      "slot": "planning",
+      "id": "bounded-model-loop",
+      "version": "1"
+    },
+    {
+      "slot": "context",
+      "id": "procedural-graph-context",
+      "version": "6",
+      "configuration": {
+        "graph_path": "research/graphs/pg-seed-v2.json",
+        "hops": 2,
+        "max_graph_chars": 10000,
+        "retrieval_strategy": "trajectory-state-v2",
+        "max_local_edges": 6,
+        "min_localization_score": 55,
+        "guidance_strategy": "deterministic-contract-v1",
+        "applicability_strategy": "typed-evidence-v1",
+        "path_ranking_strategy": "goal-progress-cost-v1",
+        "preplay_strategy": "bounded-transition-search-v1",
+        "preplay_max_depth": 3,
+        "preplay_beam_width": 4,
+        "preplay_max_paths": 4
+      }
+    },
+    {
+      "slot": "memory",
+      "id": "objective-ledger",
+      "version": "1"
+    },
+    {
+      "slot": "verification",
+      "id": "independent-request-audit",
+      "version": "2"
+    },
+    {
+      "slot": "tool_protocol",
+      "id": "native-strict-tools",
+      "version": "1"
+    }
+  ],
+  "capabilities": [
+    "model_directed_planning",
+    "bounded_replanning",
+    "evidence_retrieval",
+    "goal_verification",
+    "durable_resume",
+    "runtime_steering",
+    "procedural_graph_guidance",
+    "trajectory_state_localization",
+    "bounded_subgraph_retrieval",
+    "deterministic_guidance_contract",
+    "guidance_adoption_audit",
+    "no_progress_replay_guard",
+    "typed_edge_conditions",
+    "evidence_grounded_applicability",
+    "condition_aware_path_ranking",
+    "action_progress_attribution",
+    "bounded_procedural_preplay",
+    "prediction_outcome_audit",
+    "online_replanning",
+    "offline_graph_evolution"
+  ],
+  "research": {
+    "status": "candidate",
+    "source_type": "hybrid",
+    "paper_id": "arXiv:2609.09153v1; ProPlay procedural world model direction",
+    "hypothesis": "待验证：固定模型、Runtime、图和 V4 条件协议时，有界状态转移预演能否减少无效行动，并在不把预测当作事实的前提下提升目标推进效率。"
+  }
+}

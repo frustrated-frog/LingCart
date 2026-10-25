@@ -44,7 +44,7 @@ def run_job(job_id, *, store=None, evaluator=evaluate, refiner=None, execution_s
         spec = EvolutionSpec.model_validate_json(__import__('json').dumps(frozen['spec']))
         dataset = challenge_dataset()
         spec.validate_dataset(dataset)
-        graph = ProceduralGraph.from_path(SEED)
+        graph = ProceduralGraph.from_path(ROOT / frozen.get('seed_path', SEED.relative_to(ROOT).as_posix()))
         graphs = (graph_root or ROOT / 'research/graphs/pg-lab') / job_id
         write_artifact(output / 'frozen.json', dict(plan=frozen, identity=job['identity'], dataset=dataset,
                                                   seed=graph.model_dump(mode='json')))
@@ -72,7 +72,7 @@ def run_job(job_id, *, store=None, evaluator=evaluate, refiner=None, execution_s
             if current.fingerprint not in profiles:
                 path = graphs / f'graph-{current.fingerprint}.json'
                 write_artifact(path, current.model_dump(mode='json'))
-                selected = graph_profile(current, path)
+                selected = graph_profile(current, path, online_profile=spec.online_profile)
                 get_registry().register_profile(selected)
                 write_artifact(graphs / f'profile-{current.fingerprint}.json', selected.model_dump(mode='json'))
                 profiles[current.fingerprint] = selected
@@ -117,6 +117,7 @@ def run_job(job_id, *, store=None, evaluator=evaluate, refiner=None, execution_s
             return report
 
         delegate = refiner or ModelGraphRefiner(max_prompt_tokens=spec.max_refiner_prompt_tokens,
+                                                evolution_policy=spec.evolution_policy,
                                                 max_completion_tokens=spec.max_refiner_completion_tokens,
                                                 max_provider_attempts=spec.max_provider_attempts_per_call)
         class Refiner:
@@ -143,6 +144,12 @@ def run_job(job_id, *, store=None, evaluator=evaluate, refiner=None, execution_s
         retained, evolution = evolve(graph, spec, evaluator=execute, refiner=Refiner(), output_dir=graphs,
             execution_source=execution_source, on_progress=on_selection)
         store.update(job_id, retained_graph=retained.model_dump(mode='json'), evolution=evolution)
+        if frozen.get('evaluation_scope') == 'dev_only':
+            check()
+            result = dict(conclusion='DEV_ONLY', evidence_valid=False, failures=[], gates={}, promotion_status='candidate')
+            write_artifact(output / 'comparison.json', result)
+            store.update(job_id, status='COMPLETED', stage='completed', comparison=result)
+            return
         identifiers = dict(baseline='adaptive-v1', seed=profile(graph), evolved=profile(retained))
         provenance = {arm: get_runner(pid).provenance() for arm, pid in identifiers.items()}
         contracts = {arm: test_contract(provenance[arm], provenance[base], spec.repeats)

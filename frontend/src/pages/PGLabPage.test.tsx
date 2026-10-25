@@ -113,6 +113,7 @@ it('renders the persisted intervention chain instead of only raw json', async ()
       unknown_alignment: 0, localization_fallbacks: 0, localization_abstentions: 0,
       blocked_repeats: 0, deterministic_contracts: 1, guidance_model_calls: 0,
       progressed_actions: 1, no_progress_actions: 0, failed_actions: 0, typed_applicability_interventions: 1,
+      preplay_interventions: 1, prediction_supported: 1, prediction_countered: 0,
       shadow_differences: 1, shadow_fallbacks: 1, environment_triggered: true, recovered: true, failure_stage: null },
     turns: [{ turn_index: 0, request: '推荐耳机', passed: true, failures: [], interventions: [{
       intervention_id: 'decision-1', graph: { graph_id: 'pg', graph_version: 1, graph_sha256: 'a' },
@@ -123,6 +124,10 @@ it('renders the persisted intervention chain instead of only raw json', async ()
       applicability: { strategy: 'typed-evidence-v1', status: 'APPLICABLE', reason: 'APPLICABLE_EDGE_FOUND',
         evaluations: [{ edge_id: 'start-search', status: 'TRUE' }], selected_edge_ids: ['start-search'],
         false_edge_ids: [], unknown_edge_ids: [], projected_paths: [] },
+      preplay: { plan_id: 'plan-1', method: 'bounded-transition-search-v1', status: 'READY', reason: 'BOUNDED_PATH_SELECTED',
+        causal_claim: false, probabilistic_claim: false, selected_path: { path_id: 'path-1', edge_ids: ['start-search', 'search-inspect'],
+          node_ids: ['Start', 'search_products', 'inspect'], first_action: 'search_products', score: 0.82, executable_prefix: 1,
+          future_edges_require_revalidation: ['search-inspect'] } },
       guidance: { status: 'READY', reason: 'DETERMINISTIC_CONTRACT', content: '先查询真实目录', exposed: true, sequence: 1,
         generation_mode: 'deterministic-contract-v1', generation_model_calls: 0,
         contract: { contract_id: 'contract-1', policy: 'ADVISORY_EXCEPT_EXACT_NO_PROGRESS_REPEAT' } },
@@ -130,6 +135,8 @@ it('renders the persisted intervention chain instead of only raw json', async ()
       action_alignment: { status: 'ALIGNED', matched_edge_ids: ['start-search'] },
       action_progress: { status: 'PROGRESSED', reason: 'VERIFIABLE_STATE_CHANGE',
         signals: ['TRUSTED_OBSERVATION_ADDED'], cost_delta: { model_calls: 0, tool_calls: 1 } },
+      prediction_outcome: { status: 'SUPPORT', action_match: true, expected_action: 'search_products',
+        actual_action: 'search_products', causal_claim: false, effects: [{ effect: 'INFORMATION_GAIN', status: 'SUPPORT' }] },
       tool: { name: 'search_products', args: {}, status: 'SUCCEEDED', sequence: 6, result: { products: [] }, invalid_result: false },
       verification: { all_goals_satisfied: true },
     }] }],
@@ -146,6 +153,60 @@ it('renders the persisted intervention chain instead of only raw json', async ()
   expect(screen.getByText('采用判定：ALIGNED')).toBeInTheDocument()
   expect(screen.getByText('02 · 条件证据')).toBeInTheDocument()
   expect(screen.getByText(/TRUE 1 · FALSE 0 · UNKNOWN 0/)).toBeInTheDocument()
-  expect(screen.getByText('06 · 目标进展')).toBeInTheDocument()
+  expect(screen.getByText('03 · 有界预演')).toBeInTheDocument()
+  expect(screen.getByText('当前可执行')).toBeInTheDocument()
+  expect(screen.getByText('未来需重规划')).toBeInTheDocument()
+  expect(screen.getByText('预测核对：SUPPORT')).toBeInTheDocument()
+  expect(screen.getByText('07 · 目标进展')).toBeInTheDocument()
   expect(screen.getByText('TRUSTED_OBSERVATION_ADDED')).toBeInTheDocument()
+})
+
+it('launches credit memory policy with a dev-only frozen budget', async () => {
+  const learning = { ...plan, evolution_policy: 'credit-memory-v1' as const, evaluation_scope: 'dev_only' as const,
+    groups: { ...plan.groups, test: [] }, max_samples: 3, max_model_attempts: 26 }
+  vi.mocked(api.pgCatalog).mockResolvedValue({ ...catalog, learning_plans: { smoke: learning, full: learning }, learning_seed_graph: graph })
+  const start = vi.spyOn(api, 'pgStart').mockResolvedValue({ ...job, status: 'QUEUED', frozen: learning })
+  page()
+  fireEvent.change(await screen.findByLabelText('演化策略'), { target: { value: 'credit-memory-v1' } })
+  expect(screen.getByText('26')).toBeInTheDocument()
+  expect(screen.getByText(/仅训练与验证/)).toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', { name: '启动真实实验' }))
+  await waitFor(() => expect(start).toHaveBeenCalledWith(expect.objectContaining({ evolution_policy: 'credit-memory-v1', preset: 'smoke' })))
+})
+
+it('shows frozen dev groups instead of an empty test comparison for a learning job', async () => {
+  const frozen = { ...plan, evolution_policy: 'credit-memory-v1' as const, evaluation_scope: 'dev_only' as const,
+    groups: { train: ['PG01'], validation: ['PG07'], test: [] }, max_samples: 3, max_model_attempts: 26 }
+  const learningJob = { ...job, frozen, comparison: { conclusion: 'DEV_ONLY', evidence_valid: false, failures: [], gates: {} } }
+  vi.mocked(api.pgCatalog).mockResolvedValue({ ...catalog, learning_plans: { smoke: frozen, full: frozen }, learning_seed_graph: graph })
+  vi.mocked(api.pgJobs).mockResolvedValue({ jobs: [learningJob] })
+  vi.mocked(api.pgJob).mockResolvedValue(learningJob)
+  page()
+  expect(await screen.findByText('开发集学习闭环')).toBeInTheDocument()
+  expect(screen.getByText('测试 · 本轮不运行')).toBeInTheDocument()
+  expect(screen.queryByText('测试成功率')).not.toBeInTheDocument()
+  await waitFor(() => expect(screen.getByLabelText('演化策略')).toHaveValue('credit-memory-v1'))
+  expect(screen.getByText('26')).toBeInTheDocument()
+})
+
+it('opens the persisted training sample from a selected graph contribution', async () => {
+  const trained: PGJob = { ...job, history: [{ ...job.history[0], training_graph: graph,
+    edge_credit: { graph_sha256: 'seed', graph_id: 'test-graph', graph_version: 0, sample_refs: ['PG01:1'],
+      causal_claim: false, edges: [{ edge_id: 'start-end', edge_sha256: 'edge', classification: 'SUPPORT',
+        support: 1, counter: 0, unknown: 0, case_count: 1, contrasts: [], evidence: [{
+          evidence_id: 'e1', sample_ref: 'PG01:1', case_id: 'PG01', repetition: 1, turn_index: 0,
+          classification: 'SUPPORT', reason: 'ADOPTED_INFORMATION_GAIN', condition: 'TRUE', exposed: true, adopted: true,
+          information_gain: 'NEW_INFORMATION', task_passed: false, later_verified_objective_ids: [], guidance_sequence: 10,
+        }] }] } }] }
+  vi.mocked(api.pgJobs).mockResolvedValue({ jobs: [trained] })
+  vi.mocked(api.pgJob).mockResolvedValue(trained)
+  vi.mocked(api.pgSamples).mockResolvedValue({ samples: [{ stage: 'iteration-01-training', case_id: 'PG01', repetition: 1,
+    passed: false, failures: ['目标未完成'], interventions: 1, failure_stage: 'GOAL_VERIFICATION_FAILURE' }] })
+  const read = vi.spyOn(api, 'pgSample').mockResolvedValue({ case_id: 'PG01', repetition: 1, passed: false, marker: 'training-evidence' })
+  page()
+  await waitFor(() => expect(screen.getByRole('tab', { name: '本轮训练图与贡献' })).toBeEnabled())
+  fireEvent.click(screen.getByRole('tab', { name: '本轮训练图与贡献' }))
+  fireEvent.click(await screen.findByRole('button', { name: '查看训练轨迹 PG01:1' }))
+  await waitFor(() => expect(read).toHaveBeenCalledWith(job.job_id, expect.objectContaining({ stage: 'iteration-01-training', case_id: 'PG01', repetition: 1 })))
+  expect(await screen.findByText(/training-evidence/)).toBeInTheDocument()
 })
