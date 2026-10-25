@@ -153,6 +153,10 @@ def project_turn(turn, turn_index=0):
                           "source": decision.get("source"), "payload": action} if decision else None),
             "action_alignment": _alignment(guidance, decision, review),
             "action_progress": ({
+                "schema_version": outcome.get("schema_version"),
+                "execution_progress": outcome.get("execution_progress"),
+                "information_gain": outcome.get("information_gain"),
+                "learning_eligible": outcome.get("learning_eligible"),
                 "status": outcome.get("progress_status"),
                 "reason": outcome.get("progress_reason"),
                 "signals": list(outcome.get("signals") or []),
