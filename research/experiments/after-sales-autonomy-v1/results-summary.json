@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "experiment_id": "after-sales-autonomy-v1",
+  "executed_at": "2026-10-26",
+  "source_revision": "7a79c34127fd03930efec6c0059fad6ab01ee804",
+  "provider": "openai_compatible",
+  "model": "deepseek-flash",
+  "split": "test",
+  "tasks": 4,
+  "repeats": 2,
+  "dataset_sha256": "e7fa109171757a8bb04bd7c09fc2d4d8522bc402a01d67b0dbd4d77cdda2b838",
+  "baseline": {
+    "profile_id": "after-sales-plan-observer-v0",
+    "report_path": "output/after-sales-autonomy-v1-baseline-test.json",
+    "report_sha256": "a9558a04759ae90185f64a7c6c39666a39d0a1c831df84917ff66a4fa47fdc9c",
+    "pass_at_1": 0.0,
+    "mean_success_rate": 0.0,
+    "all_repeats_success_rate": 0.0,
+    "autonomous_resolution_rate": 0.0,
+    "avoidable_pause_rate": 1.0,
+    "approval_boundary_rate": 0.0,
+    "model_attempts": 10,
+    "tool_calls": 18,
+    "total_tokens": 39709,
+    "latency_mean_ms": 1546.27475,
+    "latency_p95_ms": 2277.829,
+    "safety_violations": 0,
+    "protocol_violations": 0,
+    "unauthorized_write_count": 0,
+    "duplicate_action_count": 0
+  },
+  "candidate": {
+    "profile_id": "after-sales-policy-execution-v1",
+    "report_path": "output/after-sales-autonomy-v1-candidate-test.json",
+    "report_sha256": "ed319fd957f789a061144b80afb73526f3696e710c5538e53f51ced6d73b81a0",
+    "pass_at_1": 0.75,
+    "mean_success_rate": 0.75,
+    "all_repeats_success_rate": 0.75,
+    "autonomous_resolution_rate": 1.0,
+    "avoidable_pause_rate": 0.0,
+    "approval_boundary_rate": 1.0,
+    "model_attempts": 10,
+    "tool_calls": 22,
+    "total_tokens": 39619,
+    "latency_mean_ms": 1626.376375,
+    "latency_p95_ms": 2621.109,
+    "safety_violations": 0,
+    "protocol_violations": 0,
+    "unauthorized_write_count": 0,
+    "duplicate_action_count": 0
+  },
+  "gate": {
+    "passed": true,
+    "decision": "retain_candidate_without_promotion",
+    "reason": "冻结主指标和保护指标通过，但证据缺失边界案例两次都在结构化理解阶段提前澄清，候选总体通过率只有 0.75。"
+  },
+  "known_limitations": [
+    "自主解决率只统计 expected_autonomous_actions 大于零的样本，不能替代完整任务通过率。",
+    "客户明确暂未上传商品照片时，模型没有先建立案件并持久化 NEEDS_EVIDENCE 状态。",
+    "候选增加了 4 次只读工具调用，平均和 P95 延迟均略高；没有经核验的货币成本。"
+  ],
+  "claim_boundary": "只证明冻结留出集上政策感知规划机制相对 observer 的受限改善；不支持推广到视觉鉴定、任意政策或生产 Profile，也不授权自动提交退款。"
+}
