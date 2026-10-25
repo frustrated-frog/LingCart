@@ -69,6 +69,33 @@ describe('RunsPage LivePlan evidence', () => {
   })
 })
 
+describe('RunsPage policy-aware case execution evidence', () => {
+  it('shows authoritative progress and the explicit approval boundary', async () => {
+    const caseDetail: RunDetail = { ...detail, status: 'WAITING_APPROVAL', result: { trace: [], events: [
+      { type: 'case_state_projected', sequence: 1, state: {
+        case_id: 'CASE-1', case_revision: 3, policy_version_id: 'policy-v1',
+        policy_decision_id: 'decision-1', plan_id: 'plan-1', plan_revision: 3,
+      } },
+      { type: 'case_autonomous_action_selected', sequence: 2, operation: 'continue_after_sales_case',
+        reason_code: 'AUTHORITATIVE_EVIDENCE_AVAILABLE', case_revision: 2 },
+      { type: 'case_autonomous_action_completed', sequence: 3, operation: 'continue_after_sales_case',
+        from_revision: 2, to_revision: 3 },
+      { type: 'case_execution_paused', sequence: 4, status: 'WAIT_APPROVAL',
+        reason_code: 'EXPLICIT_APPROVAL_REQUIRED', case_revision: 3 },
+    ] } }
+    vi.spyOn(api, 'runs').mockResolvedValue({ runs: [summary] })
+    vi.spyOn(api, 'run').mockResolvedValue(caseDetail)
+
+    renderPage()
+
+    expect(await screen.findByText('政策感知自主执行')).toBeInTheDocument()
+    expect(screen.getAllByText('等待用户明确确认').length).toBeGreaterThan(0)
+    expect(screen.getByText('政策允许读取权威订单事实')).toBeInTheDocument()
+    expect(screen.getByText('退款等写操作必须由用户明确确认')).toBeInTheDocument()
+    expect(screen.getByText('REV 2 → REV 3')).toBeInTheDocument()
+  })
+})
+
 describe('RunsPage PG evidence', () => {
   it('distinguishes generated guidance, exposure, budget skip and committed action', async () => {
     const pgDetail: RunDetail = { ...detail, checkpoint: { context: { procedural_graph: {

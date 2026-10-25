@@ -117,6 +117,65 @@ function record(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {}
 }
 
+const CASE_EXECUTION_STATUS_LABELS: Record<string, string> = {
+  EXECUTE: '执行可信读取', WAIT_USER_INPUT: '等待用户补充材料', WAIT_APPROVAL: '等待用户明确确认',
+  BLOCKED: '能力边界阻断', COMPLETE: '无需后续动作', ABSTAINED: '主动弃权',
+}
+
+const CASE_EXECUTION_REASON_LABELS: Record<string, string> = {
+  AUTHORITATIVE_EVIDENCE_AVAILABLE: '政策允许读取权威订单事实',
+  CUSTOMER_EVIDENCE_REQUIRED: '政策要求用户补充材料',
+  EXPLICIT_APPROVAL_REQUIRED: '退款等写操作必须由用户明确确认',
+  ACTION_COMPLETED_WITH_PROGRESS: '工具结果已核验，案件版本已经推进',
+  UNSUPPORTED_CAPABILITY: '当前能力不能可靠完成该动作',
+  AUTONOMOUS_STEP_BUDGET_EXHAUSTED: '已达到本轮自主动作上限',
+  CASE_STATE_NOT_EXECUTABLE: '案件、裁决或计划身份不一致，已失败关闭',
+  POLICY_OBLIGATION_NOT_AUTOMATABLE: '该政策义务不允许自动执行',
+  NO_FURTHER_AUTONOMOUS_ACTION: '当前没有待执行的自主动作',
+  NO_SUPPORTED_NEXT_ACTION: '计划没有当前执行器支持的下一步',
+  CASE_TERMINAL: '案件已进入终态，无需继续执行',
+}
+
+function PolicyAwareCaseExecution({ detail }: { detail: RunDetail }) {
+  const events = detail.result.events ?? []
+  const projections = events.filter((item) => item.type === 'case_state_projected')
+  const actions = events.filter((item) => item.type === 'case_autonomous_action_selected')
+  const completed = events.filter((item) => item.type === 'case_autonomous_action_completed')
+  const pause = events.filter((item) => item.type === 'case_execution_paused').at(-1)
+  if (!projections.length && !actions.length && !pause) return null
+  const state = record(projections.at(-1)?.state)
+  const policyIdentity = [state.policy_version_id, state.policy_decision_id].filter(Boolean).map(String).join(' / ')
+  const planIdentity = [state.plan_id, state.plan_revision].filter((value) => value !== undefined && value !== null).map(String).join(' / ')
+  const pauseStatus = String(pause?.status ?? 'ABSTAINED')
+  const reason = String(pause?.reason_code ?? 'NO_SUPPORTED_NEXT_ACTION')
+  const ledgerItems: Array<Record<string, unknown>> = [
+    ...actions.map((item) => ({ ...item, displayKind: '选择动作' })),
+    ...completed.map((item) => ({ ...item, displayKind: '完成动作' })),
+    ...(pause ? [{ ...pause, displayKind: '边界暂停' }] : []),
+  ]
+  return <>
+    <SectionHeading index="P" title="政策感知自主执行" note="只执行无需审批的权威读取" />
+    <DefinitionGrid items={[
+      ['循环状态', CASE_EXECUTION_STATUS_LABELS[pauseStatus] ?? pauseStatus],
+      ['自主工具动作', completed.length],
+      ['案件版本', state.case_id ? `${String(state.case_id)} / REV ${String(state.case_revision ?? '—')}` : '未记录'],
+      ['政策裁决', policyIdentity || '未记录'],
+      ['案件计划', planIdentity || '未记录'],
+    ]} />
+    <p className="muted">退款提交不会由该循环自动执行；需要用户材料、明确确认或系统不具备的能力时，循环都会持久化原因并暂停。</p>
+    <div className="steering-ledger">{ledgerItems.sort((left, right) => Number(left.sequence ?? 0) - Number(right.sequence ?? 0)).map((item, index) => {
+      const operation = String(item.operation ?? '')
+      const itemReason = String(item.reason_code ?? (item.displayKind === '完成动作' ? 'ACTION_COMPLETED_WITH_PROGRESS' : reason))
+      return <article key={`${String(item.sequence ?? index)}-${String(item.displayKind)}`}>
+        <span>{String(item.sequence ?? '—')} / {String(item.displayKind)}</span>
+        <b>{operation ? (TOOL_LABELS[operation] ?? operation) : (CASE_EXECUTION_STATUS_LABELS[String(item.status)] ?? String(item.status))}</b>
+        <p>{CASE_EXECUTION_REASON_LABELS[itemReason] ?? itemReason}</p>
+        <small>{item.from_revision !== undefined ? `REV ${String(item.from_revision)} → REV ${String(item.to_revision)}` : `案件版本 REV ${String(item.case_revision ?? state.case_revision ?? '—')}`}</small>
+      </article>
+    })}</div>
+  </>
+}
+
 function ProceduralGraphTab({ detail }: { detail: RunDetail }) {
   const events = detail.result.events ?? []
   const guidance = events.filter((item) => item.type === 'pg_guidance')
@@ -225,6 +284,7 @@ function ResultTab({ detail }: { detail: RunDetail }) {
     <SectionHeading index="A" title="最终结果" />
     <div className="result-copy">{detail.result.reply ?? '该运行尚未生成最终回复。'}</div>
     <ResultArtifactViews artifacts={detail.result.artifacts} />
+    <PolicyAwareCaseExecution detail={detail} />
     {steps.length > 0 ? <div className="table-wrap"><table><thead><tr><th>步骤</th><th>执行角色</th><th>操作</th><th>状态</th></tr></thead><tbody>
       {steps.map((step, index) => <tr key={String(step.step_id ?? index)}><td>{String(step.step_id ?? index + 1)}</td><td>{SPECIALIST_LABELS[String(step.specialist ?? '')] ?? String(step.specialist ?? '—')}</td><td>{TOOL_LABELS[String(step.tool ?? '')] ?? String(step.tool ?? '—')}</td><td>{STATUS_LABELS[String(step.status ?? '')] ?? String(step.status ?? '—')}</td></tr>)}
     </tbody></table></div> : <div className="empty-inline">该路径没有记录结构化计划</div>}

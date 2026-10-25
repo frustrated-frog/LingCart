@@ -136,6 +136,11 @@ export const METRIC_LABELS: Record<string, string> = {
 
 const EVENT_LABELS: Record<string, [string, string]> = {
   case_plan_revised: ['案件', '修订证据与行动计划'],
+  case_state_projected: ['案件', '投影政策约束案件状态'],
+  case_obligation_verified: ['核验', '核验下一项政策义务'],
+  case_autonomous_action_selected: ['决策', '选择受限自主动作'],
+  case_autonomous_action_completed: ['进展', '自主动作产生版本进展'],
+  case_execution_paused: ['边界', '政策感知执行暂停'],
   evidence_semantic_assessed: ['核验', '检查材料充分性与冲突'],
   evidence_semantic_reused: ['核验', '复用材料语义核验'],
   agent_status_changed: ['状态', 'Agent 执行状态'], response_started: ['回答', '开始生成回答'],
