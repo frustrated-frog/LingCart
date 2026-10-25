@@ -41,6 +41,9 @@ def test_recovery_and_repeated_empty_calls_have_explicit_denominators():
     assert metrics['recovery_rate'] == 1 and metrics['pg_exposure_rate'] == 0
     assert metrics['pg_localization_abstentions'] == 0
     assert metrics['pg_shadow_disagreements'] == 0
+    assert metrics['pg_preplay_interventions'] == 0
+    assert metrics['pg_prediction_supported'] == 0
+    assert metrics['pg_prediction_countered'] == 0
     assert metrics['tokens']['total_tokens'] is None
     assert behavior_metrics({'samples': []})['recovery_rate'] is None
 

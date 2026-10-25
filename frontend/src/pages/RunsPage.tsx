@@ -154,6 +154,11 @@ function ProceduralGraphTab({ detail }: { detail: RunDetail }) {
       const contract = record(item.guidance_contract)
       const applicability = record(item.applicability)
       const evaluations = Array.isArray(applicability.evaluations) ? applicability.evaluations.map(record) : []
+      const preplay = record(item.preplay)
+      const selectedPath = record(preplay.selected_path)
+      const preplayEdges = Array.isArray(selectedPath.edge_ids) ? selectedPath.edge_ids.map(String) : []
+      const predictionOutcome = preplay.plan_id ? events.filter((event) => event.type === 'pg_prediction_outcome'
+        && event.preplay_plan_id === preplay.plan_id).at(-1) : undefined
       return <article key={String(item.sequence ?? index)}>
         <span>事件 {String(item.sequence ?? '—')} · 定位 {String(item.anchor ?? '主动弃权')} · {scope}</span>
         <b>{labels[status] ?? status}</b>
@@ -161,6 +166,11 @@ function ProceduralGraphTab({ detail }: { detail: RunDetail }) {
         <small>生成方式：{generation.mode === 'deterministic-contract-v1' ? '确定性指导契约' : '模型情境化'} · 额外模型调用：{String(generation.model_calls ?? '未记录')}{Object.keys(contract).length ? ` · 契约 ${String(contract.contract_id ?? '').slice(0, 8)}` : ''}</small>
         <small>定位器：{String(localization.algorithm ?? 'action-anchor-v1')} · 置信度：{confidence}{Object.keys(shadow).length ? ` · v1 影子：${String(shadow.anchor ?? '未知')}${shadow.fallback ? '（全图回退）' : ''}` : ''}</small>
         {Object.keys(applicability).length > 0 && <small>条件证据：{String(applicability.status ?? '未记录')} · TRUE {Array.isArray(applicability.selected_edge_ids) ? applicability.selected_edge_ids.length : 0} · FALSE {Array.isArray(applicability.false_edge_ids) ? applicability.false_edge_ids.length : 0} · UNKNOWN {Array.isArray(applicability.unknown_edge_ids) ? applicability.unknown_edge_ids.length : 0}</small>}
+        {Object.keys(preplay).length > 0 && <div className="run-preplay"><div><strong>有界程序预演</strong><span>{String(preplay.status ?? '未记录')} · {preplay.replanned_from ? `由 ${String(preplay.replanned_from).slice(0, 8)} 重规划` : '初始预演'}</span></div>
+          {preplayEdges.length ? <div className="run-preplay-path">{preplayEdges.map((edgeId, edgeIndex) => <span className={edgeIndex === 0 ? 'is-current' : 'is-future'} key={`${edgeId}-${edgeIndex}`}>{edgeId}<i>{edgeIndex === 0 ? '当前可执行' : '预测路径'}</i></span>)}</div> : <p>{String(preplay.reason ?? '没有可用路径')}</p>}
+          <small>首步：{String(selectedPath.first_action ?? '无额外行动')} · 路径分数：{typeof selectedPath.score === 'number' ? selectedPath.score.toFixed(3) : '未记录'} · 预测不是事实或授权</small>
+          {predictionOutcome && <small className={`run-prediction-${String(predictionOutcome.status).toLowerCase()}`}>预测核对：{String(predictionOutcome.status)} · 期望 {String(predictionOutcome.expected_action ?? '无')} / 实际 {String(predictionOutcome.actual_action ?? '无')}</small>}
+        </div>}
         <small>引用关系：{edgeIds.join(' / ') || '无'} · 后续行动：{String(decision.tool ?? decision.action ?? review?.actual_action ?? '尚无已提交行动')}{review ? ` · 采用审查：${String(review.status)}${review.blocked ? '（提交前阻断）' : ''}` : ''}</small>
         {outcome && <small>行动进展：{String(outcome.progress_status ?? '未记录')} · {Array.isArray(outcome.signals) && outcome.signals.length ? outcome.signals.map(String).join(' / ') : String(outcome.progress_reason ?? '没有可核验信号')}</small>}
         {evaluations.length > 0 && <details><summary>查看每条关系的条件求值证据</summary><div className="table-wrap"><table><thead><tr><th>关系</th><th>判定</th><th>原因</th><th>证据绑定</th></tr></thead><tbody>

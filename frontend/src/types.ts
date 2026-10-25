@@ -627,6 +627,26 @@ export interface PGEdge {
   applicability?: { all_of?: PGConditionClause[]; any_of?: PGConditionClause[] } | null
 }
 export interface PGConditionClause { fact: string; operator: string; value?: string | boolean | number | string[] | null }
+export interface PGTransitionPrediction {
+  edge_id: string; source: string; target: string; action: string | null
+  state_basis: 'CURRENT_VERIFIED' | 'PREDICTED_ACTION_ONLY'; condition_status: 'TRUE' | 'FALSE' | 'UNKNOWN'
+  condition_reason: string; effect_hypotheses: string[]; reliability_score: number
+  support_count: number; counter_count: number; utility_components: Record<string, number>; projected_state_sha256: string
+}
+export interface PGPreplayPath {
+  path_id: string; edge_ids: string[]; node_ids: string[]; first_action: string | null; score: number; executable_prefix: 1
+  future_edges_require_revalidation: string[]; predictions?: PGTransitionPrediction[]
+}
+export interface PGPreplay {
+  plan_id: string; method: string; status: 'READY' | 'ABSTAINED' | 'TERMINAL'; reason: string
+  causal_claim: false; probabilistic_claim?: false; replanned_from?: string | null
+  selected_path: PGPreplayPath | null; paths?: PGPreplayPath[]
+}
+export interface PGPredictionOutcome {
+  prediction_outcome_id?: string; preplay_plan_id?: string; status?: 'SUPPORT' | 'COUNTER' | 'DIVERGED' | 'UNKNOWN'
+  action_match?: boolean; expected_action?: string | null; actual_action?: string | null; causal_claim?: boolean
+  effects?: { effect?: string; status?: string; reason?: string }[]
+}
 export interface PGPlan {
   evolution_policy?: 'basic-v1' | 'credit-memory-v1'; evaluation_scope?: 'dev_only' | 'three_arm_test'
   preset: PGPreset; spec: { repeats: number; iterations: number; max_model_calls_per_run: number
@@ -655,6 +675,7 @@ export interface PGIntervention {
       evaluation?: { evidence_bindings?: { fact?: string; actual?: unknown; source?: string }[] } }[]
     selected_edge_ids?: string[]; false_edge_ids?: string[]; unknown_edge_ids?: string[]
     projected_paths?: { path_id?: string; edge_ids?: string[]; currently_applicable_prefix?: number; future_edges_require_reevaluation?: string[] }[] }
+  preplay?: PGPreplay | null
   guidance: { status: string; reason: string | null; content: string; exposed: boolean; sequence: number
     generation_mode?: string; generation_model_calls?: number | null
     contract?: { contract_id?: string; policy?: string; recommended_actions?: string[]; forbidden_repeats?: Record<string, unknown>[] } | null }
@@ -665,6 +686,7 @@ export interface PGIntervention {
     schema_version?: number | null; execution_progress?: boolean | null; learning_eligible?: boolean | null
     information_gain?: { status: string; changed_observation_scopes?: string[]; new_evidence_count?: number; newly_verified_objective_ids?: string[] } | null
     outcome_id?: string; review_id?: string; matched_edge_ids?: string[]; before_sha256?: string; after_sha256?: string } | null
+  prediction_outcome?: PGPredictionOutcome | null
   tool: { name: string; args: Record<string, unknown>; status: string; sequence: number; result: unknown; invalid_result: boolean } | null
   verification: Record<string, unknown> | null
 }
@@ -675,7 +697,8 @@ export interface PGSampleDetail {
     localization_fallbacks: number; localization_abstentions?: number
     shadow_differences?: number; shadow_fallbacks?: number
     progressed_actions?: number; no_progress_actions?: number; failed_actions?: number; deferred_actions?: number
-    unknown_progress_actions?: number; typed_applicability_interventions?: number
+    unknown_progress_actions?: number; typed_applicability_interventions?: number; preplay_interventions?: number
+    prediction_supported?: number; prediction_countered?: number; prediction_diverged?: number; prediction_unknown?: number
     environment_triggered: boolean; recovered: boolean; failure_stage: string | null }
     turns: { turn_index: number; request: string; passed: boolean; failures: string[]; interventions: PGIntervention[] }[] }
 }
@@ -712,6 +735,8 @@ export interface PGArmResult {
     pg_no_progress_repeats_blocked?: number; pg_deterministic_contracts?: number; pg_guidance_model_calls?: number
     pg_typed_applicability_interventions?: number; pg_actions_progressed?: number
     pg_actions_without_progress?: number; pg_actions_failed?: number
+    pg_preplay_interventions?: number; pg_prediction_supported?: number; pg_prediction_countered?: number
+    pg_prediction_diverged?: number; pg_prediction_unknown?: number
     tool_calls: number; tokens: { total_tokens: number | null }; latency_ms: { p95: number | null } }
 }
 export interface PGJobSummary {

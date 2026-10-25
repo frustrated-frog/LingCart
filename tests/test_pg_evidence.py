@@ -91,7 +91,7 @@ def test_projection_uses_persisted_contract_review_and_counts_blocked_repeat():
 
     projection = project_sample_evidence(value)
     intervention = projection['turns'][0]['interventions'][0]
-    assert projection['schema_version'] == 4
+    assert projection['schema_version'] == 5
     assert intervention['guidance']['generation_mode'] == 'deterministic-contract-v1'
     assert intervention['action_alignment']['status'] == 'BLOCKED'
     assert intervention['action_alignment']['blocked'] is True
@@ -113,6 +113,9 @@ def test_projection_links_typed_applicability_review_and_real_progress():
         },
         projected_paths=[{'path_id': 'path-1', 'edge_ids': ['start-search'],
                           'currently_applicable_prefix': 1}],
+        preplay={'plan_id': 'plan-1', 'status': 'READY', 'causal_claim': False,
+                 'selected_path': {'path_id': 'path-1', 'first_action': 'search_products',
+                                   'edge_ids': ['start-search'], 'executable_prefix': 1}},
     )
     events.insert(4, {
         'type': 'pg_decision_reviewed', 'sequence': 4, 'decision_key': 'decision-1',
@@ -129,6 +132,13 @@ def test_projection_links_typed_applicability_review_and_real_progress():
         'schema_version': 2, 'execution_progress': True, 'learning_eligible': True,
         'information_gain': {'status': 'NEW_INFORMATION', 'changed_observation_scopes': ['c' * 64]},
     })
+    events.append({
+        'type': 'pg_prediction_outcome', 'sequence': 9, 'prediction_outcome_id': 'prediction-1',
+        'preplay_plan_id': 'plan-1', 'outcome_id': 'outcome-1', 'review_id': 'review-1',
+        'status': 'SUPPORT', 'action_match': True, 'expected_action': 'search_products',
+        'actual_action': 'search_products', 'causal_claim': False,
+        'effects': [{'effect': 'INFORMATION_GAIN', 'status': 'SUPPORT', 'reason': 'NEW_INFORMATION'}],
+    })
 
     projection = project_sample_evidence(value)
     intervention = projection['turns'][0]['interventions'][0]
@@ -137,5 +147,10 @@ def test_projection_links_typed_applicability_review_and_real_progress():
     assert intervention['action_progress']['information_gain']['status'] == 'NEW_INFORMATION'
     assert intervention['action_progress']['execution_progress'] is True
     assert intervention['action_progress']['signals'] == ['TRUSTED_OBSERVATION_ADDED']
+    assert intervention['preplay']['selected_path']['first_action'] == 'search_products'
+    assert intervention['prediction_outcome']['status'] == 'SUPPORT'
+    assert intervention['prediction_outcome']['causal_claim'] is False
     assert projection['summary']['typed_applicability_interventions'] == 1
+    assert projection['summary']['preplay_interventions'] == 1
+    assert projection['summary']['prediction_supported'] == 1
     assert projection['summary']['progressed_actions'] == 1

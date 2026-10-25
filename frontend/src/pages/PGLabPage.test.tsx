@@ -113,6 +113,7 @@ it('renders the persisted intervention chain instead of only raw json', async ()
       unknown_alignment: 0, localization_fallbacks: 0, localization_abstentions: 0,
       blocked_repeats: 0, deterministic_contracts: 1, guidance_model_calls: 0,
       progressed_actions: 1, no_progress_actions: 0, failed_actions: 0, typed_applicability_interventions: 1,
+      preplay_interventions: 1, prediction_supported: 1, prediction_countered: 0,
       shadow_differences: 1, shadow_fallbacks: 1, environment_triggered: true, recovered: true, failure_stage: null },
     turns: [{ turn_index: 0, request: '推荐耳机', passed: true, failures: [], interventions: [{
       intervention_id: 'decision-1', graph: { graph_id: 'pg', graph_version: 1, graph_sha256: 'a' },
@@ -123,6 +124,10 @@ it('renders the persisted intervention chain instead of only raw json', async ()
       applicability: { strategy: 'typed-evidence-v1', status: 'APPLICABLE', reason: 'APPLICABLE_EDGE_FOUND',
         evaluations: [{ edge_id: 'start-search', status: 'TRUE' }], selected_edge_ids: ['start-search'],
         false_edge_ids: [], unknown_edge_ids: [], projected_paths: [] },
+      preplay: { plan_id: 'plan-1', method: 'bounded-transition-search-v1', status: 'READY', reason: 'BOUNDED_PATH_SELECTED',
+        causal_claim: false, probabilistic_claim: false, selected_path: { path_id: 'path-1', edge_ids: ['start-search', 'search-inspect'],
+          node_ids: ['Start', 'search_products', 'inspect'], first_action: 'search_products', score: 0.82, executable_prefix: 1,
+          future_edges_require_revalidation: ['search-inspect'] } },
       guidance: { status: 'READY', reason: 'DETERMINISTIC_CONTRACT', content: '先查询真实目录', exposed: true, sequence: 1,
         generation_mode: 'deterministic-contract-v1', generation_model_calls: 0,
         contract: { contract_id: 'contract-1', policy: 'ADVISORY_EXCEPT_EXACT_NO_PROGRESS_REPEAT' } },
@@ -130,6 +135,8 @@ it('renders the persisted intervention chain instead of only raw json', async ()
       action_alignment: { status: 'ALIGNED', matched_edge_ids: ['start-search'] },
       action_progress: { status: 'PROGRESSED', reason: 'VERIFIABLE_STATE_CHANGE',
         signals: ['TRUSTED_OBSERVATION_ADDED'], cost_delta: { model_calls: 0, tool_calls: 1 } },
+      prediction_outcome: { status: 'SUPPORT', action_match: true, expected_action: 'search_products',
+        actual_action: 'search_products', causal_claim: false, effects: [{ effect: 'INFORMATION_GAIN', status: 'SUPPORT' }] },
       tool: { name: 'search_products', args: {}, status: 'SUCCEEDED', sequence: 6, result: { products: [] }, invalid_result: false },
       verification: { all_goals_satisfied: true },
     }] }],
@@ -146,7 +153,11 @@ it('renders the persisted intervention chain instead of only raw json', async ()
   expect(screen.getByText('采用判定：ALIGNED')).toBeInTheDocument()
   expect(screen.getByText('02 · 条件证据')).toBeInTheDocument()
   expect(screen.getByText(/TRUE 1 · FALSE 0 · UNKNOWN 0/)).toBeInTheDocument()
-  expect(screen.getByText('06 · 目标进展')).toBeInTheDocument()
+  expect(screen.getByText('03 · 有界预演')).toBeInTheDocument()
+  expect(screen.getByText('当前可执行')).toBeInTheDocument()
+  expect(screen.getByText('未来需重规划')).toBeInTheDocument()
+  expect(screen.getByText('预测核对：SUPPORT')).toBeInTheDocument()
+  expect(screen.getByText('07 · 目标进展')).toBeInTheDocument()
   expect(screen.getByText('TRUSTED_OBSERVATION_ADDED')).toBeInTheDocument()
 })
 

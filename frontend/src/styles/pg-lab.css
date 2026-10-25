@@ -31,7 +31,13 @@
 .pg-launch select { min-width:0; width:auto; flex:1; }
 .pg-run-selector select { width:340px; }
 .pg-lab button:hover:not(:disabled):not(.pg-primary-button) { border-color:#889bcc; }
-.pg-chain-grid { grid-template-columns:repeat(6,minmax(0,1fr)); }
+.pg-chain-grid { grid-template-columns:repeat(7,minmax(150px,1fr)); overflow-x:auto; }
+.pg-preplay-stage { background:linear-gradient(180deg,#f3f4ff 0,#fff 70%); }
+.pg-preplay-path { display:grid; gap:5px; margin:8px 0; }
+.pg-preplay-path span { display:grid; gap:2px; padding:5px 6px; border-left:3px solid #5367b2; background:#eef0fc; color:#354781; font:9px var(--mono); overflow-wrap:anywhere; }
+.pg-preplay-path span.pg-preplay-future { border-left-style:dashed; border-left-color:#9aa2bd; background:#f7f7f9; color:#67707c; }
+.pg-preplay-path i { color:#68716d; font:8px var(--mono); font-style:normal; }
+.pg-prediction-support { color:#327046!important; }.pg-prediction-counter { color:#a14d37!important; }.pg-prediction-diverged { color:#915b27!important; }
 
 .pg-credit,.pg-hypothesis { margin-top:20px; padding-top:16px; border-top:1px solid var(--pg-line); font-size:12px; line-height:1.7; }
 .pg-credit header,.pg-hypothesis header { display:flex; align-items:baseline; justify-content:space-between; gap:12px; }

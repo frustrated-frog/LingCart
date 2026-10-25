@@ -127,6 +127,15 @@ def behavior_metrics(report):
                                                    for item in interventions),
             'pg_typed_applicability_interventions': sum(
                 bool(item.get('applicability', {}).get('strategy')) for item in interventions),
+            'pg_preplay_interventions': sum(bool(item.get('preplay')) for item in interventions),
+            'pg_prediction_supported': sum(
+                (item.get('prediction_outcome') or {}).get('status') == 'SUPPORT' for item in interventions),
+            'pg_prediction_countered': sum(
+                (item.get('prediction_outcome') or {}).get('status') == 'COUNTER' for item in interventions),
+            'pg_prediction_diverged': sum(
+                (item.get('prediction_outcome') or {}).get('status') == 'DIVERGED' for item in interventions),
+            'pg_prediction_unknown': sum(
+                (item.get('prediction_outcome') or {}).get('status') == 'UNKNOWN' for item in interventions),
             'pg_actions_progressed': sum(
                 (item.get('action_progress') or {}).get('status') == 'PROGRESSED' for item in interventions),
             'pg_actions_without_progress': sum(

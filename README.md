@@ -16,7 +16,7 @@ LingCart 是一个面向消费决策与售后任务的 Agent 工程项目。它�
 - 独立证据语义核验：区分充分、缺失、无关、冲突与未知，保留原文引用并提出具体追问；来源核验不替代充分性判断，语义核验不代表客观鉴定。
 - Durable Runtime：对话串行化、请求幂等、Checkpoint、工具账本、恢复、运行中调整、取消和排队追问。
 - Model Gateway：Gemini、Groq、OpenAI 与 OpenAI-compatible，支持按职责选模、超时、降级和熔断。
-- PG 研究候选：冻结程序图的轨迹状态定位、有界局部检索与情境指导，dev 轨迹驱动的离线结构演化、验证选择和拒绝记忆；尚无真实模型收益结论。
+- PG 研究候选：冻结程序图的轨迹状态定位、有界局部检索、状态转移预演与情境指导，dev 轨迹驱动的离线结构演化、验证选择和拒绝记忆；预演只生成下一步候选，真实观测后重规划，尚无真实模型收益结论。
 
 所有品牌、价格、库存、客户、订单和物流都是本地演示数据。支付与退款只修改演示 SQLite 数据库，并且必须经过明确确认。
 
@@ -194,7 +194,7 @@ python eval/run_live_eval.py --harness-profile adaptive-v1 --split test --repeat
 
 第一版 ACE（Agentic Context Engineering）纵向切片已经接入：现有 adaptive Agent 产生真实执行轨迹，离线 Reflector/Curator 只从 `dev` 环境反馈增量构建不可变 Playbook，候选 Profile 在 `test` 时只读加载固定版本。它与用户偏好、业务事实和权限分仓，独立审查不会接收 Playbook；代码门禁拒绝具体商品/订单事实和放宽硬约束的策略。
 
-PG（Procedural Graphs）当前提供三代研究候选：`adaptive-pg-context-v2` 用持久化目标账本、最近行动、工具结果和未完成目标定位有界局部图；`adaptive-pg-context-v3` 冻结同一定位器，把局部图编译成零额外模型调用的指导契约，并在工具提交前审查采用、偏离与精确无进展重放；`adaptive-pg-context-v4` 进一步以白名单事实、受限操作符和 `TRUE/FALSE/UNKNOWN` 三值证据筛选当前适用边，使用归一化后的真实执行参数识别重放，并记录指导后的可核验目标进展。低置信定位和未知条件都主动弃权，未来路径必须在状态变化后重新求值。运行检查和论文实验室展示“定位 → 条件证据 → 指导 → 实际行动 → 工具结果 → 目标进展”证据链。`venv/bin/python eval/run_pg_localization_eval.py --gate`、`venv/bin/python eval/run_pg_guidance_eval.py --gate` 与 `venv/bin/python eval/run_pg_state_condition_eval.py --gate` 均为零模型调用的机制测试，不能替代真实收益评测。V3/V4 的正式对照使用 [同图对照 v2 契约](research/experiments/pg-state-conditioned-planning-v2/实验说明.md)：研究基线 `adaptive-pg-v3-shared-graph-v1` 与 V4 绑定同一 V2 图，使用冻结留出集，旧 PG13 只作回归诊断。行动进展按来源与内容身份判断，执行记录增长与信息增益分别保存；重复商品、查询回显和观察时间戳不会产生正向学习奖励。设计见 [轨迹状态感知程序图检索设计](docs/轨迹状态感知程序图检索设计.md)、[程序图指导契约与采用闭环设计](docs/程序图指导契约与采用闭环设计.md) 与 [程序图状态条件规划设计](docs/程序图状态条件规划设计.md)。
+PG（Procedural Graphs）当前提供多代研究候选：`adaptive-pg-context-v2` 用持久化目标账本、最近行动、工具结果和未完成目标定位有界局部图；`adaptive-pg-context-v3` 冻结同一定位器，把局部图编译成零额外模型调用的指导契约，并在工具提交前审查采用、偏离与精确无进展重放；`adaptive-pg-context-v4` 进一步以白名单事实、受限操作符和 `TRUE/FALSE/UNKNOWN` 三值证据筛选当前适用边，使用归一化后的真实执行参数识别重放，并记录指导后的可核验目标进展；`adaptive-pg-preplay-v6` 在同一状态条件机制上对局部转移做有界 beam search，只把第一步交给决策层，后续虚线步骤均为非事实预测，必须在真实观测后滚动重规划。低置信定位和未知条件都主动弃权，预测不得写入权威状态、授权或事实证据。运行检查和论文实验室展示“定位 → 条件证据 → 有界预演 → 指导 → 实际行动 → 工具与核验 → 目标进展”证据链。`venv/bin/python eval/run_pg_localization_eval.py --gate`、`venv/bin/python eval/run_pg_guidance_eval.py --gate`、`venv/bin/python eval/run_pg_state_condition_eval.py --gate` 与 `venv/bin/python eval/run_pg_preplay_eval.py --gate` 均为零模型调用的机制测试，不能替代真实收益评测。V3/V4 的正式对照使用 [同图对照 v2 契约](research/experiments/pg-state-conditioned-planning-v2/实验说明.md)：研究基线 `adaptive-pg-v3-shared-graph-v1` 与 V4 绑定同一 V2 图，使用冻结留出集，旧 PG13 只作回归诊断。V6 的正式对照由 [状态转移预演实验契约](research/experiments/pg-preplay-v6/实验说明.md) 冻结，保持 `candidate`，在新留出重复对照完成前不宣称收益。行动进展按来源与内容身份判断，执行记录增长与信息增益分别保存；重复商品、查询回显和观察时间戳不会产生正向学习奖励。设计见 [轨迹状态感知程序图检索设计](docs/轨迹状态感知程序图检索设计.md)、[程序图指导契约与采用闭环设计](docs/程序图指导契约与采用闭环设计.md)、[程序图状态条件规划设计](docs/程序图状态条件规划设计.md) 与 [程序图状态转移预演设计](docs/程序图状态转移预演设计.md)。
 
 论文实验室新增 [PG 挑战实验台](docs/程序图挑战实验台设计.md)（`/experiments/pg`）：18 个独立情境分为训练、验证、测试各 6 项；支持有预算的真实实验启动、停止、图修改审查、无 PG／种子图／演化图对照和逐样本证据。低成本冒烟只从三个分组各取一个冻结情境，共最多 6 个样本，并把“定位→检索→指导→行动→工具与核验”投影为持久证据；预算和失败分类见 [程序图真实模型闭环设计](docs/程序图真实模型闭环设计.md)。实验状态与失败结果均持久化，冒烟及脚本测试结果不作为收益结论。
 

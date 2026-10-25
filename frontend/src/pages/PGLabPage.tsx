@@ -110,6 +110,8 @@ function SampleEvidence({ jobId, sample }: { jobId: string; sample: PGSample }) 
       <div><dt>产生进展</dt><dd>{evidence.summary.progressed_actions ?? 0}</dd></div>
       <div><dt>没有进展</dt><dd>{evidence.summary.no_progress_actions ?? 0}</dd></div>
       <div><dt>行动失败</dt><dd>{evidence.summary.failed_actions ?? 0}</dd></div>
+      <div><dt>程序预演</dt><dd>{evidence.summary.preplay_interventions ?? 0}</dd></div>
+      <div><dt>预测反例</dt><dd>{evidence.summary.prediction_countered ?? 0}</dd></div>
       <div><dt>影子差异</dt><dd>{evidence.summary.shadow_differences ?? 0}</dd></div></dl></div>
     {evidence.turns.flatMap(turn => turn.interventions.map((item, index) => {
       const decision = item.decision?.payload ?? {}
@@ -121,15 +123,21 @@ function SampleEvidence({ jobId, sample }: { jobId: string; sample: PGSample }) 
       const applicability = item.applicability ?? {}
       const evaluations = applicability.evaluations ?? []
       const progress = item.action_progress
+      const preplay = item.preplay
+      const preplayPath = preplay?.selected_path
+      const predictionOutcome = item.prediction_outcome
       return <article className="pg-intervention-chain" key={`${turn.turn_index}-${item.intervention_id}-${index}`}>
         <header><span>干预 {index + 1} · 事件 {item.guidance.sequence}</span><b>{item.guidance.exposed ? '已进入模型决策上下文' : '未暴露给决策'}{item.localization.shadow_changed ? ' · 定位器结果有差异' : ''}</b></header>
         <div className="pg-chain-grid">
           <section><small>01 · 状态定位</small><strong>{item.localization.anchor ? node(item.localization.anchor) : '主动弃权'}</strong><p>{localizationState}</p><em>置信度 {confidence} · {item.localization.node_ids.length} 个局部节点</em>{shadow && <em>v1 影子：{node(shadow.anchor ?? '未知')} · {shadow.fallback ? '全图回退' : '局部图'}</em>}</section>
           <section><small>02 · 条件证据</small><strong>{applicability.status ?? '历史版本未记录'}</strong><p>{item.retrieval.selected_edge_ids.join(' / ') || '没有被证明适用的关系'}</p><em>候选 {evaluations.length || item.retrieval.retrieved_edge_ids.length} · TRUE {(applicability.selected_edge_ids ?? []).length} · FALSE {(applicability.false_edge_ids ?? []).length} · UNKNOWN {(applicability.unknown_edge_ids ?? []).length}</em></section>
-          <section><small>03 · 情境指导</small><strong>{item.guidance.generation_mode === 'deterministic-contract-v1' ? '确定性指导契约' : item.guidance.status}</strong><p>{item.guidance.content || item.guidance.reason || '指导器选择弃权'}</p><em>{item.guidance.generation_model_calls == null ? '调用数未记录' : `额外模型调用 ${item.guidance.generation_model_calls}`}</em></section>
-          <section><small>04 · 实际行动</small><strong>{node(action)}</strong><p>采用判定：{item.action_alignment.status}{item.action_alignment.blocked ? ' · 提交前阻断' : ''}</p><em>{item.decision ? `决策事件 ${item.decision.sequence}` : item.action_alignment.review_id ? `审查 ${item.action_alignment.review_id.slice(0, 8)}` : '没有已提交行动'}</em></section>
-          <section><small>05 · 工具与核验</small><strong>{item.tool ? node(item.tool.name) : '未调用工具'}</strong><p>{item.tool ? `${item.tool.status ?? '已返回'}${item.tool.invalid_result ? ' · 无效结果' : ''}` : item.verification ? '已进入目标核验' : '尚无后续结果'}</p></section>
-          <section><small>06 · 目标进展</small><strong>{progress?.status ?? '尚未记录'}</strong><p>{progress?.signals?.join(' / ') || progress?.reason || '历史样本没有行动进展归因'}</p><em>{progress?.cost_delta ? `模型 +${progress.cost_delta.model_calls ?? 0} · 工具 +${progress.cost_delta.tool_calls ?? 0}` : '成本增量未记录'}</em></section>
+          <section className="pg-preplay-stage"><small>03 · 有界预演</small><strong>{preplayPath?.first_action ? node(preplayPath.first_action) : preplay?.status === 'TERMINAL' ? '终态路径' : preplay ? '主动弃权' : '历史版本未记录'}</strong>
+            {preplayPath ? <div className="pg-preplay-path" aria-label="程序预演路径">{preplayPath.edge_ids.map((edgeId, edgeIndex) => <span className={edgeIndex === 0 ? 'pg-preplay-current' : 'pg-preplay-future'} key={`${edgeId}-${edgeIndex}`}>{edgeId}<i>{edgeIndex === 0 ? '当前可执行' : '未来需重规划'}</i></span>)}</div> : <p>{preplay?.reason ?? '没有预演证据'}</p>}
+            <em>{preplayPath ? `分数 ${preplayPath.score.toFixed(3)} · 仅首步可执行` : '预测不写入权威状态'}</em>{predictionOutcome && <em className={`pg-prediction-${predictionOutcome.status?.toLowerCase()}`}>预测核对：{predictionOutcome.status}</em>}</section>
+          <section><small>04 · 情境指导</small><strong>{item.guidance.generation_mode === 'deterministic-contract-v1' ? '确定性指导契约' : item.guidance.status}</strong><p>{item.guidance.content || item.guidance.reason || '指导器选择弃权'}</p><em>{item.guidance.generation_model_calls == null ? '调用数未记录' : `额外模型调用 ${item.guidance.generation_model_calls}`}</em></section>
+          <section><small>05 · 实际行动</small><strong>{node(action)}</strong><p>采用判定：{item.action_alignment.status}{item.action_alignment.blocked ? ' · 提交前阻断' : ''}</p><em>{item.decision ? `决策事件 ${item.decision.sequence}` : item.action_alignment.review_id ? `审查 ${item.action_alignment.review_id.slice(0, 8)}` : '没有已提交行动'}</em></section>
+          <section><small>06 · 工具与核验</small><strong>{item.tool ? node(item.tool.name) : '未调用工具'}</strong><p>{item.tool ? `${item.tool.status ?? '已返回'}${item.tool.invalid_result ? ' · 无效结果' : ''}` : item.verification ? '已进入目标核验' : '尚无后续结果'}</p></section>
+          <section><small>07 · 目标进展</small><strong>{progress?.status ?? '尚未记录'}</strong><p>{progress?.signals?.join(' / ') || progress?.reason || '历史样本没有行动进展归因'}</p><em>{progress?.cost_delta ? `模型 +${progress.cost_delta.model_calls ?? 0} · 工具 +${progress.cost_delta.tool_calls ?? 0}` : '成本增量未记录'}</em></section>
         </div>
         <details><summary>检查状态、局部子图、工具结果和核验原始投影</summary><JsonBlock value={item} /></details>
       </article>
@@ -149,6 +157,10 @@ function Comparison({ job }: { job?: PGJob }) {
     { label: 'v1 影子全图回退', value: id => id === 'baseline' ? '不适用' : number(job?.arms[id]?.metrics.pg_shadow_full_graph_fallbacks) },
     { label: '无进展重放阻断', value: id => id === 'baseline' ? '不适用' : number(job?.arms[id]?.metrics.pg_no_progress_repeats_blocked) },
     { label: '类型化条件干预', value: id => id === 'baseline' ? '不适用' : number(job?.arms[id]?.metrics.pg_typed_applicability_interventions) },
+    { label: '有界程序预演', value: id => id === 'baseline' ? '不适用' : number(job?.arms[id]?.metrics.pg_preplay_interventions) },
+    { label: '预测获得支持', value: id => id === 'baseline' ? '不适用' : number(job?.arms[id]?.metrics.pg_prediction_supported) },
+    { label: '预测出现反例', value: id => id === 'baseline' ? '不适用' : number(job?.arms[id]?.metrics.pg_prediction_countered) },
+    { label: '首步行动分歧', value: id => id === 'baseline' ? '不适用' : number(job?.arms[id]?.metrics.pg_prediction_diverged) },
     { label: '指导后产生进展', value: id => id === 'baseline' ? '不适用' : number(job?.arms[id]?.metrics.pg_actions_progressed) },
     { label: '指导后没有进展', value: id => id === 'baseline' ? '不适用' : number(job?.arms[id]?.metrics.pg_actions_without_progress) },
     { label: '指导后行动失败', value: id => id === 'baseline' ? '不适用' : number(job?.arms[id]?.metrics.pg_actions_failed) },
