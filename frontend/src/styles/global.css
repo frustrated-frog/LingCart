@@ -216,9 +216,11 @@ input:focus, select:focus, textarea:focus { border-color: var(--blue); box-shado
 .steering-advice b { font: 600 10px/1.3 var(--mono); }
 .steering-advice p { margin: 12px 0 8px; color: #3f3560; font-size: 12px; line-height: 1.65; }
 .steering-ledger { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.pg-guidance-ledger { grid-template-columns: minmax(0, 1fr); }
 .steering-ledger article { min-width: 0; padding: 13px; border: 1px solid var(--line); background: var(--surface); }
 .steering-ledger b { display: block; margin-top: 10px; font: 600 10px/1.3 var(--mono); overflow-wrap: anywhere; }
 .steering-ledger p { min-height: 50px; margin: 9px 0; color: var(--ink-2); font-size: 10px; line-height: 1.6; }
+.pg-guidance-ledger p { min-height: 0; }
 
 .table-wrap { overflow-x: auto; border: 1px solid var(--line); background: var(--surface); }
 table { width: 100%; border-collapse: collapse; }
@@ -465,8 +467,8 @@ button.danger { border-color: #e4b5b0 !important; color: var(--red) !important; 
 .order-main h3 { margin: 6px 0 4px; font-size: 13px; }
 .order-main p { margin: 0; color: var(--muted); font-size: 9px; }
 .order-actions { display: flex; gap: 7px; }
-button:not(.nav-link):not(.run-row):not(.spine-node):not(.case-list button):not(.after-sales-case-row):not(.product-visual):not(.composer button):not(.feature-options button) { min-height: 34px; display: inline-flex; align-items: center; justify-content: center; gap: 7px; padding: 0 11px; border: 1px solid var(--line-strong); border-radius: 3px; background: var(--surface); font-size: 10px; font-weight: 550; cursor: pointer; }
-button:not(.nav-link):hover { border-color: var(--blue); color: var(--blue); }
+button:not(.pg-lab button):not(.nav-link):not(.run-row):not(.spine-node):not(.case-list button):not(.after-sales-case-row):not(.product-visual):not(.composer button):not(.feature-options button) { min-height: 34px; display: inline-flex; align-items: center; justify-content: center; gap: 7px; padding: 0 11px; border: 1px solid var(--line-strong); border-radius: 3px; background: var(--surface); font-size: 10px; font-weight: 550; cursor: pointer; }
+button:not(.pg-lab button):not(.nav-link):hover { border-color: var(--blue); color: var(--blue); }
 button.primary { border-color: var(--blue) !important; background: var(--blue) !important; color: #fff !important; }
 button:disabled { opacity: .5; cursor: not-allowed !important; }
 
@@ -609,6 +611,10 @@ button:disabled { opacity: .5; cursor: not-allowed !important; }
 .case-record-list article > div > span:not(.status-badge) { color: var(--muted); font: 8px/1 var(--mono); }
 .case-record-list p { overflow: hidden; margin: 6px 0; color: var(--muted); font-size: 8px; white-space: nowrap; text-overflow: ellipsis; }
 .case-record-list code { display: block; overflow: hidden; color: var(--blue); font-size: 8px; white-space: nowrap; text-overflow: ellipsis; }
+.case-semantic-assessment { margin-top: 12px; padding-top: 8px; border-top: 1px dashed var(--line); }
+.case-semantic-assessment p, .case-record-list .case-plan-question { overflow: visible; white-space: normal; overflow-wrap: anywhere; font-size: 11px; line-height: 1.65; color: var(--ink-2); }
+.case-semantic-assessment blockquote { margin: 10px 0; padding-left: 10px; border-left: 2px solid var(--line-strong); overflow-wrap: anywhere; font-size: 11px; line-height: 1.65; color: var(--ink-2); }
+.case-semantic-assessment small { display: block; margin-top: 4px; font: 9px/1.4 var(--mono); color: var(--muted); }
 .evidence-reference-list { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 10px; }
 .evidence-reference-list code { padding: 4px 6px; background: var(--surface-2); color: var(--ink-2); font-size: 8px; }
 .case-action-list { padding: 11px 0 3px; }

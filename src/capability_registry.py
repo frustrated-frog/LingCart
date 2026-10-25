@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 import hashlib
 import json
 import re
+from types import MappingProxyType
 from typing import Callable, Mapping
 
 from src import tools
@@ -39,6 +40,7 @@ GENERAL_ANSWER = "GENERAL_ANSWER"
 SYSTEM_TIME = "SYSTEM_TIME"
 CALCULATE = "CALCULATE"
 AFTER_SALES_CASE = "AFTER_SALES_CASE"
+AFTER_SALES_CONTINUE = "AFTER_SALES_CONTINUE"
 MODEL_ANSWER_OPERATION = "__model_answer__"
 
 
@@ -59,6 +61,47 @@ ResultValidator = Callable[[object, Mapping[str, object]], bool]
 ResultVerifier = Callable[[object, Mapping[str, object]], object]
 ResultRenderer = Callable[[object, Mapping[str, object]], str]
 OutcomeMapper = Callable[[object, Mapping[str, object]], str]
+
+
+@dataclass(frozen=True)
+class SemanticValueCatalog:
+    """Versioned model-facing enum whose values represent semantic classes.
+
+    Unlike literal entities such as order IDs, a semantic value does not need
+    to appear verbatim in user text. It is accepted only when selected from a
+    capability-declared catalog and remains tied to the exact source quote.
+    """
+
+    version: str
+    source: str
+    values: Mapping[str, str]
+
+    def __post_init__(self) -> None:
+        if not self.version.strip() or not self.source.strip() or not self.values:
+            raise ValueError("Semantic value catalogs require version, source and values")
+        if any(not key.strip() or not description.strip() for key, description in self.values.items()):
+            raise ValueError("Semantic value catalog entries cannot be empty")
+        object.__setattr__(self, "values", MappingProxyType(dict(self.values)))
+
+    @property
+    def fingerprint(self) -> str:
+        encoded = json.dumps(
+            self.public_payload(include_fingerprint=False),
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+    def public_payload(self, *, include_fingerprint: bool = True) -> dict:
+        payload = {
+            "version": self.version,
+            "source": self.source,
+            "values": dict(self.values),
+        }
+        if include_fingerprint:
+            payload["fingerprint"] = self.fingerprint
+        return payload
 
 
 @dataclass(frozen=True)
@@ -129,6 +172,7 @@ class CapabilitySpec:
     side_effect: str = "READ_ONLY"
     missing_question: str = "请补充完成这个请求所需的关键信息。"
     metadata_dependencies: tuple[str, ...] = ()
+    semantic_value_catalogs: Mapping[str, SemanticValueCatalog] = field(default_factory=dict)
 
     def public_payload(self) -> dict:
         return {
@@ -149,6 +193,10 @@ class CapabilitySpec:
             "supports_under_specified_goal": self.supports_under_specified_goal,
             "side_effect": self.side_effect,
             "metadata_dependencies": list(self.metadata_dependencies),
+            "semantic_value_catalogs": {
+                name: catalog.public_payload()
+                for name, catalog in sorted(self.semantic_value_catalogs.items())
+            },
         }
 
 
@@ -188,6 +236,13 @@ class CapabilityRegistry:
         required_droppable = droppable & set(registration.spec.required_fields)
         if required_droppable:
             raise ValueError(f"Required fields cannot be dropped by {kind}: {sorted(required_droppable)}")
+        undeclared_catalogs = set(registration.spec.semantic_value_catalogs) - set(
+            registration.spec.accepted_fields
+        )
+        if undeclared_catalogs:
+            raise ValueError(
+                f"Semantic value catalogs must be accepted by {kind}: {sorted(undeclared_catalogs)}"
+            )
         for name, handler in registration.tools.items():
             existing = self._tools.get(name)
             if existing is not None and existing is not handler:
@@ -242,6 +297,28 @@ class CapabilityRegistry:
         if registration.normalizer is not None:
             normalized, resolver_provenance = registration.normalizer(normalized, sources)
             provenance.update(resolver_provenance)
+        for field_name, catalog in registration.spec.semantic_value_catalogs.items():
+            value = normalized.get(field_name)
+            if value in (None, ""):
+                continue
+            if not isinstance(value, str) or value not in catalog.values:
+                raise AgentError(
+                    "INVALID_CAPABILITY_ARGUMENTS",
+                    f"能力 {registration.spec.objective_kind} 的 {field_name} 不在版本化语义目录中",
+                    retryable=False,
+                )
+            provenance.setdefault(
+                field_name,
+                {
+                    "name": field_name,
+                    "raw_text": str(objective.get("source_quote") or ""),
+                    "normalized_value": value,
+                    "resolver": "model_semantic_classification",
+                    "resolver_version": catalog.version,
+                    "resolver_fingerprint": catalog.fingerprint,
+                    "source_quote": str(objective.get("source_quote") or ""),
+                },
+            )
         folded_sources = [source.casefold() for source in sources]
 
         def grounded(value: object) -> bool:
@@ -323,6 +400,14 @@ class CapabilityRegistry:
                 f"能力 {spec.objective_kind} 的参数类型无效：{', '.join(sorted(invalid_parameters))}",
                 retryable=False,
             )
+        for name, catalog in spec.semantic_value_catalogs.items():
+            value = objective.get(name)
+            if value not in (None, "") and (not isinstance(value, str) or value not in catalog.values):
+                raise AgentError(
+                    "INVALID_CAPABILITY_ARGUMENTS",
+                    f"能力 {spec.objective_kind} 的 {name} 不在版本化语义目录中",
+                    retryable=False,
+                )
         for name, maximum in spec.max_items.items():
             value = objective.get(name)
             if isinstance(value, (list, tuple)) and len(value) > maximum:
@@ -513,10 +598,17 @@ def _refund_request(objective: Mapping[str, object], _request: str) -> tuple[Com
 
 
 def _after_sales_case(objective: Mapping[str, object], request: str) -> tuple[CompiledOperation, ...]:
+    registration = get_capability_registry().registration(AFTER_SALES_CASE)
+    reason_catalog = registration.spec.semantic_value_catalogs["reason_code"]
     arguments = {
         "order_id": objective["order_id"],
         "reason_text": request,
+        "reason_code": objective["reason_code"],
+        "reason_taxonomy_version": reason_catalog.version,
+        "reason_taxonomy_fingerprint": reason_catalog.fingerprint,
     }
+    if objective.get("order_item_id"):
+        arguments["order_item_id"] = objective["order_item_id"]
     return (
         CompiledOperation("case-assessment", "after_sales", "prepare_after_sales_case", arguments),
         CompiledOperation(
@@ -529,12 +621,22 @@ def _after_sales_case(objective: Mapping[str, object], request: str) -> tuple[Co
     )
 
 
+def _continue_after_sales_case(objective: Mapping[str, object], request: str) -> tuple[CompiledOperation, ...]:
+    arguments = {"case_id": objective["case_id"], "expected_revision": objective["case_revision"]}
+    arguments.update(_args(objective, ("requirement_id", "evidence_text", "revoke_evidence_id")))
+    return (
+        CompiledOperation("case-assessment", "after_sales", "continue_after_sales_case", arguments),
+        CompiledOperation("case-proposal", "after_sales", "prepare_case_submission", {}, ("case-assessment",)),
+    )
+
+
 def _verify_after_sales_case(result: object, arguments: Mapping[str, object]) -> None:
     case = result.get("case") if isinstance(result, dict) else None
     decision = result.get("policy_decision") if isinstance(result, dict) else None
     valid = (
         isinstance(result, dict)
-        and result.get("order_id") == arguments.get("order_id")
+        and (result.get("order_id") == arguments.get("order_id") if arguments.get("order_id")
+             else result.get("case_id") == arguments.get("case_id"))
         and isinstance(result.get("case_id"), str)
         and bool(result["case_id"])
         and isinstance(result.get("revision"), int)
@@ -573,9 +675,13 @@ def _render_after_sales_case(result: object, _arguments: Mapping[str, object]) -
     }
     if result.get("case_status") == "SUBMITTED":
         return f"售后案件 {result['case_id']} 已经提交，无需重复确认。"
+    requirements = decision.get("facts", {}).get("evidence_requirements", [])
+    missing = [(r.get("semantic_assessment") or {}).get("question") or r["description"]
+               for r in requirements if r["status"] != "SATISFIED"]
     return (
         f"售后案件 {result['case_id']}：{messages[decision['outcome']]}。"
         + (f"依据：{reasons}。" if reasons else "")
+        + ("待补充：" + "；".join(missing) if missing else "")
     )
 
 
@@ -656,6 +762,7 @@ def _spec(kind: str, capability_id: str, description: str, target: str, evidence
           alternative_evidence: tuple[str, ...] = (),
           under_specified: bool = False, side_effect: str = "READ_ONLY",
           metadata_dependencies: tuple[str, ...] = (),
+          semantic_value_catalogs: Mapping[str, SemanticValueCatalog] | None = None,
           missing_question: str = "请补充完成这个请求所需的关键信息。",
           handlers: Mapping[str, object] | None = None, normalizer: Normalizer | None = None,
           operations: Mapping[str, OperationContract] | None = None) -> CapabilityRegistration:
@@ -678,6 +785,7 @@ def _spec(kind: str, capability_id: str, description: str, target: str, evidence
             supports_under_specified_goal=under_specified,
             side_effect=side_effect,
             metadata_dependencies=metadata_dependencies,
+            semantic_value_catalogs=semantic_value_catalogs or {},
             missing_question=missing_question,
         ),
         compiler,
@@ -688,7 +796,13 @@ def _spec(kind: str, capability_id: str, description: str, target: str, evidence
 
 
 def _builtin_registrations() -> tuple[CapabilityRegistration, ...]:
+    from src.after_sales.reason_taxonomy import (
+        REASON_CODE_DESCRIPTIONS,
+        REASON_TAXONOMY_SOURCE,
+        REASON_TAXONOMY_VERSION,
+    )
     from src.entity_resolution import normalize_clock_objective
+    from src.after_sales.context import normalize_case_continuation
     from src.constraint_planning import (
         CONSTRAINT_PLAN,
         CONSTRAINT_PLAN_OPERATION,
@@ -739,10 +853,17 @@ def _builtin_registrations() -> tuple[CapabilityRegistration, ...]:
             "after_sales_case",
             "POLICY_DECISION",
             _after_sales_case,
-            required=order_fields,
-            accepted=order_fields,
+            required=("order_id", "reason_code"),
+            accepted=("order_id", "order_item_id", "reason_code"),
             side_effect="REQUIRES_APPROVAL",
-            missing_question=order_question,
+            missing_question="请提供订单号，并说明具体售后原因；原因不明确时我不会猜测政策分类。",
+            semantic_value_catalogs={
+                "reason_code": SemanticValueCatalog(
+                    version=REASON_TAXONOMY_VERSION,
+                    source=REASON_TAXONOMY_SOURCE,
+                    values=REASON_CODE_DESCRIPTIONS,
+                )
+            },
             operations={
                 "prepare_after_sales_case": OperationContract(
                     handler=tools.prepare_after_sales_case,
@@ -760,6 +881,21 @@ def _builtin_registrations() -> tuple[CapabilityRegistration, ...]:
                     renderer=_render_after_sales_case,
                 )
             },
+        ),
+        _spec(
+            AFTER_SALES_CONTINUE, "after_sales.case.continue",
+            "继续当前会话的售后案件：补充政策所需原文、撤回或替换证据、重新裁决；不得把补证当成退款授权",
+            "after_sales_case", "POLICY_DECISION", _continue_after_sales_case,
+            required=("case_id", "case_revision"),
+            accepted=("case_id", "case_revision", "order_id", "requirement_id", "evidence_text", "revoke_evidence_id"),
+            side_effect="REQUIRES_APPROVAL",
+            missing_question="请明确要继续的售后案件编号或订单号；存在多个案件时我不会猜测。",
+            normalizer=normalize_case_continuation, normalizer_version="session-case-ledger/v1",
+            operations={"continue_after_sales_case": OperationContract(
+                handler=tools.continue_after_sales_case,
+                required_result_fields=("case_id", "order_id", "case_status", "revision", "policy_decision", "case"),
+                result_verifier=_verify_after_sales_case, renderer=_render_after_sales_case,
+            )},
         ),
         _spec(PAYMENT_STATUS, "payment.status.read", "查询订单支付状态", "order", "BUSINESS_DATA",
               _single("payment", "get_payment_status", order_fields), required=order_fields,

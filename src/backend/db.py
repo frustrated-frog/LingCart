@@ -184,6 +184,54 @@ class AfterSalesEvidence(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime)
 
 
+class AfterSalesEvidenceValidation(Base):
+    """不可变来源核验记录；不代表陈述内容真实或满足政策。"""
+
+    __tablename__ = "after_sales_evidence_validations"
+
+    evidence_id: Mapped[str] = mapped_column(ForeignKey("after_sales_evidence.evidence_id"), primary_key=True)
+    checksum: Mapped[str] = mapped_column(String(64))
+    status: Mapped[str] = mapped_column(String(24))
+    reason_code: Mapped[str] = mapped_column(String(64))
+    validator_version: Mapped[str] = mapped_column(String(40))
+    case_revision: Mapped[int] = mapped_column(Integer)
+    validated_at: Mapped[datetime] = mapped_column(DateTime)
+
+
+class AfterSalesSemanticAssessment(Base):
+    """不可变语义核验；绑定政策与完整证据集合，不赋予业务权限。"""
+
+    __tablename__ = "after_sales_semantic_assessments"
+    __table_args__ = (UniqueConstraint("case_id", "input_hash", name="uq_case_semantic_input"),)
+    assessment_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    case_id: Mapped[str] = mapped_column(ForeignKey("after_sales_cases.case_id"), index=True)
+    run_id: Mapped[str] = mapped_column(ForeignKey("agent_runs.run_id"))
+    policy_version_id: Mapped[str] = mapped_column(ForeignKey("policy_versions.policy_version_id"))
+    policy_checksum: Mapped[str] = mapped_column(String(64))
+    basis_hash: Mapped[str] = mapped_column(String(64))
+    input_hash: Mapped[str] = mapped_column(String(64))
+    case_revision: Mapped[int] = mapped_column(Integer)
+    payload: Mapped[dict] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime)
+
+
+class AfterSalesCasePlan(Base):
+    """案件级目标依赖与计划修订，独立于单次 Run 的执行计划。"""
+
+    __tablename__ = "after_sales_case_plans"
+    __table_args__ = (
+        UniqueConstraint("case_id", "revision", name="uq_case_plan_revision"),
+        UniqueConstraint("case_id", "case_revision", name="uq_case_plan_basis"),
+    )
+    plan_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    case_id: Mapped[str] = mapped_column(ForeignKey("after_sales_cases.case_id"), index=True)
+    revision: Mapped[int] = mapped_column(Integer)
+    case_revision: Mapped[int] = mapped_column(Integer)
+    decision_id: Mapped[str] = mapped_column(ForeignKey("policy_decisions.decision_id"))
+    payload: Mapped[dict] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime)
+
+
 class PolicyDecision(Base):
     """Append-only policy verdict with the exact facts and policy identity used."""
 

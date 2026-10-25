@@ -169,6 +169,20 @@ def parse_approval_response(user_message: str, pending_action: dict | None = Non
     compact = re.sub(r"[\s，,。.!！?？]", "", normalized)
     english = re.sub(r"[,。.！!？?]", " ", normalized)
     english = " ".join(english.split())
+    mentioned_family = (
+        "REFUND" if "退款" in normalized or "refund" in normalized
+        else "PAYMENT" if "支付" in normalized or "付款" in normalized or "payment" in normalized
+        else None
+    )
+    pending_family = None
+    if pending_action:
+        pending_family = (
+            "REFUND" if pending_action.get("type") in {"INITIATE_REFUND", "SUBMIT_AFTER_SALES_CASE"}
+            else "PAYMENT" if pending_action.get("type") == "PROCESS_PAYMENT"
+            else None
+        )
+    if mentioned_family and pending_family and mentioned_family != pending_family:
+        return APPROVAL_UNKNOWN
     cancelled = {"取消", "取消操作", "取消支付", "取消退款", "算了", "不要", "不支付", "不退款", "取消先不要执行", "取消先不要支付", "取消不退款了"}
     if compact in cancelled or re.fullmatch(r"cancel(?: (?:it|this|the payment|the refund|never mind))?|never mind|no(?: thanks)?", english):
         return APPROVAL_CANCELLED
@@ -321,8 +335,9 @@ def analyze_request(user_message: str, *, _check_clause_coverage: bool = True) -
             intents.append(REFUND_ELIGIBILITY)
         elif _has_any(normalized, request_words):
             intents.append(REFUND_REQUEST)
-        else:
-            intents.append(REFUND_ELIGIBILITY)
+        # A refund mention without a complete, proven read/action grammar is
+        # intentionally left to open semantic understanding. Defaulting it to
+        # eligibility loses case creation, reason and requested scope.
 
     if _has_any(normalized, payment_words):
         status_only = ("支付状态", "付款状态", "支付了吗", "支付成功", "payment status", "paid yet", "gone through")
@@ -430,7 +445,10 @@ def analyze_request(user_message: str, *, _check_clause_coverage: bool = True) -
         PAYMENT_STATUS,
         PAYMENT_PROCESS,
     }
-    if len(order_ids) > 1 and sum(intent in order_intents for intent in intents) > 1 and not _has_any(normalized, ("分别", "都", "各", "each", "both")):
+    if len(order_ids) > 1 and any(intent in order_intents for intent in intents) and not _has_any(
+        normalized,
+        ("分别", "都", "各", "each", "both"),
+    ):
         return TaskIntake(request=request, intents=tuple(intents), entities=entities,
                           missing_slots=("order_intent_mapping",), execution_mode=CLARIFICATION_REQUIRED,
                           confidence=.99, reason="多个订单的目标关系不明确，请分别说明每个订单要处理什么")

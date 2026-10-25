@@ -23,7 +23,7 @@ import {
   ViewTransition,
 } from '../components/SystemUI'
 
-type Tab = 'result' | 'evidence' | 'steering' | 'tools' | 'raw'
+type Tab = 'result' | 'evidence' | 'steering' | 'pg' | 'tools' | 'raw'
 
 export function RunsPage({ businessMode = false }: { businessMode?: boolean }) {
   const { runId } = useParams()
@@ -97,12 +97,13 @@ export function RunsPage({ businessMode = false }: { businessMode?: boolean }) {
           </ViewTransition>}
           <SegmentedTabs value={tab} onChange={(value) => setTab(value as Tab)} layoutId="run-detail-tab"
             items={
-              [['result', '结果与计划'], ['evidence', '上下文与证据'], ['steering', '在线监控与纠偏'], ['tools', '工具账本'], ['raw', '原始记录']]
+              [['result', '结果与计划'], ['evidence', '上下文与证据'], ['steering', '在线监控与纠偏'], ['pg', '程序图指导'], ['tools', '工具账本'], ['raw', '原始记录']]
             } />
           <ViewTransition viewKey={tab} className="tab-panel">
             {tab === 'result' && <ResultTab detail={detail} />}
             {tab === 'evidence' && <EvidenceTab detail={detail} />}
             {tab === 'steering' && <SteeringTab detail={detail} />}
+            {tab === 'pg' && <ProceduralGraphTab detail={detail} />}
             {tab === 'tools' && <ToolsTab detail={detail} />}
             {tab === 'raw' && <JsonBlock value={{ run_id: detail.run_id, harness: detail.profile, events, budget: detail.result.budget, usage: detail.result.usage, commands: detail.commands }} />}
           </ViewTransition>
@@ -114,6 +115,64 @@ export function RunsPage({ businessMode = false }: { businessMode?: boolean }) {
 
 function record(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {}
+}
+
+function ProceduralGraphTab({ detail }: { detail: RunDetail }) {
+  const events = detail.result.events ?? []
+  const guidance = events.filter((item) => item.type === 'pg_guidance')
+  const graph = record(record(detail.checkpoint.context).procedural_graph)
+  const labels: Record<string, string> = { READY: '建议已生成', EXPOSED: '已送入决策', ABSTAINED: '图不适用，已弃权', SKIPPED: '已跳过', FAILED: '指导失败', CONTEXT_OMITTED: '上下文不足，未送入决策' }
+  const reasons: Record<string, string> = { CONTEXT_BUDGET: '图或轨迹超出上下文预算', LOCALIZATION_ABSTAINED: '轨迹证据不足，定位器主动弃权', NO_OUTGOING_EDGES: '当前节点没有后继关系', NO_APPLICABLE_EDGES: '候选关系均未获得当前证据支持', RESERVED_DECISION_AND_AUDIT: '为决策和独立核验保留预算', GUIDANCE_SCHEMA_INVALID: '指导格式或引用无效' }
+  if (!guidance.length && !Object.keys(graph).length) return <div className="empty-inline">该运行尚无程序图指导记录。</div>
+  return <>
+    <DefinitionGrid items={[
+      ['图标识', String(graph.graph_id ?? guidance[0]?.graph_id ?? '未记录')],
+      ['冻结图版本', String(graph.version ?? guidance[0]?.graph_version ?? '未记录')],
+      ['指导记录', guidance.length],
+      ['指导模型调用', events.filter((item) => ['model_started', 'model_retry'].includes(item.type) && item.purpose === 'pg_guidance').length],
+    ]} />
+    <p className="muted">图在本次运行中保持冻结。候选后继保持建议性质；只有已有无进展证据的完全相同重放可以在提交前阻断，任何单次行动都不代表已经证明效果改善。</p>
+    <details><summary>查看冻结图指纹</summary><JsonBlock value={graph.sha256 ?? guidance[0]?.graph_sha256 ?? null} /></details>
+    {!guidance.length && <div className="empty-inline">已绑定图，尚未生成指导；无法判断是否实际参与决策。</div>}
+    <div className="steering-ledger pg-guidance-ledger">{guidance.map((item, index) => {
+      const exposure = events.filter((event) => event.type === 'evidence_context' && event.pg_decision_key === item.decision_key).at(-1)
+      const review = events.filter((event) => event.type === 'pg_decision_reviewed' && event.decision_key === item.decision_key).at(-1)
+      const outcome = review?.review_id ? events.filter((event) => event.type === 'pg_action_outcome'
+        && event.review_id === review.review_id).at(-1) : undefined
+      const next = events.find((event) => event.type === 'adaptive_decision' && Number(event.sequence) > Number(item.sequence)
+        && (index + 1 === guidance.length || Number(event.sequence) < Number(guidance[index + 1].sequence)))
+      const decision = record(next?.decision)
+      const status = String(exposure?.pg_status ?? item.status)
+      const edgeIds = Array.isArray(item.edge_ids) ? item.edge_ids.map(String) : []
+      const subgraph = record(item.subgraph)
+      const edges = Array.isArray(subgraph.edges) ? subgraph.edges.map(record) : []
+      const localization = record(item.localization)
+      const shadow = record(localization.shadow)
+      const confidence = typeof localization.confidence === 'number' ? `${Math.round(localization.confidence * 100)}%` : '未记录'
+      const scope = item.abstained ? '主动弃权' : item.fallback ? '全图回退' : '有界局部图'
+      const generation = record(item.generation)
+      const contract = record(item.guidance_contract)
+      const applicability = record(item.applicability)
+      const evaluations = Array.isArray(applicability.evaluations) ? applicability.evaluations.map(record) : []
+      return <article key={String(item.sequence ?? index)}>
+        <span>事件 {String(item.sequence ?? '—')} · 定位 {String(item.anchor ?? '主动弃权')} · {scope}</span>
+        <b>{labels[status] ?? status}</b>
+        <p>{String(item.guidance || reasons[String(item.reason)] || item.reason || '没有生成可用建议')}</p>
+        <small>生成方式：{generation.mode === 'deterministic-contract-v1' ? '确定性指导契约' : '模型情境化'} · 额外模型调用：{String(generation.model_calls ?? '未记录')}{Object.keys(contract).length ? ` · 契约 ${String(contract.contract_id ?? '').slice(0, 8)}` : ''}</small>
+        <small>定位器：{String(localization.algorithm ?? 'action-anchor-v1')} · 置信度：{confidence}{Object.keys(shadow).length ? ` · v1 影子：${String(shadow.anchor ?? '未知')}${shadow.fallback ? '（全图回退）' : ''}` : ''}</small>
+        {Object.keys(applicability).length > 0 && <small>条件证据：{String(applicability.status ?? '未记录')} · TRUE {Array.isArray(applicability.selected_edge_ids) ? applicability.selected_edge_ids.length : 0} · FALSE {Array.isArray(applicability.false_edge_ids) ? applicability.false_edge_ids.length : 0} · UNKNOWN {Array.isArray(applicability.unknown_edge_ids) ? applicability.unknown_edge_ids.length : 0}</small>}
+        <small>引用关系：{edgeIds.join(' / ') || '无'} · 后续行动：{String(decision.tool ?? decision.action ?? review?.actual_action ?? '尚无已提交行动')}{review ? ` · 采用审查：${String(review.status)}${review.blocked ? '（提交前阻断）' : ''}` : ''}</small>
+        {outcome && <small>行动进展：{String(outcome.progress_status ?? '未记录')} · {Array.isArray(outcome.signals) && outcome.signals.length ? outcome.signals.map(String).join(' / ') : String(outcome.progress_reason ?? '没有可核验信号')}</small>}
+        {evaluations.length > 0 && <details><summary>查看每条关系的条件求值证据</summary><div className="table-wrap"><table><thead><tr><th>关系</th><th>判定</th><th>原因</th><th>证据绑定</th></tr></thead><tbody>
+          {evaluations.map((evaluation) => <tr key={String(evaluation.edge_id)}><td>{String(evaluation.source)} → {String(evaluation.target)}<br /><code>{String(evaluation.edge_id)}</code></td><td>{String(evaluation.status)}</td><td>{String(evaluation.reason)}</td><td><JsonBlock value={record(evaluation.evaluation).evidence_bindings ?? []} /></td></tr>)}
+        </tbody></table></div></details>}
+        {edges.length > 0 && <details><summary>查看本次检索的行动关系与条件</summary><div className="table-wrap"><table><thead><tr><th>关系</th><th>条件</th><th>指导</th><th>常见错误</th></tr></thead><tbody>
+          {edges.map((edge) => <tr key={String(edge.id)}><td>{String(edge.source)} → {String(edge.target)}<br /><code>{String(edge.relation)}</code></td><td>{String(edge.condition || '无条件')}</td><td>{String(edge.guidance)}</td><td>{String(edge.pitfalls || '未记录')}</td></tr>)}
+        </tbody></table></div></details>}
+        <details><summary>查看检索与指导原始证据</summary><JsonBlock value={item} /></details>
+      </article>
+    })}</div>
+  </>
 }
 
 function SteeringTab({ detail }: { detail: RunDetail }) {

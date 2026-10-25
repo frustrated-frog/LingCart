@@ -1,0 +1,68 @@
+{
+  "schema_version": 1,
+  "profile_id": "adaptive-pg-context-v3",
+  "version": "3.0.0",
+  "display_name": "PG 可执行指导契约候选",
+  "description": "冻结轨迹状态定位，以零额外模型调用编译程序图指导契约，并在提交前审计行动采用与无进展重放。",
+  "engine": {
+    "id": "adaptive",
+    "version": "1"
+  },
+  "mechanisms": [
+    {
+      "slot": "planning",
+      "id": "bounded-model-loop",
+      "version": "1"
+    },
+    {
+      "slot": "context",
+      "id": "procedural-graph-context",
+      "version": "3",
+      "configuration": {
+        "graph_path": "research/graphs/pg-seed-v1.json",
+        "hops": 2,
+        "max_graph_chars": 10000,
+        "retrieval_strategy": "trajectory-state-v2",
+        "max_local_edges": 6,
+        "min_localization_score": 55,
+        "guidance_strategy": "deterministic-contract-v1"
+      }
+    },
+    {
+      "slot": "memory",
+      "id": "objective-ledger",
+      "version": "1"
+    },
+    {
+      "slot": "verification",
+      "id": "independent-request-audit",
+      "version": "2"
+    },
+    {
+      "slot": "tool_protocol",
+      "id": "native-strict-tools",
+      "version": "1"
+    }
+  ],
+  "capabilities": [
+    "model_directed_planning",
+    "bounded_replanning",
+    "evidence_retrieval",
+    "goal_verification",
+    "durable_resume",
+    "runtime_steering",
+    "procedural_graph_guidance",
+    "trajectory_state_localization",
+    "bounded_subgraph_retrieval",
+    "deterministic_guidance_contract",
+    "guidance_adoption_audit",
+    "no_progress_replay_guard",
+    "offline_graph_evolution"
+  ],
+  "research": {
+    "status": "candidate",
+    "source_type": "hybrid",
+    "paper_id": "arXiv:2609.09153v1",
+    "hypothesis": "待验证：在固定定位器、程序图、模型和预算下，确定性指导契约能否在减少指导成本的同时，通过采用审计与精确无进展重放阻断改善预算内任务推进。"
+  }
+}

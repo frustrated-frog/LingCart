@@ -1,0 +1,74 @@
+{
+  "schema_version": 1,
+  "profile_id": "adaptive-pg-context-v4",
+  "version": "4.0.0",
+  "display_name": "PG 状态条件规划候选",
+  "description": "冻结 V3 确定性契约，以受限类型条件和可信轨迹证据筛选当前适用边，并按目标进展、历史反馈与成本排序。",
+  "engine": {
+    "id": "adaptive",
+    "version": "1"
+  },
+  "mechanisms": [
+    {
+      "slot": "planning",
+      "id": "bounded-model-loop",
+      "version": "1"
+    },
+    {
+      "slot": "context",
+      "id": "procedural-graph-context",
+      "version": "4",
+      "configuration": {
+        "graph_path": "research/graphs/pg-seed-v2.json",
+        "hops": 2,
+        "max_graph_chars": 10000,
+        "retrieval_strategy": "trajectory-state-v2",
+        "max_local_edges": 6,
+        "min_localization_score": 55,
+        "guidance_strategy": "deterministic-contract-v1",
+        "applicability_strategy": "typed-evidence-v1",
+        "path_ranking_strategy": "goal-progress-cost-v1"
+      }
+    },
+    {
+      "slot": "memory",
+      "id": "objective-ledger",
+      "version": "1"
+    },
+    {
+      "slot": "verification",
+      "id": "independent-request-audit",
+      "version": "2"
+    },
+    {
+      "slot": "tool_protocol",
+      "id": "native-strict-tools",
+      "version": "1"
+    }
+  ],
+  "capabilities": [
+    "model_directed_planning",
+    "bounded_replanning",
+    "evidence_retrieval",
+    "goal_verification",
+    "durable_resume",
+    "runtime_steering",
+    "procedural_graph_guidance",
+    "trajectory_state_localization",
+    "bounded_subgraph_retrieval",
+    "deterministic_guidance_contract",
+    "guidance_adoption_audit",
+    "no_progress_replay_guard",
+    "typed_edge_conditions",
+    "evidence_grounded_applicability",
+    "condition_aware_path_ranking",
+    "action_progress_attribution",
+    "offline_graph_evolution"
+  ],
+  "research": {
+    "status": "candidate",
+    "source_type": "hybrid",
+    "paper_id": "arXiv:2609.09153v1",
+    "hypothesis": "待验证：在固定模型、Runtime 与确定性指导契约下，按可信轨迹证据筛选程序边并反馈真实目标进展，能否减少不适用指导、别名重放与无效工具成本。"
+  }
+}

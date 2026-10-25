@@ -341,6 +341,13 @@ class RunStore:
             result['events'] = events
             conversation = session.get(Conversation, run.session_id)
             pending = result.get("pending_action")
+            if pending and pending.get("action_id"):
+                stored_action = session.get(PendingAction, pending["action_id"])
+                if stored_action is not None and stored_action.status not in {"OPEN", "APPROVED"}:
+                    # 工具事务可能已关闭授权；旧会话快照不能将它重新带回结果。
+                    pending = None
+                    result["pending_action"] = None
+                    state["pending_action"] = None
             if pending:
                 pending = dict(pending)
                 pending.setdefault("action_id", uuid.uuid4().hex)

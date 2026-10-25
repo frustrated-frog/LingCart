@@ -93,6 +93,24 @@ class PolicyEvaluation(BaseModel):
     input_hash: str
 
 
+class EvidenceRequirement(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    requirement_id: str
+    policy_version_id: str
+    policy_checksum: str
+    target_case_id: str
+    evidence_type: str
+    description: str
+    accepted_sources: tuple[str, ...]
+    validation_condition: str
+    max_age_days: int | None = None
+    status: str
+    evidence_refs: tuple[str, ...] = ()
+    rejected_evidence: dict[str, str] = Field(default_factory=dict)
+    semantic_assessment: dict[str, Any] | None = None
+
+
 class CaseProjection(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -114,6 +132,7 @@ class CaseProjection(BaseModel):
     latest_decision: dict[str, Any] | None = None
     evidence: tuple[dict[str, Any], ...] = ()
     events: tuple[dict[str, Any], ...] = ()
+    plans: tuple[dict[str, Any], ...] = ()
 
 
 class CaseRunReference(BaseModel):

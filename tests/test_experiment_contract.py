@@ -45,6 +45,43 @@ def test_contract_rejects_missing_guard_and_unreviewed_runtime_change():
         ExperimentSpec.model_validate_json(json.dumps(payload))
 
 
+def test_pg_contract_freezes_context_only_and_disjoint_dev_selection():
+    from eval.run_live_eval import load_dataset
+    from src.pg_learning import EvolutionSpec
+    folder = ROOT / 'research/experiments/pg-context-v1'
+    experiment = ExperimentSpec.from_path(folder / 'experiment-spec.json')
+    evolution = EvolutionSpec.model_validate_json((folder / 'evolution-spec.json').read_text())
+    evolution.validate_dataset(load_dataset(ROOT / evolution.dataset))
+    assert experiment.candidate_profile == 'adaptive-pg-context-v1'
+    assert [(c.slot, c.implementation_id) for c in experiment.changes] == [('context', 'procedural-graph-context')]
+    assert len(set(evolution.train_cases) | set(evolution.validation_cases)) == 10
+    assert experiment.repeats == evolution.repeats == 3
+
+
+def test_pg_guidance_contract_experiment_freezes_v2_localization_as_baseline():
+    experiment = ExperimentSpec.from_path(
+        ROOT / 'research/experiments/pg-guidance-adoption-v1/experiment-spec.json')
+    assert experiment.baseline_profile == 'adaptive-pg-context-v2'
+    assert experiment.candidate_profile == 'adaptive-pg-context-v3'
+    assert [(change.kind, change.slot, change.implementation_id) for change in experiment.changes] == [
+        ('mechanism', 'context', 'procedural-graph-context'),
+    ]
+    assert {'model_attempts', 'tool_calls'} <= {rule.name for rule in experiment.guard_metrics}
+
+
+def test_pg_state_condition_experiment_uses_v3_baseline_and_fresh_holdout():
+    from eval.run_live_eval import load_dataset
+
+    experiment = ExperimentSpec.from_path(
+        ROOT / 'research/experiments/pg-state-conditioned-planning-v1/experiment-spec.json')
+    dataset = load_dataset(ROOT / experiment.dataset)
+    assert experiment.baseline_profile == 'adaptive-pg-context-v3'
+    assert experiment.candidate_profile == 'adaptive-pg-context-v4'
+    assert dataset['split_counts'] == {'dev': 2, 'test': 4}
+    assert all(case['id'].startswith('PGS-D') for case in dataset['cases'] if case['split'] == 'dev')
+    assert all(case['id'].startswith('PGS-H') for case in dataset['cases'] if case['split'] == 'test')
+    assert 'PG13' not in {case['id'] for case in dataset['cases']}
+
 def test_contract_rejects_reversed_guards_and_requires_a_cost_metric():
     payload = json.loads((ROOT / 'research/templates/experiment-spec.json').read_text())
     payload['guard_metrics'][0]['objective'] = 'minimize'

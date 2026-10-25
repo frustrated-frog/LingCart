@@ -141,6 +141,8 @@ def dataset_catalog(*, include_cases: bool = True) -> list[dict]:
          "使用真实模型执行的消费服务任务，开发集用于调试，测试集用于最终结论。"),
         ("adaptive-agent-v1", "自主 Agent 专项集", "eval/adaptive_tasks.json", "adaptive", "live",
          "覆盖自主规划、证据读取、目标核验、重规划与运行时调整的专项任务。"),
+        ("pg-challenges-v1", "PG 程序图挑战集", "eval/pg_challenge_tasks.json", "adaptive", "live",
+         "18 个独立情境族；训练、验证、测试各 6 项，覆盖恢复、依赖、多目标与环境变化。"),
     )
     datasets = []
     for dataset_id, display_name, relative_path, suite, execution_source, description in definitions:

@@ -75,6 +75,7 @@ export const TOOL_LABELS: Record<string, string> = {
   query_catalog: '执行结构化目录查询',
   prepare_after_sales_case: '建立并核验售后案件', prepare_case_submission: '准备售后提交',
   submit_after_sales_case: '提交售后案件',
+  continue_after_sales_case: '补证并重新核验案件',
   select_product: '核验并选择商品', read_clock: '读取当前时间', calculate: '执行计算',
   __model_answer__: '生成知识回答',
 }
@@ -85,6 +86,12 @@ export const CAPABILITY_LABELS: Record<string, string> = {
   tool_ledger: '工具调用账本', model_directed_planning: '模型驱动规划', bounded_replanning: '有界重规划',
   evidence_retrieval: '证据检索', objective_first_context: '目标证据优先上下文',
   ace_frozen_playbook: 'ACE 冻结策略手册', offline_experience_learning: '离线经验学习',
+  procedural_graph_guidance: '程序图情境指导', offline_graph_evolution: '离线程序图演化',
+  trajectory_state_localization: '轨迹状态定位', bounded_subgraph_retrieval: '有界子图检索',
+  deterministic_guidance_contract: '确定性指导契约', guidance_adoption_audit: '指导采用审计',
+  typed_edge_conditions: '类型化程序边条件', evidence_grounded_applicability: '证据约束的适用性判定',
+  condition_aware_path_ranking: '条件感知路径排序', action_progress_attribution: '行动进展归因',
+  no_progress_replay_guard: '无进展重放保护',
   goal_verification: '目标核验', durable_resume: '持久化恢复', runtime_steering: '运行时调整',
   deterministic_trajectory_monitoring: '确定性轨迹监控', conditional_corrective_advice: '条件式纠偏建议',
   precommit_action_intervention: '执行前动作干预',
@@ -97,6 +104,7 @@ export const MECHANISM_LABELS: Record<string, string> = {
   'ace-playbook-context': 'ACE 策略手册上下文', 'objective-ledger': '目标账本',
   'independent-request-audit': '独立请求审查', 'native-strict-tools': '原生严格工具协议',
   'liveplan-online-steering': 'LivePlan 在线监控与纠偏',
+  'procedural-graph-context': 'PG 程序图上下文',
 }
 
 export const ENGINE_LABELS: Record<string, string> = {
@@ -127,6 +135,9 @@ export const METRIC_LABELS: Record<string, string> = {
 }
 
 const EVENT_LABELS: Record<string, [string, string]> = {
+  case_plan_revised: ['案件', '修订证据与行动计划'],
+  evidence_semantic_assessed: ['核验', '检查材料充分性与冲突'],
+  evidence_semantic_reused: ['核验', '复用材料语义核验'],
   agent_status_changed: ['状态', 'Agent 执行状态'], response_started: ['回答', '开始生成回答'],
   response_delta: ['回答', '接收回答分片'], response_completed: ['回答', '回答生成完成'],
   response_failed: ['回答', '回答生成中断'],
@@ -145,6 +156,11 @@ const EVENT_LABELS: Record<string, [string, string]> = {
   replan_requested: ['重规划', '请求重规划'], adaptive_decision: ['决策', '自主决策'],
   decision_rejected: ['决策', '拒绝无效决策'], approval_required: ['审批', '需要用户确认'],
   context_compacted: ['上下文', '压缩上下文'], evidence_context: ['证据', '装配证据上下文'],
+  pg_guidance: ['程序图', '生成程序图情境指导'],
+  pg_decision_reviewed: ['程序图', '审查程序图指导采用'],
+  pg_action_outcome: ['程序图', '记录程序图指导后的真实进展'],
+  goal_arguments_normalized: ['语义', '规范化目标目录编码'],
+  tool_arguments_normalized: ['语义', '规范化工具目录参数'],
   evidence_read: ['证据', '读取证据'], constraint_binding_proposed: ['约束', '生成映射提案'],
   constraint_binding_unresolved: ['约束', '等待兼容证据'], constraint_binding_rejected: ['审查', '拒绝映射提案'],
   constraint_bindings_refined: ['约束', '提交约束映射'], decision_action_surface: ['预算', '收敛决策动作面'],
@@ -159,8 +175,9 @@ const EVENT_LABELS: Record<string, [string, string]> = {
 }
 
 const MODEL_PURPOSE_LABELS: Record<string, string> = {
-  dialogue_understanding: '对话理解', goal: '目标提取', planner: '任务规划',
+  dialogue_understanding: '对话理解', evidence_verification: '证据语义核验', goal: '目标提取', planner: '任务规划',
   agent: '智能体执行', final_response: '最终回答', audit: '独立审查', liveplan_advisor: 'LivePlan 纠偏建议',
+  pg_guidance: '程序图指导', pg_refiner: '程序图演化',
 }
 
 export function localizeEngineeringText(value: string): string {

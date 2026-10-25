@@ -60,7 +60,7 @@ REFUNDS = [
 ]
 
 DEFAULT_AFTER_SALES_POLICY_ID = "standard-return-refund"
-DEFAULT_AFTER_SALES_POLICY_VERSION = "2026-01"
+DEFAULT_AFTER_SALES_POLICY_VERSION = "2026-02"
 DEFAULT_AFTER_SALES_POLICY_VERSION_ID = (
     f"{DEFAULT_AFTER_SALES_POLICY_ID}:{DEFAULT_AFTER_SALES_POLICY_VERSION}"
 )
@@ -75,6 +75,20 @@ DEFAULT_AFTER_SALES_POLICY_RULES = {
         "DAMAGED": ["DAMAGE_DESCRIPTION"],
         "NOT_AS_DESCRIBED": ["ISSUE_DESCRIPTION"],
         "CHANGED_MIND": ["ITEM_CONDITION", "ORIGINAL_PACKAGING"],
+    },
+}
+LEGACY_AFTER_SALES_POLICY_RULES = dict(DEFAULT_AFTER_SALES_POLICY_RULES)
+DEFAULT_AFTER_SALES_POLICY_RULES = {
+    **DEFAULT_AFTER_SALES_POLICY_RULES,
+    "evidence_acceptance": {
+        kind: {"accepted_sources": ["CUSTOMER_STATEMENT"],
+               "condition": "CUSTOMER_ATTESTATION", "description": description, "max_age_days": 30}
+        for kind, description in {
+            "DAMAGE_DESCRIPTION": "请具体描述商品损坏的位置与表现；本政策接受用户陈述，不将其视为独立鉴定。",
+            "ISSUE_DESCRIPTION": "请说明商品与描述不符的具体表现；本政策接受用户陈述。",
+            "ITEM_CONDITION": "请说明商品是否使用、当前状态及完整性。",
+            "ORIGINAL_PACKAGING": "请说明原包装及附件的保留情况。",
+        }.items()
     },
 }
 
@@ -133,6 +147,9 @@ def seed(session) -> None:
                 )
             )
     if session.get(PolicyVersion, DEFAULT_AFTER_SALES_POLICY_VERSION_ID) is None:
+        legacy = session.get(PolicyVersion, f"{DEFAULT_AFTER_SALES_POLICY_ID}:2026-01")
+        if legacy is not None and legacy.checksum == _json_checksum(LEGACY_AFTER_SALES_POLICY_RULES):
+            legacy.status = "RETIRED"
         session.add(
             PolicyVersion(
                 policy_version_id=DEFAULT_AFTER_SALES_POLICY_VERSION_ID,
@@ -142,7 +159,7 @@ def seed(session) -> None:
                 status="ACTIVE",
                 effective_from=datetime(2026, 1, 1),
                 rules=DEFAULT_AFTER_SALES_POLICY_RULES,
-                source_ref="DEMO_POLICY:standard-return-refund:2026-01",
+                source_ref=f"DEMO_POLICY:{DEFAULT_AFTER_SALES_POLICY_VERSION_ID}",
                 checksum=_json_checksum(DEFAULT_AFTER_SALES_POLICY_RULES),
                 created_at=datetime(2026, 1, 1),
             )

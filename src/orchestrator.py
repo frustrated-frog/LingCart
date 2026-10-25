@@ -322,11 +322,17 @@ def _run_orchestrator(user_message: str, history: list | None = None, pending_ac
         context.record("preference_default_applied", fields=sorted(preference_defaults), path="deterministic")
 
     approval_decision = parse_approval_response(user_message, pending_action) if pending_action else None
+    standalone_approval = parse_approval_response(user_message) if pending_action else None
+    mismatched_approval = bool(
+        pending_action
+        and approval_decision not in {APPROVAL_CONFIRMED, APPROVAL_CANCELLED}
+        and standalone_approval in {APPROVAL_CONFIRMED, APPROVAL_CANCELLED}
+    )
     active_execution_mode = (
         "APPROVAL"
         if pending_action
         and approval_decision in {APPROVAL_CONFIRMED, APPROVAL_CANCELLED}
-        else intake.execution_mode
+        else CLARIFICATION_REQUIRED if mismatched_approval else intake.execution_mode
     )
     if pending_action and approval_decision == APPROVAL_CONFIRMED:
         result = execute_approved_action(pending_action, user_message, run_id)
@@ -339,6 +345,17 @@ def _run_orchestrator(user_message: str, history: list | None = None, pending_ac
             route="APPROVAL",
             status="CANCELLED",
             terminal_reason="USER_CANCELLED_ACTION",
+        )
+    elif mismatched_approval:
+        result = _simple_result(
+            intake,
+            run_id,
+            reply="你的回复指向了另一类操作，当前待确认操作保持不变；请明确确认或取消当前操作。",
+            agent="intake",
+            route="CLARIFY",
+            status="WAITING_CLARIFICATION",
+            terminal_reason="APPROVAL_ACTION_MISMATCH",
+            pending_action=pending_action,
         )
     elif intake.execution_mode == DIRECT:
         result = execute_direct(intake, run_id)
@@ -459,7 +476,12 @@ def run_orchestrator(user_message: str, history: list | None = None, pending_act
         # present an unusable button and a later run would hit APPROVAL_ALREADY_USED.
         pending_after_error = (
             None
-            if error.code in {"APPROVAL_STALE", "INVALID_APPROVAL", "APPROVAL_ALREADY_USED"}
+            if error.code in {
+                "APPROVAL_STALE",
+                "INVALID_APPROVAL",
+                "APPROVAL_ALREADY_USED",
+                "REFUND_SCOPE_MISMATCH",
+            }
             else pending_action
         )
         context.record("terminal", status=status, reason=error.code)

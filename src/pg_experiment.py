@@ -1,0 +1,186 @@
+"""PG 挑战集、冻结实验计划与三组对照判据；不触碰生产 Runtime。"""
+from collections import Counter
+from copy import deepcopy
+from pathlib import Path
+
+from eval.run_live_eval import load_dataset, summarize, evaluate_gate, fingerprint as evaluation_fingerprint
+from src.pg_learning import EvolutionSpec, comparable
+from src.procedural_graph import ProceduralGraph, canonical
+
+ROOT = Path(__file__).resolve().parents[1]
+DATASET = ROOT / 'eval/pg_challenge_tasks.json'
+SEED = ROOT / 'research/graphs/pg-seed-v1.json'
+ARMS = ('baseline', 'seed', 'evolved')
+SMOKE_CASES = {
+    'train': ('PG01',),
+    'validation': ('PG07',),
+    'test': ('PG13',),
+}
+
+
+def challenge_dataset():
+    dataset = load_dataset(DATASET)
+    families, requests = set(), set()
+    for case in dataset['cases']:
+        partition = case.get('learning_partition')
+        if partition not in {'train', 'validation', 'test'} or case['split'] != ('test' if partition == 'test' else 'dev'):
+            raise ValueError('PG 分组必须将训练、验证和测试隔离')
+        family = case.get('scenario_family')
+        request = canonical(case['turns'])
+        if not family or family in families or request in requests:
+            raise ValueError('PG 情境族与请求不能重复或跨组')
+        families.add(family)
+        requests.add(request)
+    if Counter(c['learning_partition'] for c in dataset['cases']) != {'train': 6, 'validation': 6, 'test': 6}:
+        raise ValueError('PG v1 必须完整冻结 6/6/6 个情境')
+    return dataset
+
+
+def plan(preset):
+    if preset not in {'smoke', 'full'}:
+        raise ValueError('未知实验配置')
+    dataset = challenge_dataset()
+    groups = {part: [c['id'] for c in dataset['cases'] if c['learning_partition'] == part]
+              for part in ('train', 'validation', 'test')}
+    spec = EvolutionSpec.model_validate_json((ROOT / 'research/experiments/pg-localization-v2/evolution-spec.json').read_text())
+    spec.validate_dataset(dataset)
+    if (list(spec.train_cases) != groups['train'] or list(spec.validation_cases) != groups['validation']
+            or spec.dataset != DATASET.relative_to(ROOT).as_posix()):
+        raise ValueError('PG 训练配置与冻结挑战集不一致')
+    if preset == 'smoke':
+        groups = {part: list(SMOKE_CASES[part]) for part in ('train', 'validation', 'test')}
+        spec = spec.model_copy(update={
+            'train_cases': SMOKE_CASES['train'],
+            'validation_cases': SMOKE_CASES['validation'],
+            'repeats': 1,
+            'iterations': 1,
+            'max_model_calls_per_run': 8,
+            # 这些字段是单 Run / Refiner 的硬限制。Runtime 使用保守 token unit
+            # （无 usage 时为 UTF-8 字节预留），因此这里不会把未知用量当成 0。
+            'max_prompt_tokens_per_run': 48000,
+            'max_completion_tokens_per_run': 2000,
+            'max_seconds_per_run': 60,
+            'max_refiner_prompt_tokens': 60000,
+            'max_refiner_completion_tokens': 1500,
+            'max_provider_attempts_per_call': 1,
+        })
+    repeats, iterations = spec.repeats, spec.iterations
+    samples = repeats * (len(groups['validation']) + iterations * (len(groups['train']) + len(groups['validation']))
+                         + 3 * len(groups['test']))
+    max_model_attempts = samples * spec.max_model_calls_per_run + iterations * 2
+    max_token_units = (samples * (spec.max_prompt_tokens_per_run + spec.max_completion_tokens_per_run)
+                       + iterations * (spec.max_refiner_prompt_tokens + spec.max_refiner_completion_tokens))
+    return dict(preset=preset, spec=spec.model_dump(mode='json'), groups=groups,
+                max_samples=samples, max_model_attempts=max_model_attempts, max_token_units=max_token_units,
+                dataset_sha256=evaluation_fingerprint(dataset), seed_sha256=ProceduralGraph.from_path(SEED).fingerprint,
+                cost_guard=dict(max_extra_model_attempts_per_sample=2, max_tool_call_regression=0,
+                                max_model_attempts=max_model_attempts, max_token_units=max_token_units))
+
+
+def behavior_metrics(report):
+    from src.pg_evidence import project_sample_evidence
+    samples = report.get('samples', [])
+    recovery = exposed = repeated = 0
+    triggered = 0
+    for sample in samples:
+        sample_exposed = sample_triggered = False
+        for turn in sample.get('turns', []):
+            result = turn.get('result', {})
+            sample_triggered |= bool(result.get('evaluation_environment', {}).get('fired'))
+            seen = set()
+            for event in result.get('events', []):
+                sample_exposed |= (event.get('type') == 'mechanism_applied'
+                                   and event.get('mechanism_id') == 'procedural-graph-context')
+                if event.get('type') != 'tool_result':
+                    continue
+                value = event.get('result')
+                invalid = isinstance(value, dict) and (value.get('error') or value.get('success') is False
+                                                       or value.get('products') == [])
+                if invalid:
+                    key = canonical([event.get('tool'), event.get('args'), value])
+                    repeated += key in seen
+                    seen.add(key)
+        triggered += sample_triggered
+        recovery += sample_triggered and sample['passed']
+        exposed += sample_exposed
+    evidence = [project_sample_evidence(sample) for sample in samples]
+    interventions = [item for projection in evidence for turn in projection['turns']
+                     for item in turn['interventions']]
+    failure_stages = Counter(projection['summary']['failure_stage'] for projection in evidence
+                             if projection['summary']['failure_stage'])
+    metrics = summarize(samples, report.get('manifest', {}).get('repeats', 1))
+    return {**metrics, 'triggered_samples': triggered, 'recovered_samples': recovery,
+            'recovery_rate': recovery / triggered if triggered else None,
+            'pg_exposed_samples': exposed, 'pg_exposure_rate': exposed / len(samples) if samples else None,
+            'repeated_ineffective_calls': repeated,
+            'pg_interventions': len(interventions),
+            'pg_action_aligned': sum(item['action_alignment']['status'] == 'ALIGNED' for item in interventions),
+            'pg_action_diverged': sum(item['action_alignment']['status'] == 'DIVERGED' for item in interventions),
+            'pg_no_progress_repeats_blocked': sum(item['action_alignment']['status'] == 'BLOCKED'
+                                                   for item in interventions),
+            'pg_typed_applicability_interventions': sum(
+                bool(item.get('applicability', {}).get('strategy')) for item in interventions),
+            'pg_actions_progressed': sum(
+                (item.get('action_progress') or {}).get('status') == 'PROGRESSED' for item in interventions),
+            'pg_actions_without_progress': sum(
+                (item.get('action_progress') or {}).get('status') == 'NO_PROGRESS' for item in interventions),
+            'pg_actions_failed': sum(
+                (item.get('action_progress') or {}).get('status') == 'FAILED' for item in interventions),
+            'pg_deterministic_contracts': sum(item['guidance'].get('generation_mode') == 'deterministic-contract-v1'
+                                              for item in interventions),
+            'pg_guidance_model_calls': sum(item['guidance'].get('generation_model_calls') or 0
+                                           for item in interventions),
+            'pg_localization_fallbacks': sum(item['localization']['fallback'] for item in interventions),
+            'pg_localization_abstentions': sum(item['localization']['abstained'] for item in interventions),
+            'pg_shadow_disagreements': sum(item['localization']['shadow_changed'] for item in interventions),
+            'pg_shadow_full_graph_fallbacks': sum(bool((item['localization'].get('shadow') or {}).get('fallback'))
+                                                   for item in interventions),
+            'failure_stages': dict(sorted(failure_stages.items()))}
+
+
+def test_contract(candidate, baseline, repeats):
+    import json
+    contract = json.loads((ROOT / 'research/experiments/pg-localization-v2/experiment-spec.json').read_text())
+    contract.update(experiment_id='pg-challenge-' + candidate['profile_id'][-24:],
+        candidate_profile=candidate['profile_id'], baseline_profile=baseline['profile_id'],
+        dataset=DATASET.relative_to(ROOT).as_posix(), repeats=repeats)
+    context = next(m for m in candidate['mechanisms'] if m['slot'] == 'context')
+    contract['changes'][0]['paths'] = list(context['source_files'])
+    return contract
+
+
+def comparison(reports, frozen, contracts):
+    """以原始样本重算指标。冒烟、替身、缺项或未演化均不宣称收益。"""
+    expected = Counter((case, repetition) for case in frozen['groups']['test']
+                       for repetition in range(1, frozen['spec']['repeats'] + 1))
+    failures = []
+    for arm in ARMS:
+        report = reports[arm]
+        manifest = report.get('manifest', {})
+        if (report.get('status') != 'COMPLETED' or manifest.get('split') != 'test'
+                or manifest.get('dataset_sha256') != frozen['dataset_sha256']
+                or Counter((s.get('case_id'), s.get('repetition')) for s in report.get('samples', [])) != expected
+                or any(s.get('split') != 'test' or not s.get('adaptive_verified') for s in report.get('samples', []))):
+            failures.append(f'{arm}: 样本不完整或数据身份不符')
+        if not comparable(reports['baseline'], report):
+            failures.append(f'{arm}: 数据、源码、模型或预算不可比')
+    gates = {}
+    for arm, base in (('seed', 'baseline'), ('evolved', 'seed')):
+        candidate = deepcopy(reports[arm])
+        contract = contracts.get(arm)
+        if contract is None:
+            gates[arm] = dict(passed=False, failures=['没有保留新的图结构，演化组仍使用种子图'])
+            continue
+        candidate['manifest']['experiment_spec'] = contract
+        errors = evaluate_gate(candidate, reports[base])
+        allowance = frozen['cost_guard']['max_extra_model_attempts_per_sample'] * len(expected)
+        if candidate['metrics']['model_attempts'] > reports[base]['metrics']['model_attempts'] + allowance:
+            errors.append('模型调用成本超过每样本额外 2 次的预设上限')
+        gates[arm] = dict(passed=not errors, failures=errors)
+    live = all(r.get('execution_source') == 'live_provider' and r.get('live_verified') for r in reports.values())
+    valid = live and not failures and all(g['passed'] for g in gates.values())
+    improved = reports['evolved']['metrics']['mean_success_rate'] > reports['seed']['metrics']['mean_success_rate']
+    conclusion = ('SMOKE_ONLY' if frozen['preset'] == 'smoke' else 'TEST_HARNESS' if not live else
+                  'INCONCLUSIVE' if not valid else 'OBSERVED_IMPROVEMENT' if improved else 'NO_REGRESSION')
+    return dict(conclusion=conclusion, gates=gates, failures=failures, promotion_status='candidate',
+                evidence_valid=valid, statistical_significance=None)

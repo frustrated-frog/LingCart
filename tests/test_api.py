@@ -64,7 +64,7 @@ def test_engineering_overview_exposes_real_registry_and_aggregates_only():
     assert response.status_code == 200
     payload = response.json()
     assert payload['counts']['profiles'] >= 3
-    assert payload['counts']['dataset_cases'] == 100
+    assert payload['counts']['dataset_cases'] == 118
     assert {item['profile_id'] for item in payload['profiles']} >= {
         'baseline-v1', 'adaptive-v1', 'adaptive-objective-context-v1'}
     assert all('cases' not in item for item in payload['datasets'])

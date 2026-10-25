@@ -17,7 +17,11 @@ from src.after_sales import (
 )
 from src.backend.db import (
     AfterSalesCaseEvent,
+    AgentRun,
+    Conversation,
+    Order,
     OrderItem,
+    Payment,
     PolicyDecision,
     PolicyVersion,
     Refund,
@@ -38,6 +42,12 @@ def session():
     init_db(engine)
     with get_session_factory(engine)() as db_session:
         seed(db_session)
+        db_session.add(Conversation(session_id="conversation-1", state={}))
+        db_session.flush()
+        db_session.add(AgentRun(run_id="evidence-run", session_id="conversation-1", request_id="evidence",
+                                request="包装完好但商品外壳开裂；实际功能与商品说明不一致", status="SUCCEEDED",
+                                created_at=datetime(2026, 5, 25), limits={}))
+        db_session.commit()
         yield db_session
 
 
@@ -60,8 +70,8 @@ def _evidence(description="包装完好但商品外壳开裂"):
     return EvidenceCommand(
         evidence_type="DAMAGE_DESCRIPTION",
         source_type="CUSTOMER_STATEMENT",
-        source_ref="conversation-1:message-2",
-        payload={"description": description},
+        source_ref="agent_runs:evidence-run:request",
+        payload={"statement": description},
         observed_at=datetime(2026, 6, 7, 9, 0),
     )
 
@@ -178,6 +188,7 @@ def test_policy_decision_requires_evidence_then_becomes_eligible(session):
     first = engine.evaluate(case.case_id, as_of=datetime(2026, 6, 20, 12, 0))
     assert first.outcome == PolicyOutcome.NEEDS_EVIDENCE
     assert first.reason_codes == ("MISSING_EVIDENCE:DAMAGE_DESCRIPTION",)
+    assert first.facts["refund_scope"]["alignment"] == "EXACT"
     waiting = service.record_policy_decision(
         case.case_id,
         first,
@@ -193,6 +204,9 @@ def test_policy_decision_requires_evidence_then_becomes_eligible(session):
         idempotency_key="evidence-1",
         expected_revision=2,
     )
+    from tests.evidence_fixtures import record_assessment_fixture
+    assert engine.evaluate(case.case_id, as_of=datetime(2026, 6, 20, 12)).outcome == PolicyOutcome.NEEDS_EVIDENCE
+    record_assessment_fixture(session, with_evidence)
     second = engine.evaluate(case.case_id, as_of=datetime(2026, 6, 20, 12, 0))
     assert second.outcome == PolicyOutcome.ELIGIBLE
     assert second.input_hash != first.input_hash
@@ -223,6 +237,91 @@ def test_policy_decision_requires_evidence_then_becomes_eligible(session):
     assert replay.revision == 4
 
 
+def test_policy_missing_or_unknown_reason_fails_closed(session):
+    service = AfterSalesCaseService(session)
+    missing_case = service.open_case(_command(request_key="missing-reason", reason_code=None))
+    missing = AfterSalesPolicyEngine(session).evaluate(
+        missing_case.case_id,
+        as_of=datetime(2026, 6, 20, 12, 0),
+    )
+
+    assert missing.outcome == PolicyOutcome.NEEDS_EVIDENCE
+    assert missing.reason_codes == ("AFTER_SALES_REASON_REQUIRED",)
+    assert "CLARIFY_REASON" in missing.allowed_actions
+
+    unknown_case = service.open_case(_command(request_key="unknown-reason", reason_code="OTHER"))
+    unknown = AfterSalesPolicyEngine(session).evaluate(
+        unknown_case.case_id,
+        as_of=datetime(2026, 6, 20, 12, 0),
+    )
+
+    assert unknown.outcome == PolicyOutcome.MANUAL_REVIEW
+    assert unknown.reason_codes == ("AFTER_SALES_REASON_NOT_SUPPORTED",)
+
+
+def test_line_item_case_cannot_authorize_order_level_refund_for_multi_item_order(session):
+    session.add(
+        OrderItem(
+            item_id="OI-1001-2",
+            order_id=1001,
+            line_number=2,
+            name="附加配件",
+            quantity=1,
+            unit_price_minor=1200,
+            currency="CNY",
+            attributes={},
+        )
+    )
+    session.get(Order, 1001).amount = 91.99
+    session.scalar(select(Payment).where(Payment.order_id == 1001)).amount = 91.99
+    session.flush()
+    service = AfterSalesCaseService(session)
+    case = service.open_case(
+        _command(
+            request_key="multi-item-scope",
+            order_item_id="OI-1001-1",
+            reason_code="NOT_AS_DESCRIBED",
+        )
+    )
+    case = service.add_evidence(
+        case.case_id,
+        EvidenceCommand(
+            evidence_type="ISSUE_DESCRIPTION",
+            source_type="CUSTOMER_STATEMENT",
+            source_ref="conversation-1:multi-item-description",
+            payload={"description": "耳机功能与说明不一致"},
+            observed_at=datetime(2026, 6, 20, 9, 0),
+        ),
+        idempotency_key="multi-item-evidence",
+        expected_revision=case.revision,
+    )
+
+    decision = AfterSalesPolicyEngine(session).evaluate(
+        case.case_id,
+        as_of=datetime(2026, 6, 20, 12, 0),
+    )
+
+    assert decision.outcome == PolicyOutcome.MANUAL_REVIEW
+    assert decision.reason_codes == ("REFUND_SCOPE_REQUIRES_LINE_ITEM_EXECUTION",)
+    assert decision.facts["refund_scope"] == {
+        "requested_scope": {
+            "type": "ORDER_ITEM",
+            "order_item_id": "OI-1001-1",
+            "amount_minor": 7999,
+        },
+        "execution_scope": {"type": "ORDER", "order_id": 1001, "amount_minor": 9199},
+        "alignment": "REQUIRES_SCOPED_REFUND",
+        "mismatch_reasons": [
+            "ORDER_HAS_MULTIPLE_LINE_ITEMS",
+            "ORDER_AND_LINE_ITEM_AMOUNTS_DIFFER",
+        ],
+        "order_item_count": 2,
+        "order_amount_minor": 9199,
+        "payment_amount_minor": 9199,
+    }
+    assert "ESCALATE_TO_HUMAN" in decision.allowed_actions
+
+
 def test_policy_expiration_and_existing_refund_are_machine_readable(session):
     service = AfterSalesCaseService(session)
     expired_case = service.open_case(_command(request_key="expired", reason_code=None))
@@ -251,10 +350,24 @@ def test_high_value_case_is_sent_to_manual_review_after_hard_checks(session):
     session.flush()
     service = AfterSalesCaseService(session)
     case = service.open_case(
-        _command(request_key="high-value", order_id=1004, reason_code=None)
+        _command(request_key="high-value", order_id=1004, reason_code="NOT_AS_DESCRIBED")
+    )
+    case = service.add_evidence(
+        case.case_id,
+        EvidenceCommand(
+            evidence_type="ISSUE_DESCRIPTION",
+            source_type="CUSTOMER_STATEMENT",
+            source_ref="agent_runs:evidence-run:request",
+            payload={"statement": "实际功能与商品说明不一致"},
+            observed_at=datetime(2026, 5, 25, 9, 0),
+        ),
+        idempotency_key="high-value-evidence",
+        expected_revision=case.revision,
     )
 
-    decision = AfterSalesPolicyEngine(session).evaluate(case.case_id, as_of=datetime(2026, 5, 25))
+    from tests.evidence_fixtures import record_assessment_fixture
+    record_assessment_fixture(session, case, now=datetime(2026, 5, 25, 12))
+    decision = AfterSalesPolicyEngine(session).evaluate(case.case_id, as_of=datetime(2026, 5, 25, 12, 0))
 
     assert decision.outcome == PolicyOutcome.MANUAL_REVIEW
     assert decision.reason_codes == ("AMOUNT_REQUIRES_MANUAL_REVIEW",)

@@ -619,3 +619,6 @@
   .engineering-mode .case-list { border-color: #53645c; background: #fff; }
   .engineering-mode .page-header p, .engineering-mode .muted { color: #33443c; }
 }
+
+.pg-lab-entry { display:flex; align-items:center; justify-content:space-between; gap:20px; border:1px solid #b7cabe; border-radius:5px; background:#e8f0e8; padding:17px 20px; margin-bottom:18px; color:#294b37; text-decoration:none; }
+.pg-lab-entry b { font-size:15px; }.pg-lab-entry small { display:block; font-size:11px; margin-top:6px; color:#526d5b; }.pg-lab-entry>strong { font-size:12px; }.pg-lab-entry:hover { background:#dfeadd; }

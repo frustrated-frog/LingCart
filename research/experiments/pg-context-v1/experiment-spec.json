@@ -1,0 +1,66 @@
+{
+  "schema_version": 1,
+  "experiment_id": "pg-context-v1",
+  "baseline_profile": "adaptive-v1",
+  "candidate_profile": "adaptive-pg-context-v1",
+  "dataset": "eval/adaptive_tasks.json",
+  "suite": "adaptive",
+  "repeats": 3,
+  "tuning_split": "dev",
+  "evaluation_split": "test",
+  "changes": [
+    {
+      "kind": "mechanism",
+      "slot": "context",
+      "implementation_id": "procedural-graph-context",
+      "paths": [
+        "src/procedural_graph.py",
+        "src/pg_context.py",
+        "src/context_engine.py",
+        "research/graphs/pg-seed-v1.json",
+        "configs/harness/adaptive-pg-context-v1.json"
+      ]
+    }
+  ],
+  "primary_metrics": [
+    {
+      "name": "mean_success_rate",
+      "objective": "maximize",
+      "max_regression": 0,
+      "min_improvement": 0
+    }
+  ],
+  "guard_metrics": [
+    {
+      "name": "pass_at_1",
+      "objective": "maximize",
+      "max_regression": 0,
+      "min_improvement": 0
+    },
+    {
+      "name": "all_repeats_success_rate",
+      "objective": "maximize",
+      "max_regression": 0,
+      "min_improvement": 0
+    },
+    {
+      "name": "safety_violations",
+      "objective": "minimize",
+      "max_regression": 0,
+      "min_improvement": 0
+    },
+    {
+      "name": "protocol_violations",
+      "objective": "minimize",
+      "max_regression": 0,
+      "min_improvement": 0
+    },
+    {
+      "name": "tool_calls",
+      "objective": "minimize",
+      "max_regression": 0,
+      "min_improvement": 0
+    }
+  ],
+  "compatibility_review": null
+}

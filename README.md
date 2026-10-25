@@ -12,8 +12,11 @@ LingCart 是一个面向消费决策与售后任务的 Agent 工程项目。它�
 - Experiment Contracts：冻结 baseline、candidate、唯一变量、数据分组、重复次数与质量 Gate；没有可比报告时不声称增益。
 - Dataset Coverage：浏览固定离线回归、真实模型消费任务和自主 Agent 专项任务的类别、分组、轮次与机器断言。
 - 消费业务沙盒：商品发现、订单与售后、支付/退款确认、任务记录和用户主动控制的长期偏好。
+- 证据驱动售后案件：跨轮补证、来源核验、版本化政策要求、证据撤回与计划修订；材料变化会关闭旧授权，提交仍需明确确认。
+- 独立证据语义核验：区分充分、缺失、无关、冲突与未知，保留原文引用并提出具体追问；来源核验不替代充分性判断，语义核验不代表客观鉴定。
 - Durable Runtime：对话串行化、请求幂等、Checkpoint、工具账本、恢复、运行中调整、取消和排队追问。
 - Model Gateway：Gemini、Groq、OpenAI 与 OpenAI-compatible，支持按职责选模、超时、降级和熔断。
+- PG 研究候选：冻结程序图的轨迹状态定位、有界局部检索与情境指导，dev 轨迹驱动的离线结构演化、验证选择和拒绝记忆；尚无真实模型收益结论。
 
 所有品牌、价格、库存、客户、订单和物流都是本地演示数据。支付与退款只修改演示 SQLite 数据库，并且必须经过明确确认。
 
@@ -191,6 +194,10 @@ python eval/run_live_eval.py --harness-profile adaptive-v1 --split test --repeat
 
 第一版 ACE（Agentic Context Engineering）纵向切片已经接入：现有 adaptive Agent 产生真实执行轨迹，离线 Reflector/Curator 只从 `dev` 环境反馈增量构建不可变 Playbook，候选 Profile 在 `test` 时只读加载固定版本。它与用户偏好、业务事实和权限分仓，独立审查不会接收 Playbook；代码门禁拒绝具体商品/订单事实和放宽硬约束的策略。
 
+PG（Procedural Graphs）当前提供三代研究候选：`adaptive-pg-context-v2` 用持久化目标账本、最近行动、工具结果和未完成目标定位有界局部图；`adaptive-pg-context-v3` 冻结同一定位器，把局部图编译成零额外模型调用的指导契约，并在工具提交前审查采用、偏离与精确无进展重放；`adaptive-pg-context-v4` 进一步以白名单事实、受限操作符和 `TRUE/FALSE/UNKNOWN` 三值证据筛选当前适用边，使用归一化后的真实执行参数识别重放，并记录指导后的可核验目标进展。低置信定位和未知条件都主动弃权，未来路径必须在状态变化后重新求值。运行检查和论文实验室展示“定位 → 条件证据 → 指导 → 实际行动 → 工具结果 → 目标进展”证据链。`venv/bin/python eval/run_pg_localization_eval.py --gate`、`venv/bin/python eval/run_pg_guidance_eval.py --gate` 与 `venv/bin/python eval/run_pg_state_condition_eval.py --gate` 均为零模型调用的机制测试，不能替代真实收益评测。V3/V4 的正式对照使用冻结后的新留出集，旧 PG13 只作回归诊断。设计见 [轨迹状态感知程序图检索设计](docs/轨迹状态感知程序图检索设计.md)、[程序图指导契约与采用闭环设计](docs/程序图指导契约与采用闭环设计.md) 与 [程序图状态条件规划设计](docs/程序图状态条件规划设计.md)。
+
+论文实验室新增 [PG 挑战实验台](docs/程序图挑战实验台设计.md)（`/experiments/pg`）：18 个独立情境分为训练、验证、测试各 6 项；支持有预算的真实实验启动、停止、图修改审查、无 PG／种子图／演化图对照和逐样本证据。低成本冒烟只从三个分组各取一个冻结情境，共最多 6 个样本，并把“定位→检索→指导→行动→工具与核验”投影为持久证据；预算和失败分类见 [程序图真实模型闭环设计](docs/程序图真实模型闭环设计.md)。实验状态与失败结果均持久化，冒烟及脚本测试结果不作为收益结论。
+
 ```bash
 # 只验证 ACE 学习来源，不调用模型
 venv/bin/python -m eval.run_ace_adaptation \
@@ -211,6 +218,8 @@ venv/bin/python -m eval.run_ace_adaptation \
 - [Agent Runtime](docs/agent-runtime.md)
 - [Adaptive Planning](docs/adaptive-planning.md)
 - [Session Control and Memory](docs/session-control-memory.md)
+- [证据驱动售后规划](docs/证据驱动售后规划设计.md)
+- [证据语义核验与组件评测](docs/证据语义核验设计.md)
 - [Research Infrastructure](docs/research-infrastructure-v1.md)
 
 ## Docker

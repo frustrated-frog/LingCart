@@ -68,3 +68,92 @@ describe('RunsPage LivePlan evidence', () => {
     expect(screen.getByText('候选动作与已确认的无进展动作完全相同，已在执行前阻止。')).toBeInTheDocument()
   })
 })
+
+describe('RunsPage PG evidence', () => {
+  it('distinguishes generated guidance, exposure, budget skip and committed action', async () => {
+    const pgDetail: RunDetail = { ...detail, checkpoint: { context: { procedural_graph: {
+      graph_id: 'lingcart-pg', version: 1, sha256: 'frozen-graph',
+    } } }, result: { trace: [], events: [
+      { type: 'model_started', sequence: 1, purpose: 'pg_guidance' },
+      { type: 'pg_guidance', sequence: 2, decision_key: 'first', graph_sha256: 'frozen-graph',
+        anchor: 'search_products', status: 'READY', guidance: '空结果后扩大检索范围', edge_ids: ['search-retry'], fallback: false },
+      { type: 'evidence_context', sequence: 3, pg_decision_key: 'first', pg_status: 'EXPOSED' },
+      { type: 'adaptive_decision', sequence: 4, decision: { action: 'tool', tool: 'search_products' } },
+      { type: 'pg_guidance', sequence: 5, decision_key: 'second', anchor: 'unknown_action', fallback: true,
+        status: 'SKIPPED', guidance: '', edge_ids: [], reason: 'RESERVED_DECISION_AND_AUDIT' },
+    ] } }
+    vi.spyOn(api, 'runs').mockResolvedValue({ runs: [summary] })
+    vi.spyOn(api, 'run').mockResolvedValue(pgDetail)
+    renderPage()
+    fireEvent.click(await screen.findByRole('tab', { name: '程序图指导' }))
+    expect(screen.getByText('已送入决策')).toBeInTheDocument()
+    expect(screen.getByText('空结果后扩大检索范围')).toBeInTheDocument()
+    expect(screen.getByText('为决策和独立核验保留预算')).toBeInTheDocument()
+    expect(screen.getByText(/引用关系：search-retry · 后续行动：search_products/)).toBeInTheDocument()
+    expect(screen.getByText(/全图回退/)).toBeInTheDocument()
+  })
+
+  it('shows an empty state when no graph has been bound', async () => {
+    vi.spyOn(api, 'runs').mockResolvedValue({ runs: [summary] })
+    vi.spyOn(api, 'run').mockResolvedValue(detail)
+    renderPage()
+    fireEvent.click(await screen.findByRole('tab', { name: '程序图指导' }))
+    expect(screen.getByText('该运行尚无程序图指导记录。')).toBeInTheDocument()
+  })
+
+  it('does not imply graph exposure when guidance was omitted by context budget', async () => {
+    vi.spyOn(api, 'runs').mockResolvedValue({ runs: [summary] })
+    vi.spyOn(api, 'run').mockResolvedValue({ ...detail, result: { trace: [], events: [
+      { type: 'pg_guidance', sequence: 1, decision_key: 'omitted', status: 'READY', guidance: '建议内容', edge_ids: ['edge-a'] },
+      { type: 'evidence_context', sequence: 2, pg_decision_key: 'omitted', pg_status: 'CONTEXT_OMITTED' },
+    ] } })
+    renderPage()
+    fireEvent.click(await screen.findByRole('tab', { name: '程序图指导' }))
+    expect(screen.getByText('上下文不足，未送入决策')).toBeInTheDocument()
+    expect(screen.queryByText('已送入决策')).not.toBeInTheDocument()
+  })
+
+  it('shows v2 low-confidence abstention and the non-acting v1 shadow result', async () => {
+    vi.spyOn(api, 'runs').mockResolvedValue({ runs: [summary] })
+    vi.spyOn(api, 'run').mockResolvedValue({ ...detail, checkpoint: { context: { procedural_graph: {
+      graph_id: 'lingcart-pg', version: 1, sha256: 'frozen-graph',
+    } } }, result: { trace: [], events: [
+      { type: 'pg_guidance', sequence: 1, decision_key: 'abstained', status: 'SKIPPED',
+        anchor: null, fallback: false, abstained: true, guidance: '', edge_ids: [], reason: 'LOCALIZATION_ABSTAINED',
+        localization: { algorithm: 'trajectory-state-v2', confidence: 0,
+          shadow: { anchor: 'answer_faq', fallback: true } } },
+    ] } })
+    renderPage()
+    fireEvent.click(await screen.findByRole('tab', { name: '程序图指导' }))
+    expect(screen.getAllByText(/主动弃权/).length).toBeGreaterThan(0)
+    expect(screen.getByText('轨迹证据不足，定位器主动弃权')).toBeInTheDocument()
+    expect(screen.getByText(/v1 影子：answer_faq（全图回退）/)).toBeInTheDocument()
+  })
+
+  it('shows deterministic contract adoption review and precommit blocking', async () => {
+    vi.spyOn(api, 'runs').mockResolvedValue({ runs: [summary] })
+    vi.spyOn(api, 'run').mockResolvedValue({ ...detail, checkpoint: { context: { procedural_graph: {
+      graph_id: 'lingcart-pg', version: 1, sha256: 'frozen-graph',
+    } } }, result: { trace: [], events: [
+      { type: 'pg_guidance', sequence: 1, decision_key: 'contract-decision', status: 'READY',
+        anchor: 'search_products', fallback: false, guidance: '不得原样重复无进展调用', edge_ids: ['search-inspect'],
+        generation: { mode: 'deterministic-contract-v1', model_calls: 0 },
+        applicability: { strategy: 'typed-evidence-v1', status: 'APPLICABLE', selected_edge_ids: ['search-inspect'],
+          false_edge_ids: [], unknown_edge_ids: [], evaluations: [{ edge_id: 'search-inspect', source: 'search_products',
+            target: 'inspect', status: 'TRUE', reason: 'CONDITION_SATISFIED', evaluation: { evidence_bindings: [
+              { fact: 'trajectory.latest_outcome', actual: 'NON_EMPTY', source: 'trajectory_state.recent_actions[-1].outcome' },
+            ] } }] },
+        guidance_contract: { contract_id: 'contract-12345678', policy: 'ADVISORY_EXCEPT_EXACT_NO_PROGRESS_REPEAT' } },
+      { type: 'evidence_context', sequence: 2, pg_decision_key: 'contract-decision', pg_status: 'EXPOSED' },
+      { type: 'pg_decision_reviewed', sequence: 3, decision_key: 'contract-decision', status: 'BLOCKED',
+        blocked: true, actual_action: 'search_products', review_id: 'review-1' },
+    ] } })
+    renderPage()
+    fireEvent.click(await screen.findByRole('tab', { name: '程序图指导' }))
+    expect(screen.getByText(/生成方式：确定性指导契约/)).toBeInTheDocument()
+    expect(screen.getByText(/额外模型调用：0/)).toBeInTheDocument()
+    expect(screen.getByText(/后续行动：search_products · 采用审查：BLOCKED（提交前阻断）/)).toBeInTheDocument()
+    expect(screen.getByText(/条件证据：APPLICABLE · TRUE 1 · FALSE 0 · UNKNOWN 0/)).toBeInTheDocument()
+    expect(screen.getByText('查看每条关系的条件求值证据')).toBeInTheDocument()
+  })
+})

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 import hashlib
 import json
 from typing import Any
@@ -14,6 +15,7 @@ from src.after_sales.contracts import PolicyEvaluation, PolicyOutcome
 from src.after_sales.service import AfterSalesDomainError
 from src.backend.db import (
     AfterSalesCase,
+    AfterSalesCaseEvent,
     AfterSalesEvidence,
     Order,
     OrderItem,
@@ -24,7 +26,7 @@ from src.backend.db import (
 )
 
 
-EVALUATOR_VERSION = "after-sales-policy-v1"
+EVALUATOR_VERSION = "after-sales-policy-v3"
 
 
 def _utcnow() -> datetime:
@@ -45,6 +47,63 @@ def _checksum(value: Any) -> str:
     return hashlib.sha256(_canonical(value).encode("utf-8")).hexdigest()
 
 
+def _minor_units(value: object) -> int | None:
+    if value is None:
+        return None
+    try:
+        amount = (Decimal(str(value)) * Decimal("100")).quantize(
+            Decimal("1"),
+            rounding=ROUND_HALF_UP,
+        )
+        return int(amount)
+    except (InvalidOperation, ValueError):
+        return None
+
+
+def _refund_scope_facts(
+    *,
+    order: Order | None,
+    selected_item: OrderItem | None,
+    order_items: list[OrderItem],
+    payment: Payment | None,
+) -> dict[str, Any]:
+    selected_amount = (
+        selected_item.unit_price_minor * selected_item.quantity
+        if selected_item is not None
+        else None
+    )
+    order_amount = _minor_units(order.amount if order is not None else None)
+    payment_amount = _minor_units(payment.amount if payment is not None else None)
+    reasons: list[str] = []
+    if selected_item is None:
+        reasons.append("SELECTED_ORDER_ITEM_MISSING")
+    if len(order_items) != 1:
+        reasons.append("ORDER_HAS_MULTIPLE_LINE_ITEMS")
+    elif selected_item is not None and order_items[0].item_id != selected_item.item_id:
+        reasons.append("SELECTED_ORDER_ITEM_NOT_COMPLETE_ORDER")
+    if selected_amount is not None and order_amount is not None and selected_amount != order_amount:
+        reasons.append("ORDER_AND_LINE_ITEM_AMOUNTS_DIFFER")
+    if payment_amount is not None and order_amount is not None and payment_amount != order_amount:
+        reasons.append("ORDER_AND_PAYMENT_AMOUNTS_DIFFER")
+    return {
+        "requested_scope": {
+            "type": "ORDER_ITEM",
+            "order_item_id": selected_item.item_id if selected_item is not None else None,
+            "amount_minor": selected_amount,
+        },
+        "execution_scope": {
+            "type": "ORDER",
+            "order_id": order.order_id if order is not None else None,
+            "amount_minor": payment_amount,
+        },
+        "alignment": "EXACT" if not reasons else "REQUIRES_SCOPED_REFUND",
+        "mismatch_reasons": reasons,
+        "order_item_count": len(order_items),
+        "order_amount_minor": order_amount,
+        "payment_amount_minor": payment_amount,
+    }
+
+
 class AfterSalesPolicyEngine:
     """Produces a verdict; it never mutates a case or executes a side effect."""
 
@@ -61,6 +120,11 @@ class AfterSalesPolicyEngine:
 
         order = self.session.get(Order, case.order_id)
         item = self.session.get(OrderItem, case.order_item_id) if case.order_item_id else None
+        order_items = self.session.scalars(
+            select(OrderItem)
+            .where(OrderItem.order_id == case.order_id)
+            .order_by(OrderItem.line_number, OrderItem.item_id)
+        ).all()
         payment = self.session.scalar(select(Payment).where(Payment.order_id == case.order_id))
         refund = self.session.scalar(select(Refund).where(Refund.order_id == case.order_id))
         shipment_events = self.session.scalars(
@@ -86,6 +150,18 @@ class AfterSalesPolicyEngine:
             None,
         )
         amount_minor = item.unit_price_minor * item.quantity if item else None
+        refund_scope = _refund_scope_facts(
+            order=order,
+            selected_item=item,
+            order_items=order_items,
+            payment=payment,
+        )
+        from src.after_sales.evidence import evaluate_requirements
+        requirements = evaluate_requirements(self.session, case, policy, rules, evaluated_at)
+        evidence_revision = self.session.scalar(select(AfterSalesCaseEvent.case_revision).where(
+            AfterSalesCaseEvent.case_id == case_id,
+            AfterSalesCaseEvent.event_type.in_(["EVIDENCE_ADDED", "EVIDENCE_REVOKED"]),
+        ).order_by(AfterSalesCaseEvent.case_revision.desc()).limit(1)) or 0
         facts = {
             "case_id": case.case_id,
             "case_type": case.case_type,
@@ -100,7 +176,10 @@ class AfterSalesPolicyEngine:
             "delivery_date": delivered_event.occurred_at.date().isoformat() if delivered_event else None,
             "amount_minor": amount_minor,
             "currency": item.currency if item else None,
+            "refund_scope": refund_scope,
             "active_evidence_types": sorted({evidence.evidence_type for evidence in active_evidence}),
+            "evidence_requirements": requirements,
+            "evidence_revision": evidence_revision,
             "as_of_date": evaluated_at.date().isoformat(),
         }
         evidence_refs = self._evidence_refs(
@@ -177,6 +256,21 @@ class AfterSalesPolicyEngine:
             raise AfterSalesDomainError("POLICY_SCHEMA_INVALID", "政策规则结构不完整或类型无效")
         if rules["return_window_days"] < 0 or rules["manual_review_amount_minor"] < 0:
             raise AfterSalesDomainError("POLICY_SCHEMA_INVALID", "政策期限或金额阈值不能为负数")
+        if any(not isinstance(types, list) or any(not isinstance(t, str) for t in types)
+               for types in rules["required_evidence_by_reason"].values()):
+            raise AfterSalesDomainError("POLICY_SCHEMA_INVALID", "政策证据要求必须为类型列表")
+        acceptance = rules.get("evidence_acceptance", {})
+        if not isinstance(acceptance, dict) or any(
+            not isinstance(rule, dict)
+            or not isinstance(rule.get("accepted_sources"), list)
+            or any(s not in {"CUSTOMER_STATEMENT", "ORDER_RECORD"} for s in rule["accepted_sources"])
+            or rule.get("condition") not in {"CUSTOMER_ATTESTATION", "AUTHORITATIVE_ORDER"}
+            or not isinstance(rule.get("description"), str)
+            or (rule.get("max_age_days") is not None and
+                (type(rule["max_age_days"]) is not int or rule["max_age_days"] < 0))
+            for rule in acceptance.values()
+        ):
+            raise AfterSalesDomainError("POLICY_SCHEMA_INVALID", "证据接受规则无效")
         return rules
 
     @staticmethod
@@ -229,10 +323,26 @@ class AfterSalesPolicyEngine:
                 ("RETURN_WINDOW_EXPIRED",),
                 ("VIEW_POLICY", "ESCALATE_TO_HUMAN", "CLOSE_CASE"),
             )
-        required_evidence = set(
-            rules["required_evidence_by_reason"].get(facts["reason_code"] or "", [])
-        )
-        missing = sorted(required_evidence - set(facts["active_evidence_types"]))
+        if facts["refund_scope"]["alignment"] != "EXACT":
+            return (
+                PolicyOutcome.MANUAL_REVIEW,
+                ("REFUND_SCOPE_REQUIRES_LINE_ITEM_EXECUTION",),
+                ("ESCALATE_TO_HUMAN", "CANCEL_CASE"),
+            )
+        if not facts["reason_code"]:
+            return (
+                PolicyOutcome.NEEDS_EVIDENCE,
+                ("AFTER_SALES_REASON_REQUIRED",),
+                ("CLARIFY_REASON", "CANCEL_CASE", "ESCALATE_TO_HUMAN"),
+            )
+        if facts["reason_code"] not in rules["required_evidence_by_reason"]:
+            return (
+                PolicyOutcome.MANUAL_REVIEW,
+                ("AFTER_SALES_REASON_NOT_SUPPORTED",),
+                ("ESCALATE_TO_HUMAN", "CANCEL_CASE"),
+            )
+        missing = sorted(r["evidence_type"] for r in facts["evidence_requirements"]
+                         if r["status"] != "SATISFIED")
         if missing:
             return (
                 PolicyOutcome.NEEDS_EVIDENCE,

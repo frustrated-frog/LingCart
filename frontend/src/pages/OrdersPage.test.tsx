@@ -102,6 +102,31 @@ function renderPage() {
 
 beforeEach(() => vi.restoreAllMocks())
 
+it.each([
+  ['SUFFICIENT', '陈述充分'], ['INCOMPLETE', '信息不足'], ['IRRELEVANT', '材料无关'],
+  ['CONFLICT', '陈述冲突'], ['UNKNOWN', '无法判断'],
+] as const)('renders semantic %s separately from provenance and objective truth', async (status, label) => {
+  const detail = structuredClone(caseDetail)
+  detail.case.latest_decision!.facts.evidence_requirements = [{
+    requirement_id: 'r1', policy_version_id: 'p1', policy_checksum: 'hash', target_case_id: caseSummary.case_id,
+    evidence_type: 'DAMAGE_DESCRIPTION', description: '说明商品本身的损坏情况', accepted_sources: ['CUSTOMER_STATEMENT'],
+    validation_condition: 'CUSTOMER_ATTESTATION', max_age_days: 30, status: 'UNSATISFIED', evidence_refs: [], rejected_evidence: {},
+    semantic_assessment: { assessment_id: 'review1', verifier_version: 'evidence-semantic-v1', status,
+      explanation: '目前两条陈述需要核对', question: status === 'SUFFICIENT' ? '' : '请确认破损的是包装还是商品？',
+      missing_information: [], citations: [{ evidence_id: 'e1', quote: '只是外包装破了' }],
+      error_code: status === 'UNKNOWN' ? 'SEMANTIC_MODEL_UNAVAILABLE' : null },
+  }]
+  vi.spyOn(api, 'orders').mockResolvedValue({ orders: [order] })
+  vi.spyOn(api, 'afterSalesCases').mockResolvedValue({ cases: [caseSummary] })
+  vi.spyOn(api, 'afterSalesCase').mockResolvedValue(detail)
+  renderPage()
+  expect(await screen.findByText(`语义核验：${label}`)).toBeInTheDocument()
+  expect(screen.getByText('语义核验只判断陈述是否回答要求，不代表客观鉴定。')).toBeInTheDocument()
+  expect(screen.getByText('只是外包装破了')).toBeInTheDocument()
+  if (status !== 'SUFFICIENT') expect(screen.getByText(/待澄清：请确认破损的是包装还是商品/)).toBeInTheDocument()
+  if (status === 'UNKNOWN') expect(screen.getByText(/核验暂不可用：SEMANTIC_MODEL_UNAVAILABLE/)).toBeInTheDocument()
+})
+
 describe('OrdersPage after-sales case ledger', () => {
   it('renders persisted policy, evidence, run and side-effect records', async () => {
     vi.spyOn(api, 'orders').mockResolvedValue({ orders: [order] })
@@ -130,4 +155,32 @@ describe('OrdersPage after-sales case ledger', () => {
     expect(await screen.findByText('无线耳机')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /状态与物流/ })).toBeInTheDocument()
   })
+})
+
+it('shows stale decisions, unverified evidence and persisted plan changes without implying approval', async () => {
+  const detail = structuredClone(caseDetail)
+  detail.case.latest_decision!.valid = false
+  detail.case.latest_decision!.facts.evidence_requirements = [{
+    requirement_id: 'policy:DAMAGE_DESCRIPTION', policy_version_id: 'policy', policy_checksum: 'checksum',
+    target_case_id: detail.case.case_id, evidence_type: 'DAMAGE_DESCRIPTION', description: '请补充损坏位置和表现',
+    accepted_sources: ['CUSTOMER_STATEMENT'], validation_condition: 'CUSTOMER_ATTESTATION', max_age_days: 30,
+    status: 'UNSATISFIED', evidence_refs: [], rejected_evidence: { 'evidence-001': 'SOURCE_NOT_VERIFIED' },
+  }]
+  detail.case.plans = [{
+    schema_version: 1, planner_version: 'evidence-driven-case-plan-v1', plan_id: 'plan-2', case_id: detail.case.case_id,
+    revision: 2, case_revision: 5, decision_id: 'decision-001', policy_version_id: 'policy', status: 'AWAITING_EVIDENCE',
+    supersedes_plan_id: 'plan-1', goals: [], next_actions: [], retained_goal_ids: ['evidence:condition'],
+    changed_goal_ids: ['evidence:damage'], removed_goal_ids: [], invalidated_decision_id: 'old-decision',
+    created_at: '2026-10-23T01:00:00Z', valid: false,
+  }]
+  vi.spyOn(api, 'orders').mockResolvedValue({ orders: [order] })
+  vi.spyOn(api, 'afterSalesCases').mockResolvedValue({ cases: [caseSummary] })
+  vi.spyOn(api, 'afterSalesCase').mockResolvedValue(detail)
+  renderPage()
+  expect(await screen.findByText('旧裁决已失效，需重新核验')).toBeInTheDocument()
+  expect(screen.getByText('历史计划，等待重新核验')).toBeInTheDocument()
+  expect(screen.getByText('来源尚未核验')).toBeInTheDocument()
+  expect(screen.getByText('保留 1 个目标 · 修订 1 个目标')).toBeInTheDocument()
+  expect(screen.getByText('请补充损坏位置和表现')).toBeInTheDocument()
+  expect(screen.queryByText('请求用户确认')).not.toBeInTheDocument()
 })

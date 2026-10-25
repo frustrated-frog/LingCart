@@ -1,0 +1,56 @@
+{
+  "schema_version": 1,
+  "suite": "pg_state_condition_contract",
+  "description": "只验证类型化边条件、三值证据和有界路径排序；不作为真实模型收益证据。",
+  "graph": "research/graphs/pg-seed-v2.json",
+  "cases": [
+    {
+      "id": "PGC01",
+      "description": "目标尚未建立，只能建立目标",
+      "trajectory": {"goal_defined": false, "objectives": [], "recent_actions": [], "unresolved_objective_kinds": [], "pending_steps": [], "all_objectives_verified": false, "feedback_code": null, "edge_feedback": {}},
+      "expected_anchor": "Start", "expected_selected": ["start-goal"], "expected_false": [], "expected_unknown": []
+    },
+    {
+      "id": "PGC02",
+      "description": "推荐目标已建立且没有阻塞反馈",
+      "trajectory": {"goal_defined": true, "objectives": [{"status": "PENDING", "evidence_refs": []}], "recent_actions": [], "unresolved_objective_kinds": ["recommend"], "pending_steps": [], "all_objectives_verified": false, "feedback_code": null, "edge_feedback": {}},
+      "expected_anchor": "set_goal", "expected_selected": ["goal-search"], "expected_false": ["goal-clarify"], "expected_unknown": []
+    },
+    {
+      "id": "PGC03",
+      "description": "空检索不能进入证据读取",
+      "trajectory": {"goal_defined": true, "objectives": [{"status": "PENDING", "evidence_refs": []}], "recent_actions": [{"action": "search_products", "outcome": "EMPTY"}], "unresolved_objective_kinds": ["recommend"], "pending_steps": [], "all_objectives_verified": false, "feedback_code": "EMPTY_CATALOG_RESULT", "edge_feedback": {}},
+      "expected_anchor": "search_products", "expected_selected": [], "expected_false": ["search-inspect"], "expected_unknown": []
+    },
+    {
+      "id": "PGC04",
+      "description": "非空检索允许进入证据读取",
+      "trajectory": {"goal_defined": true, "objectives": [{"status": "PENDING", "evidence_refs": []}], "recent_actions": [{"action": "search_products", "outcome": "NON_EMPTY"}], "unresolved_objective_kinds": ["recommend"], "pending_steps": [], "all_objectives_verified": false, "feedback_code": null, "edge_feedback": {}},
+      "expected_anchor": "search_products", "expected_selected": ["search-inspect"], "expected_false": [], "expected_unknown": []
+    },
+    {
+      "id": "PGC05",
+      "description": "完整证据读取成功允许选择候选",
+      "trajectory": {"goal_defined": true, "objectives": [{"status": "PENDING", "evidence_refs": []}], "recent_actions": [{"action": "inspect", "outcome": "SUCCESS"}], "unresolved_objective_kinds": ["recommend"], "pending_steps": [], "all_objectives_verified": false, "feedback_code": null, "edge_feedback": {}},
+      "expected_anchor": "inspect", "expected_selected": ["inspect-recommend"], "expected_false": [], "expected_unknown": []
+    },
+    {
+      "id": "PGC06",
+      "description": "阻塞反馈使澄清边当前适用",
+      "trajectory": {"goal_defined": true, "objectives": [{"status": "PENDING", "evidence_refs": []}], "recent_actions": [], "unresolved_objective_kinds": ["recommend"], "pending_steps": [], "all_objectives_verified": false, "feedback_code": "MISSING_REQUIRED_INPUT", "edge_feedback": {}},
+      "expected_anchor": "set_goal", "expected_selected": ["goal-search", "goal-clarify"], "expected_false": [], "expected_unknown": []
+    },
+    {
+      "id": "PGC07",
+      "description": "全部目标核验后允许结束",
+      "trajectory": {"goal_defined": true, "objectives": [{"status": "VERIFIED", "evidence_refs": ["s1"]}], "recent_actions": [{"action": "recommend", "outcome": "SUCCESS"}], "unresolved_objective_kinds": [], "pending_steps": [], "all_objectives_verified": true, "feedback_code": null, "edge_feedback": {}},
+      "expected_anchor": "complete", "expected_selected": ["complete-end"], "expected_false": [], "expected_unknown": []
+    },
+    {
+      "id": "PGC08",
+      "description": "缺少工具结果时不能把候选边猜成适用",
+      "trajectory": {"goal_defined": true, "objectives": [{"status": "PENDING", "evidence_refs": []}], "recent_actions": [{"action": "search_products", "outcome": "UNKNOWN"}], "unresolved_objective_kinds": ["recommend"], "pending_steps": [], "all_objectives_verified": false, "feedback_code": null, "edge_feedback": {}},
+      "expected_anchor": "search_products", "expected_selected": [], "expected_false": [], "expected_unknown": ["search-inspect"]
+    }
+  ]
+}

@@ -46,7 +46,7 @@ def model_public_status(purpose: str) -> tuple[str, str]:
     value = (purpose or "").lower()
     if "final" in value or "response" in value:
         return "RESPONDING", AGENT_STATUS_LABELS["RESPONDING"]
-    if "audit" in value or "verify" in value or "reflect" in value:
+    if "audit" in value or "verif" in value or "reflect" in value:
         return "VERIFYING", AGENT_STATUS_LABELS["VERIFYING"]
     if "planner" in value or "goal" in value or "decision" in value:
         return "PLANNING", AGENT_STATUS_LABELS["PLANNING"]

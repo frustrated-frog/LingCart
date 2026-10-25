@@ -431,6 +431,9 @@ def initiate_refund(order_id: int, reason: str) -> dict:
 def prepare_after_sales_case(
     order_id: int,
     reason_text: Annotated[str, Field(min_length=1, max_length=2000)],
+    reason_code: Annotated[str, Field(min_length=1, max_length=40)],
+    reason_taxonomy_version: Annotated[str, Field(min_length=1, max_length=80)],
+    reason_taxonomy_fingerprint: Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")],
     order_item_id: str | None = None,
 ) -> dict:
     """Open and deterministically assess a refund case without submitting a refund.
@@ -450,12 +453,33 @@ def prepare_after_sales_case(
         EvidenceCommand,
         RequestedResolution,
     )
+    from src.after_sales.reason_taxonomy import (
+        REASON_CODE_DESCRIPTIONS,
+        REASON_TAXONOMY_FINGERPRINT,
+        REASON_TAXONOMY_VERSION,
+        reason_taxonomy_identity,
+    )
     from src.errors import AgentError
     from src.runtime import current_runtime
 
     runtime = current_runtime()
     now = datetime.now(UTC).replace(tzinfo=None)
     run_id = runtime.run_id if runtime else uuid.uuid4().hex
+    if (
+        reason_taxonomy_version != REASON_TAXONOMY_VERSION
+        or reason_taxonomy_fingerprint != REASON_TAXONOMY_FINGERPRINT
+    ):
+        raise AgentError(
+            "REASON_TAXONOMY_STALE",
+            "售后原因分类目录已经变化，请重新理解当前诉求",
+            retryable=False,
+        )
+    if reason_code not in REASON_CODE_DESCRIPTIONS:
+        raise AgentError(
+            "AFTER_SALES_REASON_UNKNOWN",
+            "售后原因不在当前版本化分类目录中",
+            retryable=False,
+        )
     try:
         with _session() as session:
             run = session.get(AgentRun, run_id) if runtime else None
@@ -472,6 +496,23 @@ def prepare_after_sales_case(
                 reason_text=reason_text,
             )
             is_new_case = case is None
+            if case is not None and case.reason_code != reason_code:
+                raise AgentError(
+                    "CASE_REASON_CLASSIFICATION_CONFLICT",
+                    "进行中案件的售后原因分类与本轮理解不一致，需要重新核验案件",
+                    retryable=False,
+                )
+            from src.after_sales.semantic import prepared_initial, persist_assessment
+            prepared = None
+            if case is None or case.status.value != "SUBMITTED":
+                prepared = prepared_initial(session, runtime, {
+                    "order_id": order_id, "order_item_id": order_item_id, "reason_text": reason_text,
+                    "reason_code": reason_code, "reason_taxonomy_version": reason_taxonomy_version,
+                    "reason_taxonomy_fingerprint": reason_taxonomy_fingerprint})
+                policy = AfterSalesPolicyEngine(session)._applicable_policy('REFUND', now)
+                if (policy.policy_version_id != prepared['input']['policy_version_id']
+                        or policy.checksum != prepared['input']['policy_checksum']):
+                    raise AgentError('SEMANTIC_ASSESSMENT_STALE', '适用政策已变化，请重新核验', retryable=False)
             if case is None:
                 case = service.open_case(
                     CaseCreateCommand(
@@ -480,9 +521,18 @@ def prepare_after_sales_case(
                         order_id=order_id,
                         order_item_id=order_item_id,
                         requested_resolution=RequestedResolution.REFUND,
+                        reason_code=reason_code,
                         reason_text=reason_text,
                         origin_session_id=session_id,
-                        context={"source": "AGENT_RUNTIME", "source_run_id": run_id},
+                        context={
+                            "source": "AGENT_RUNTIME",
+                            "source_run_id": run_id,
+                            "reason_classification": {
+                                **reason_taxonomy_identity(),
+                                "code": reason_code,
+                                "method": "MODEL_SEMANTIC_CLASSIFICATION",
+                            },
+                        },
                     ),
                     actor_type=ActorType.CUSTOMER,
                     actor_id=session_id,
@@ -517,7 +567,7 @@ def prepare_after_sales_case(
                     source_type="CUSTOMER_STATEMENT",
                     source_ref=f"agent_runs:{run_id}:request",
                     payload={"statement": reason_text},
-                    observed_at=now,
+                    observed_at=datetime.fromisoformat(prepared['input']['observed_at']),
                 ),
                 idempotency_key=f"reason:{run_id}",
                 expected_revision=case.revision,
@@ -525,6 +575,11 @@ def prepare_after_sales_case(
                 actor_id=session_id,
                 now=now,
             )
+            incoming_id = next(e['evidence_id'] for e in case.evidence
+                               if e['source_ref'] == f'agent_runs:{run_id}:request')
+            assessment = persist_assessment(session, case, run_id, prepared, incoming_id=incoming_id, now=now)
+            case = service.record_semantic_assessment(case.case_id, assessment.assessment_id,
+                        idempotency_key=f'semantic:{run_id}', expected_revision=case.revision, now=now)
             evaluation = AfterSalesPolicyEngine(session).evaluate(case.case_id, as_of=now)
             case = service.record_policy_decision(
                 case.case_id,
@@ -545,6 +600,19 @@ def prepare_after_sales_case(
             }
     except AfterSalesDomainError as exc:
         raise AgentError(exc.code, str(exc), retryable=exc.retryable) from exc
+
+
+def continue_after_sales_case(
+    case_id: Annotated[str, Field(min_length=1, max_length=64)],
+    expected_revision: Annotated[int, Field(gt=0)],
+    requirement_id: Annotated[str, Field(min_length=1, max_length=160)] | None = None,
+    evidence_text: Annotated[str, Field(min_length=1, max_length=2000)] | None = None,
+    revoke_evidence_id: Annotated[str, Field(min_length=1, max_length=64)] | None = None,
+) -> dict:
+    """Continue a session-owned case with policy-bound evidence; never authorizes a refund."""
+    from src.after_sales.actions import continue_case
+    return continue_case(case_id=case_id, expected_revision=expected_revision, requirement_id=requirement_id,
+                         evidence_text=evidence_text, revoke_evidence_id=revoke_evidence_id)
 
 
 def submit_after_sales_case(
@@ -574,6 +642,12 @@ def submit_after_sales_case(
             ):
                 raise AgentError("APPROVAL_STALE", "案件或政策裁决已经变化，请重新核验后确认", retryable=False)
             refreshed = AfterSalesPolicyEngine(session).evaluate(case_id, as_of=now)
+            if (refreshed.facts.get("refund_scope") or {}).get("alignment") != "EXACT":
+                raise AgentError(
+                    "REFUND_SCOPE_MISMATCH",
+                    "当前案件只覆盖部分订单，但现有退款执行能力会作用于整张订单，已拒绝提交并转人工处理",
+                    retryable=False,
+                )
             if refreshed.input_hash != latest.get("input_hash") or refreshed.outcome.value != "ELIGIBLE":
                 raise AgentError("APPROVAL_STALE", "订单事实或适用政策已经变化，请重新核验后确认", retryable=False)
             submission_run = session.get(AgentRun, runtime.run_id) if runtime else None

@@ -96,6 +96,17 @@ def test_unconfigured_status_has_stable_code_and_chinese_message():
     assert status["message"].startswith("未配置可用模型")
 
 
+def test_evaluation_scope_can_reduce_gateway_retries_without_changing_global_config(monkeypatch):
+    from src import llm
+    fake = type('FakeModel', (), {'max_attempts': 2})()
+    monkeypatch.setattr(llm, 'create_chat_model', lambda **_: fake)
+    assert llm.get_llm().max_attempts == 2
+    with llm.model_attempt_limit(1):
+        assert llm.get_llm().max_attempts == 1
+    fake.max_attempts = 2
+    assert llm.get_llm().max_attempts == 2
+
+
 def test_compatible_thinking_mode_is_explicit_and_scoped(monkeypatch):
     monkeypatch.setenv('OPENAI_COMPATIBLE_THINKING_MODE', 'disabled')
     monkeypatch.setenv('LLM_PROVIDER', 'openai_compatible')

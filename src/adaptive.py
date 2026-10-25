@@ -151,6 +151,43 @@ def _review_liveplan_candidate(context, recorder, state, plan, decision):
     return True
 
 
+def _review_context_candidate(context, recorder, state, plan, decision, *, raw_decision=None,
+                              argument_provenance=None, identity_basis=None):
+    engine = context.context_engine
+    if engine is None or not hasattr(engine, 'review_candidate'):
+        return None
+    review = engine.review_candidate(context, decision, raw_decision=raw_decision,
+                                     argument_provenance=argument_provenance,
+                                     identity_basis=identity_basis,
+                                     state=state, plan=plan)
+    if not review or not review.get('blocked'):
+        return review
+    _discard_native_queue(context, state, 'PG_GUIDANCE_CONTRACT_REJECTED')
+    state['feedback'] = {
+        'code': 'PG_GUIDANCE_CONTRACT_REJECTED',
+        'message': '该决策与已有空结果或错误调用完全相同，继续执行不会增加证据。',
+        'instruction': '修改有依据的参数、推进其他未完成目标，或如实说明无法继续；不得放宽用户约束。',
+        'contract_id': review.get('contract_id'),
+        'review_id': review.get('review_id'),
+    }
+    state['model_cursor'] = context.model_cursor
+    state['pending'] = None
+    _save(context, state, plan)
+    if not any(event.get('type') == 'decision_rejected'
+               and event.get('review_id') == review.get('review_id') for event in context.events):
+        recorder.record('decision_rejected', code='PG_GUIDANCE_CONTRACT_REJECTED',
+                        action=decision.action, review_id=review.get('review_id'))
+    return review
+
+
+def _record_context_outcome(context, state, plan, pending, decision, step):
+    engine = context.context_engine
+    if engine is None or not hasattr(engine, 'review_outcome'):
+        return None
+    return engine.review_outcome(context, state, plan,
+        review_id=(pending or {}).get('pg_review_id'), decision=decision, step=step)
+
+
 def _apply_binding_transaction(context, recorder, state, plan, history, transaction, *, reject_as_error):
     """Independently audit and atomically apply one content-addressed proposal."""
     from src.request_audit import review_request
@@ -349,17 +386,81 @@ def _validate_tool(decision, state, plan, history):
         sources = [state['request'], *(str(m.content) for m in history or [] if getattr(m, 'type', None) == 'human')]
         if not any(re.search(r'(?<!\d)' + str(args['order_id']) + r'(?!\d)', source) for source in sources):
             raise AgentError('UNGROUNDED_PLAN_ENTITY', '订单编号必须来自用户', retryable=False)
-    return args
+    provenance = {}
+    if decision.tool in {'search_products', 'discover_products'}:
+        from src.capability_registry import get_capability_registry
+
+        kind = PRODUCT_SEARCH if decision.tool == 'search_products' else PRODUCT_DISCOVERY
+        sources = tuple([state['request'], *(str(message.content) for message in history or []
+                                             if getattr(message, 'type', None) == 'human')])
+        registry = get_capability_registry()
+        accepted = set(registry.registration(kind).spec.accepted_fields)
+        normalizable = {name: value for name, value in args.items() if name in accepted}
+        normalized, provenance = registry.normalize_arguments({
+            'id': f'adaptive-{decision.tool}',
+            'kind': kind,
+            'source_quote': state['request'],
+            **normalizable,
+        }, sources)
+        args = {**args, **{name: normalized[name] for name in normalizable}}
+    return args, provenance
 
 
-def _accept(context, recorder, state, plan, decision, history):
+def _normalize_goal_catalog_aliases(goal, request, history):
+    """Resolve category aliases through trusted catalog metadata, never model guesswork."""
+    from src.capability_registry import get_capability_registry
+
+    payload = goal_payload(goal)
+    sources = tuple([request, *(str(message.content) for message in history or []
+                               if getattr(message, 'type', None) == 'human')])
+    registry = get_capability_registry()
+    provenance = {}
+    rows = [(f'global:{index}', constraint)
+            for index, constraint in enumerate(payload.get('hard_constraints', []))]
+    rows.extend((f"objective:{objective['id']}:{index}", constraint)
+                for objective in payload.get('objectives', [])
+                for index, constraint in enumerate(objective.get('hard_constraints', [])))
+    for reference, constraint in rows:
+        value = constraint.get('value')
+        if constraint.get('field') != 'category' or constraint.get('catalog_concept') is not None:
+            continue
+        values = value if isinstance(value, list) else [value]
+        normalized_values = []
+        entries = []
+        for item in values:
+            if not isinstance(item, str) or not item:
+                normalized_values.append(item)
+                continue
+            normalized, resolved = registry.normalize_arguments({
+                'id': f'adaptive-goal-{reference}',
+                'kind': PRODUCT_SEARCH,
+                'source_quote': constraint['source_quote'],
+                'category': item,
+            }, sources)
+            normalized_values.append(normalized['category'])
+            if 'category' in resolved:
+                entries.append(resolved['category'])
+        normalized_value = normalized_values if isinstance(value, list) else normalized_values[0]
+        constraint['value'] = normalized_value
+        if entries:
+            provenance[reference] = {
+                'field': 'category',
+                'raw_value': deepcopy(value),
+                'normalized_value': deepcopy(normalized_value),
+                'resolutions': entries,
+            }
+    return payload, provenance
+
+
+def _accept(context, recorder, state, plan, decision, history, *, validated_tool=None, pg_review=None):
     if state['goal'] is None:
         if decision.goal is None:
             if decision.action in {'clarify', 'respond', 'handoff', 'unsupported'}:
                 if decision.commands:
                     from src.dialogue_understanding import validate_command_grounding
                     validate_command_grounding(decision.commands, state['request'], history)
-                state['pending'] = dict(decision=decision.model_dump(), step_id=None)
+                state['pending'] = dict(decision=decision.model_dump(), step_id=None,
+                                        pg_review_id=(pg_review or {}).get('review_id'))
                 state['model_cursor'] = context.model_cursor
                 _save(context, state, plan)
                 recorder.record('adaptive_decision', source='model', decision=decision.model_dump(),
@@ -371,9 +472,13 @@ def _accept(context, recorder, state, plan, decision, history):
             validate_command_grounding(decision.commands, state['request'], history)
             state['dialogue_commands'] = [command.model_dump() for command in decision.commands]
         validate_goal(decision.goal, state['request'], history)
+        accepted_goal, goal_provenance = _normalize_goal_catalog_aliases(
+            decision.goal, state['request'], history)
+        if goal_provenance:
+            recorder.record('goal_arguments_normalized', provenance=deepcopy(goal_provenance))
         if decision.action != 'clarify':
             from src.request_audit import review_request
-            proposed = {**state, 'goal': goal_payload(decision.goal)}
+            proposed = {**state, 'goal': accepted_goal}
             audit = review_request(context, proposed, plan, history, phase='goal')
             state['audit_attempts'] = [*state.get('audit_attempts', []), audit]
             if audit['verdict'] != 'APPROVED':
@@ -382,11 +487,13 @@ def _accept(context, recorder, state, plan, decision, history):
                 raise AgentError('REQUEST_AUDIT_REJECTED', '独立审查未确认需求覆盖与语义，不能执行当前目标', retryable=False)
             state['request_audit'] = audit
             state.pop('audit_format_feedback', None)
-        state['goal'] = goal_payload(decision.goal)
+        state['goal'] = accepted_goal
         state['objective_ledger'] = new_ledger(state['goal'])
         plan.goals = [o['id'] for o in state['goal']['objectives']]
-    elif decision.goal is not None and goal_payload(decision.goal) != state['goal']:
-        raise AgentError('GOAL_CHANGE_REQUIRES_USER', '没有新用户指令时不能修改目标或硬约束', retryable=False)
+    elif decision.goal is not None:
+        normalized_goal, _ = _normalize_goal_catalog_aliases(decision.goal, state['request'], history)
+        if normalized_goal != state['goal']:
+            raise AgentError('GOAL_CHANGE_REQUIRES_USER', '没有新用户指令时不能修改目标或硬约束', retryable=False)
     surface = state.get('decision_surface') or {}
     if surface.get('mode') != 'full' and surface.get('allowed_actions'):
         if decision.action not in set(surface['allowed_actions']):
@@ -419,8 +526,14 @@ def _accept(context, recorder, state, plan, decision, history):
         state['next_steps'] = decision.next_steps
     step = None
     if decision.action == 'tool':
-        args = _validate_tool(decision, state, plan, history)
-        step = TaskStep(f'step-{len(plan.steps) + 1}', 'shopping', decision.tool, args)
+        args, argument_provenance = (validated_tool if validated_tool is not None
+                                     else _validate_tool(decision, state, plan, history))
+        step = TaskStep(f'step-{len(plan.steps) + 1}', 'shopping', decision.tool, args,
+                        argument_provenance=argument_provenance)
+        if argument_provenance:
+            recorder.record('tool_arguments_normalized', tool=decision.tool,
+                raw_args=deepcopy(decision.args), normalized_args=deepcopy(args),
+                argument_provenance=deepcopy(argument_provenance))
     elif decision.action == 'inspect':
         step = TaskStep(f'step-{len(plan.steps) + 1}', 'shopping', 'read_evidence',
                         dict(reference=decision.evidence_ref, offset=decision.offset, limit=decision.limit))
@@ -439,13 +552,16 @@ def _accept(context, recorder, state, plan, decision, history):
         candidate.steps.append(step)
         candidate.validate(context.limits.max_steps, context.limits.max_depth)
         plan.steps.append(step)
-    state['pending'] = dict(decision=decision.model_dump(), step_id=step.step_id if step else None)
+    state['pending'] = dict(decision=decision.model_dump(), step_id=step.step_id if step else None,
+                            pg_review_id=(pg_review or {}).get('review_id'))
     state['model_cursor'] = context.model_cursor
     state['feedback'] = None
     _save(context, state, plan)
     recorder.record('adaptive_decision', source='model', decision=decision.model_dump(),
                     goal_revision=state['goal_revision'], step_id=step.step_id if step else None,
-                    native_submission=state.get('active_native_submission'))
+                    native_submission=state.get('active_native_submission'),
+                    pg_review_id=(pg_review or {}).get('review_id'),
+                    effective_decision_fingerprint=(pg_review or {}).get('actual_decision_fingerprint'))
 
 
 def _selection_step(state, plan, decision):
@@ -715,7 +831,24 @@ def _run(context, user_message, history, pending_action):
                     apply_controls(context)
                     if _review_liveplan_candidate(context, recorder, state, plan, decision):
                         continue
-                    _accept(context, recorder, state, plan, decision, history)
+                    validated_tool = None
+                    effective_decision = decision
+                    # 首次复合决策沿用既有事务边界：先接受合法目标，工具参数错误再走修复轮。
+                    # 后续工具决策已经有稳定目标，必须在 PG 重放审查前按真实执行参数归一化。
+                    if decision.action == 'tool' and state.get('goal') is not None:
+                        validated_tool = _validate_tool(decision, state, plan, history)
+                        effective_decision = decision.model_copy(update={'args': validated_tool[0]})
+                    pg_review = _review_context_candidate(
+                        context, recorder, state, plan, effective_decision,
+                        raw_decision=decision,
+                        argument_provenance=validated_tool[1] if validated_tool else None,
+                        identity_basis=('validated_normalized_tool_args' if validated_tool
+                                        else 'model_decision_before_first_tool_validation'),
+                    )
+                    if pg_review and pg_review.get('blocked'):
+                        continue
+                    _accept(context, recorder, state, plan, decision, history,
+                            validated_tool=validated_tool, pg_review=pg_review)
                     apply_controls(context)
                 except AgentError as error:
                     if error.code in {'MODEL_FORMAT_ERROR', 'UNKNOWN_TOOL', 'INVALID_TOOL_ARGUMENTS', 'REQUEST_AUDIT_REJECTED', 'AUDIT_FORMAT_ERROR',
@@ -736,11 +869,14 @@ def _run(context, user_message, history, pending_action):
             decision = Decision.model_validate(pending['decision'])
             step = next((s for s in plan.steps if s.step_id == pending['step_id']), None)
             if decision.action in {'respond', 'unsupported'}:
+                _record_context_outcome(context, state, plan, pending, decision, step)
                 return _present_dialogue(context, recorder, intake, state, plan, decision)
             if decision.action == 'handoff':
                 from src.orchestrator import _explicit_escalation
+                _record_context_outcome(context, state, plan, pending, decision, step)
                 return _explicit_escalation(intake, context.run_id, state['request'])
             if decision.action in {'clarify', 'finish'}:
+                _record_context_outcome(context, state, plan, pending, decision, step)
                 return _present(context, recorder, intake, state, plan,
                     reason='MODEL_CLARIFICATION' if decision.action == 'clarify' else 'MODEL_STOPPED', message=decision.message)
             if decision.action == 'recommend':
@@ -760,6 +896,7 @@ def _run(context, user_message, history, pending_action):
                 _save(context, state, plan)
                 message = _verify_recommendation(context, recorder, state, plan, decision, step)
                 record_outcome(state, decision.objective_id, step)
+                _record_context_outcome(context, state, plan, pending, decision, step)
                 if message is not None and len(state['objective_ledger']) == 1:
                     # Keep the pending proposal through terminal persistence. If
                     # the process dies before commit, resume must refresh again.
@@ -775,6 +912,7 @@ def _run(context, user_message, history, pending_action):
                         message='此选购项已核验，请继续处理剩余目标，再逐项提交 complete 证据。')
             elif decision.action == 'complete':
                 message = _complete(context, recorder, state, plan, decision)
+                _record_context_outcome(context, state, plan, pending, decision, step)
                 if message is not None:
                     apply_controls(context)
                     context.require()
@@ -829,6 +967,7 @@ def _run(context, user_message, history, pending_action):
                     step.status = 'FAILED'
                     step.error = dict(code=error.code, message=str(error))
                     state['feedback'] = dict(step_id=step.step_id, **step.error)
+            _record_context_outcome(context, state, plan, pending, decision, step)
             state['pending'] = None
             if state.get('feedback') and state['feedback'].get('code') != 'OBJECTIVES_REQUIRE_COMPLETION':
                 _discard_native_queue(context, state, state['feedback'].get('code', 'OBSERVATION_CHANGED'))

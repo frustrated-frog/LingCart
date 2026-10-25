@@ -16,6 +16,8 @@ from src.backend.db import (
     AfterSalesCase,
     AfterSalesCaseRefund,
     AfterSalesCaseRun,
+    Order,
+    OrderItem,
     PendingAction,
     Payment,
     Refund,
@@ -32,6 +34,7 @@ from src.runtime import ReplayPolicy, ToolEffect, ToolRiskLevel, tool_spec
 
 
 MESSAGE = "订单 1001 的耳机出现间歇性异响，需要建立售后案件处理"
+MULTI_ITEM_MESSAGE = "订单 1001 的行项目 OI-1001-1 出现异响，需要申请售后退款"
 
 
 class AfterSalesUnderstandingModel:
@@ -51,6 +54,53 @@ class AfterSalesUnderstandingModel:
                             "kind": "AFTER_SALES_CASE",
                             "source_quote": MESSAGE,
                             "order_id": 1001,
+                            "reason_code": "NOT_AS_DESCRIBED",
+                        }
+                    ],
+                },
+                ensure_ascii=False,
+            )
+        )
+
+
+class MissingReasonUnderstandingModel(AfterSalesUnderstandingModel):
+    def invoke(self, prompt):
+        assert MESSAGE in str(prompt)
+        return AIMessage(
+            content=json.dumps(
+                {
+                    "reason": "原因分类不明确",
+                    "commands": [],
+                    "objectives": [
+                        {
+                            "id": "after-sales-case",
+                            "kind": "AFTER_SALES_CASE",
+                            "source_quote": MESSAGE,
+                            "order_id": 1001,
+                        }
+                    ],
+                },
+                ensure_ascii=False,
+            )
+        )
+
+
+class MultiItemAfterSalesUnderstandingModel(AfterSalesUnderstandingModel):
+    def invoke(self, prompt):
+        assert MULTI_ITEM_MESSAGE in str(prompt)
+        return AIMessage(
+            content=json.dumps(
+                {
+                    "reason": "明确指定了多商品订单中的售后行项目",
+                    "commands": [],
+                    "objectives": [
+                        {
+                            "id": "after-sales-case",
+                            "kind": "AFTER_SALES_CASE",
+                            "source_quote": MULTI_ITEM_MESSAGE,
+                            "order_id": 1001,
+                            "order_item_id": "OI-1001-1",
+                            "reason_code": "NOT_AS_DESCRIBED",
                         }
                     ],
                 },
@@ -75,6 +125,9 @@ def database(tmp_path, monkeypatch):
         delivered.occurred_at = datetime.now(UTC).replace(tzinfo=None) - timedelta(days=2)
         session.commit()
     monkeypatch.setattr(orchestrator, "get_llm", lambda **_kwargs: AfterSalesUnderstandingModel())
+    from src import llm
+    from tests.evidence_fixtures import SemanticModel
+    monkeypatch.setattr(llm, "get_llm", lambda **_kwargs: SemanticModel())
     yield path
     engine.dispose()
 
@@ -92,11 +145,27 @@ def test_after_sales_tools_declare_distinct_write_and_approval_policies(database
     assert submit.transactional is True
 
 
+def test_missing_reason_classification_clarifies_without_opening_case(database, monkeypatch):
+    monkeypatch.setattr(orchestrator, "get_llm", lambda **_kwargs: MissingReasonUnderstandingModel())
+
+    result = run_conversation(MESSAGE, "after-sales-missing-reason", request_id="missing-reason")
+
+    assert result["status"] == "WAITING_CLARIFICATION"
+    assert result["terminal_reason"] == "MISSING_REQUIRED_INFORMATION"
+    assert "售后原因" in result["reply"]
+    assert result["trace"] == []
+    with tools._session() as session:
+        assert session.scalars(select(AfterSalesCase)).all() == []
+
+
 def test_case_assessment_and_confirmed_submission_are_one_auditable_chain(database):
     first = run_conversation(MESSAGE, "after-sales", request_id="open-case")
 
     assert first["status"] == "WAITING_APPROVAL"
     assert [entry["tool"] for entry in first["trace"]] == ["prepare_after_sales_case"]
+    assert first["trace"][0]["args"]["reason_code"] == "NOT_AS_DESCRIBED"
+    assert first["trace"][0]["args"]["reason_taxonomy_version"] == "after-sales-reason/2026-01"
+    assert len(first["trace"][0]["args"]["reason_taxonomy_fingerprint"]) == 64
     pending = first["pending_action"]
     assert pending["type"] == "SUBMIT_AFTER_SALES_CASE"
     assert pending["tool"] == "submit_after_sales_case"
@@ -106,6 +175,8 @@ def test_case_assessment_and_confirmed_submission_are_one_auditable_chain(databa
         case = session.get(AfterSalesCase, pending["case_id"])
         refund = session.scalar(select(Refund).where(Refund.order_id == 1001))
         assert case.status == "AWAITING_CONFIRMATION"
+        assert case.reason_code == "NOT_AS_DESCRIBED"
+        assert case.context["reason_classification"]["version"] == "after-sales-reason/2026-01"
         assert refund.status == "none"
         assert len(session.scalars(select(AfterSalesCaseRun).where(
             AfterSalesCaseRun.case_id == case.case_id
@@ -166,6 +237,49 @@ def test_case_assessment_and_confirmed_submission_are_one_auditable_chain(databa
         assert len(session.scalars(select(AfterSalesCase)).all()) == 1
 
 
+def test_multi_item_case_is_routed_to_manual_review_without_order_refund(database, monkeypatch):
+    with tools._session() as session:
+        session.add(
+            OrderItem(
+                item_id="OI-1001-2",
+                order_id=1001,
+                line_number=2,
+                name="附加配件",
+                quantity=1,
+                unit_price_minor=1200,
+                currency="CNY",
+                attributes={},
+            )
+        )
+        session.get(Order, 1001).amount = 91.99
+        session.scalar(select(Payment).where(Payment.order_id == 1001)).amount = 91.99
+        session.commit()
+    monkeypatch.setattr(
+        orchestrator,
+        "get_llm",
+        lambda **_kwargs: MultiItemAfterSalesUnderstandingModel(),
+    )
+
+    result = run_conversation(
+        MULTI_ITEM_MESSAGE,
+        "multi-item-case",
+        request_id="open-multi-item-case",
+    )
+
+    observation = result["trace"][0]["result"]
+    assert result["status"] == "PARTIAL"
+    assert result["terminal_reason"] == "EVIDENCE_UNAVAILABLE"
+    assert result["pending_action"] is None
+    assert result["trace"][0]["args"]["order_item_id"] == "OI-1001-1"
+    assert observation["case_status"] == "MANUAL_REVIEW"
+    assert observation["policy_decision"]["reason_codes"] == [
+        "REFUND_SCOPE_REQUIRES_LINE_ITEM_EXECUTION"
+    ]
+    with tools._session() as session:
+        refund = session.scalar(select(Refund).where(Refund.order_id == 1001))
+        assert refund.status == "none"
+
+
 def test_changed_business_facts_invalidate_approval_and_allow_reassessment(database):
     first = run_conversation(MESSAGE, "stale-case", request_id="open-case")
     pending = first["pending_action"]
@@ -198,6 +312,44 @@ def test_changed_business_facts_invalidate_approval_and_allow_reassessment(datab
     assert observation["case_id"] == pending["case_id"]
     assert observation["policy_decision"]["outcome"] == "INELIGIBLE"
     assert observation["policy_decision"]["reason_codes"] == ["PAYMENT_STATUS_NOT_ELIGIBLE"]
+
+
+def test_refund_scope_change_after_approval_is_rejected_without_refund(database):
+    first = run_conversation(MESSAGE, "scope-change", request_id="open-case")
+    pending = first["pending_action"]
+    with tools._session() as session:
+        session.add(
+            OrderItem(
+                item_id="OI-1001-2",
+                order_id=1001,
+                line_number=2,
+                name="附加配件",
+                quantity=1,
+                unit_price_minor=1200,
+                currency="CNY",
+                attributes={},
+            )
+        )
+        session.get(Order, 1001).amount = 91.99
+        session.scalar(select(Payment).where(Payment.order_id == 1001)).amount = 91.99
+        session.commit()
+
+    rejected = run_conversation(
+        "确认退款",
+        "scope-change",
+        request_id="submit-after-scope-change",
+        action_id=pending["action_id"],
+    )
+
+    assert rejected["status"] == "FAILED"
+    assert rejected["terminal_reason"] == "REFUND_SCOPE_MISMATCH"
+    assert rejected["pending_action"] is None
+    with tools._session() as session:
+        refund = session.scalar(select(Refund).where(Refund.order_id == 1001))
+        assert refund.status == "none"
+        assert session.scalar(select(AfterSalesCaseRefund).where(
+            AfterSalesCaseRefund.case_id == pending["case_id"]
+        )) is None
 
 
 class CrashAfterCaseWrite(BaseException):
@@ -235,7 +387,7 @@ def test_case_creation_reuses_transactional_ledger_after_process_restart(databas
     with tools._session() as session:
         cases = session.scalars(select(AfterSalesCase)).all()
         assert len(cases) == 1
-        assert cases[0].revision == 4
+        assert cases[0].revision == 5
 
 
 def test_after_sales_read_api_returns_case_timeline_policy_and_refund_link(database):
@@ -265,7 +417,7 @@ def test_after_sales_read_api_returns_case_timeline_policy_and_refund_link(datab
     assert detail.status_code == 200
     payload = detail.json()
     assert payload["case"]["case_id"] == pending["case_id"]
-    assert [event["sequence"] for event in payload["case"]["events"]] == [1, 2, 3, 4, 5, 6]
+    assert [event["sequence"] for event in payload["case"]["events"]] == [1, 2, 3, 4, 5, 6, 7]
     assert {row["role"] for row in payload["runs"]} == {"INTAKE", "SUBMISSION"}
     assert payload["refund"]["refund_id"] == listed_cases[0]["refund_id"]
     assert payload["policy"]["policy_version_id"] == DEFAULT_AFTER_SALES_POLICY_VERSION_ID

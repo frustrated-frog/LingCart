@@ -12,7 +12,7 @@
     {"slot": "planning", "id": "bounded-model-loop", "version": "1"},
     {"slot": "context", "id": "evidence-reference-context", "version": "1"},
     {"slot": "memory", "id": "objective-ledger", "version": "1"},
-    {"slot": "verification", "id": "independent-request-audit", "version": "1"},
+    {"slot": "verification", "id": "independent-request-audit", "version": "2"},
     {"slot": "tool_protocol", "id": "native-strict-tools", "version": "1"},
     {
       "slot": "steering",

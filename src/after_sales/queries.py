@@ -14,7 +14,8 @@ from src.after_sales.contracts import (
     PolicyOutcome,
     PolicyVersionProjection,
 )
-from src.after_sales.service import AfterSalesCaseService
+from src.after_sales.service import AfterSalesCaseService, AfterSalesDomainError
+from src.after_sales.policy import AfterSalesPolicyEngine
 from src.backend.db import (
     AfterSalesCase,
     AfterSalesCaseRefund,
@@ -22,6 +23,25 @@ from src.backend.db import (
     PolicyVersion,
     Refund,
 )
+
+
+def _current_projection(session, case):
+    decision = case.latest_decision
+    if not decision or case.status in {"SUBMITTED", "RESOLVED", "REJECTED", "CANCELLED"}:
+        return case
+    reason = None
+    try:
+        current = AfterSalesPolicyEngine(session).evaluate(case.case_id)
+        if current.input_hash != decision['input_hash']:
+            reason = 'POLICY_INPUT_CHANGED'
+    except AfterSalesDomainError as exc:
+        reason = exc.code
+    if reason or not decision.get('valid', False):
+        return case.model_copy(update={
+            'latest_decision': {**decision, 'valid': False, 'stale_reason': reason or 'EVIDENCE_CHANGED'},
+            'plans': tuple({**plan, 'valid': False} for plan in case.plans),
+        })
+    return case
 
 
 def list_cases(
@@ -53,7 +73,7 @@ def list_cases(
     } if rows else {}
     items: list[CaseListItem] = []
     for row in rows:
-        projection = service.get_case(row.case_id)
+        projection = _current_projection(session, service.get_case(row.case_id))
         decision = projection.latest_decision or {}
         outcome = decision.get("outcome")
         items.append(
@@ -69,7 +89,7 @@ def list_cases(
                 origin_session_id=projection.origin_session_id,
                 opened_at=projection.opened_at,
                 updated_at=projection.updated_at,
-                policy_outcome=PolicyOutcome(outcome) if outcome else None,
+                policy_outcome=PolicyOutcome(outcome) if outcome and decision.get('valid', True) else None,
                 policy_reason_codes=tuple(decision.get("reason_codes") or ()),
                 policy_version_id=decision.get("policy_version_id"),
                 refund_id=links[row.case_id].refund_id if row.case_id in links else None,
@@ -80,7 +100,7 @@ def list_cases(
 
 def get_case_detail(session: Session, case_id: str) -> CaseDetail:
     service = AfterSalesCaseService(session)
-    case = service.get_case(case_id)
+    case = _current_projection(session, service.get_case(case_id))
     run_rows = session.scalars(
         select(AfterSalesCaseRun)
         .where(AfterSalesCaseRun.case_id == case_id)

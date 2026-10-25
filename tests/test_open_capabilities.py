@@ -14,6 +14,7 @@ from src.capability_registry import (
     CompiledOperation,
     GENERAL_ANSWER,
     PRODUCT_DISCOVERY,
+    SemanticValueCatalog,
     SYSTEM_TIME,
     CALCULATE,
     OperationContract,
@@ -114,6 +115,46 @@ def test_registry_rejects_unsafe_ungrounded_field_policy():
                            ungrounded_optional_defaults={"question": ""}),
             lambda _objective, _request: (),
         ),))
+
+
+def test_registry_validates_and_versions_semantic_value_catalogs():
+    catalog = SemanticValueCatalog(
+        version="demo-reason/1",
+        source="TEST_POLICY",
+        values={"BROKEN": "物品已经损坏", "OTHER": "其他明确原因"},
+    )
+    registration = CapabilityRegistration(
+        CapabilitySpec(
+            capability_id="demo.reason",
+            objective_kind="DEMO_REASON",
+            description="归一化明确原因",
+            target_type="reason",
+            evidence_requirement="POLICY_DECISION",
+            required_fields=("reason_code",),
+            accepted_fields=("reason_code",),
+            semantic_value_catalogs={"reason_code": catalog},
+        ),
+        lambda _objective, _request: (),
+    )
+    registry = CapabilityRegistry((registration,))
+    normalized, provenance = registry.normalize_arguments(
+        {
+            "id": "reason",
+            "kind": "DEMO_REASON",
+            "source_quote": "已经摔坏了",
+            "reason_code": "BROKEN",
+        },
+        ("已经摔坏了",),
+    )
+
+    assert normalized["reason_code"] == "BROKEN"
+    assert provenance["reason_code"]["resolver"] == "model_semantic_classification"
+    assert provenance["reason_code"]["resolver_fingerprint"] == catalog.fingerprint
+    assert registry.prompt_catalog()[0]["semantic_value_catalogs"]["reason_code"]["version"] == "demo-reason/1"
+
+    with pytest.raises(AgentError) as unsupported:
+        registry.validate_arguments({"kind": "DEMO_REASON", "reason_code": "INVENTED"})
+    assert unsupported.value.code == "INVALID_CAPABILITY_ARGUMENTS"
 
 
 def test_registered_capability_executes_validates_renders_and_reports_outcome_without_task_plan_changes(monkeypatch):

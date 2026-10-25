@@ -1,0 +1,161 @@
+{
+  "schema_version": 1,
+  "suite": "pg_guidance_contract",
+  "description": "只验证确定性指导契约、采用审计和无进展精确重放边界，不测量真实模型收益。",
+  "graph": "research/graphs/pg-seed-v1.json",
+  "cases": [
+    {
+      "id": "PGG01",
+      "description": "目标尚未建立时采用 set_goal 后继",
+      "trajectory": {
+        "goal_defined": false,
+        "recent_actions": [],
+        "unresolved_objective_kinds": [],
+        "pending_steps": [],
+        "all_objectives_verified": false
+      },
+      "candidate": {"action": "set_goal"},
+      "expected_status": "ALIGNED",
+      "expected_blocked": false,
+      "required_recommended_actions": ["set_goal"]
+    },
+    {
+      "id": "PGG02",
+      "description": "空结果后完全相同的工具决策必须在提交前阻断",
+      "trajectory": {
+        "goal_defined": true,
+        "recent_actions": [
+          {
+            "action": "search_products",
+            "outcome": "EMPTY",
+            "sequence": 10,
+            "decision": {"action": "tool", "tool": "search_products", "args": {"query": "耳机", "category": "耳机", "limit": 4}}
+          }
+        ],
+        "unresolved_objective_kinds": ["recommend"],
+        "pending_steps": [],
+        "all_objectives_verified": false
+      },
+      "candidate": {"action": "tool", "tool": "search_products", "args": {"query": "耳机", "category": "耳机", "limit": 4}},
+      "expected_status": "BLOCKED",
+      "expected_blocked": true,
+      "required_recommended_actions": ["inspect"]
+    },
+    {
+      "id": "PGG03",
+      "description": "空结果后改变查询参数不属于精确重放",
+      "trajectory": {
+        "goal_defined": true,
+        "recent_actions": [
+          {
+            "action": "search_products",
+            "outcome": "EMPTY",
+            "sequence": 10,
+            "decision": {"action": "tool", "tool": "search_products", "args": {"query": "耳机", "category": "耳机", "limit": 4}}
+          }
+        ],
+        "unresolved_objective_kinds": ["recommend"],
+        "pending_steps": [],
+        "all_objectives_verified": false
+      },
+      "candidate": {"action": "tool", "tool": "search_products", "args": {"query": "", "category": "耳机", "limit": 4}},
+      "expected_status": "DIVERGED",
+      "expected_blocked": false,
+      "required_recommended_actions": ["inspect"]
+    },
+    {
+      "id": "PGG04",
+      "description": "非空检索后读取证据与图后继对齐",
+      "trajectory": {
+        "goal_defined": true,
+        "recent_actions": [
+          {
+            "action": "search_products",
+            "outcome": "NON_EMPTY",
+            "sequence": 20,
+            "decision": {"action": "tool", "tool": "search_products", "args": {"query": "耳机", "category": "耳机", "limit": 4}}
+          }
+        ],
+        "unresolved_objective_kinds": ["recommend"],
+        "pending_steps": [],
+        "all_objectives_verified": false
+      },
+      "candidate": {"action": "inspect", "evidence_ref": "step-1", "offset": 0, "limit": 1},
+      "expected_status": "ALIGNED",
+      "expected_blocked": false,
+      "required_recommended_actions": ["inspect"]
+    },
+    {
+      "id": "PGG05",
+      "description": "与候选后继不同但非精确重放的行动只记录分歧",
+      "trajectory": {
+        "goal_defined": true,
+        "recent_actions": [
+          {
+            "action": "search_products",
+            "outcome": "EMPTY",
+            "sequence": 30,
+            "decision": {"action": "tool", "tool": "search_products", "args": {"query": "耳机", "category": "耳机", "limit": 4}}
+          }
+        ],
+        "unresolved_objective_kinds": ["recommend"],
+        "pending_steps": [],
+        "all_objectives_verified": false
+      },
+      "candidate": {"action": "tool", "tool": "answer_faq", "args": {"question": "退货政策"}},
+      "expected_status": "DIVERGED",
+      "expected_blocked": false,
+      "required_recommended_actions": ["inspect"]
+    },
+    {
+      "id": "PGG06",
+      "description": "已经完成全部目标时没有行动后继，契约保持未知而不强制",
+      "trajectory": {
+        "goal_defined": true,
+        "recent_actions": [
+          {
+            "action": "recommend",
+            "outcome": "SUCCESS",
+            "sequence": 40,
+            "decision": {"action": "recommend", "product_id": "P0001", "objective_id": "choice", "evidence_refs": ["step-1"]}
+          }
+        ],
+        "unresolved_objective_kinds": [],
+        "pending_steps": [],
+        "all_objectives_verified": true
+      },
+      "candidate": {"action": "complete", "claims": [{"objective_id": "choice", "evidence_refs": ["step-2"]}]},
+      "expected_status": "UNKNOWN",
+      "expected_blocked": false,
+      "required_recommended_actions": []
+    },
+    {
+      "id": "PGG07",
+      "description": "其他行动已经推进状态时不沿用更早的空结果阻断",
+      "trajectory": {
+        "goal_defined": true,
+        "recent_actions": [
+          {
+            "action": "search_products",
+            "outcome": "EMPTY",
+            "sequence": 50,
+            "decision": {"action": "tool", "tool": "search_products", "args": {"query": "耳机", "category": "耳机", "limit": 4}}
+          },
+          {
+            "action": "answer_faq",
+            "outcome": "SUCCESS",
+            "sequence": 51,
+            "decision": {"action": "tool", "tool": "answer_faq", "args": {"question": "退货政策"}}
+          }
+        ],
+        "unresolved_objective_kinds": ["recommend"],
+        "pending_steps": [],
+        "all_objectives_verified": false
+      },
+      "candidate": {"action": "tool", "tool": "search_products", "args": {"query": "耳机", "category": "耳机", "limit": 4}},
+      "expected_status": "DIVERGED",
+      "expected_blocked": false,
+      "required_recommended_actions": ["inspect"]
+    }
+  ]
+}

@@ -23,7 +23,9 @@ const RESOLUTION_LABELS: Record<string, string> = {
 
 const CASE_EVENT_LABELS: Record<string, string> = {
   CASE_OPENED: '案件建立', RUN_LINKED: '运行关联', EVIDENCE_ADDED: '证据入账', POLICY_DECIDED: '政策裁决',
+  EVIDENCE_SEMANTIC_ASSESSED: '材料语义核验',
   CASE_SUBMITTED: '退款申请已提交', CASE_CANCELLED: '案件取消', CASE_RESOLVED: '案件解决', CASE_REJECTED: '案件拒绝',
+  EVIDENCE_REVOKED: '证据已撤回',
 }
 
 const ACTOR_LABELS: Record<string, string> = {
@@ -50,10 +52,12 @@ const ACTION_LABELS: Record<string, string> = {
 
 const EVIDENCE_LABELS: Record<string, string> = {
   ISSUE_DESCRIPTION: '问题描述', ORDER_FACT: '订单事实', PAYMENT_FACT: '支付事实', DELIVERY_FACT: '配送事实',
+  DAMAGE_DESCRIPTION: '损坏情况说明', ITEM_CONDITION: '商品状态说明', ORIGINAL_PACKAGING: '原包装说明',
 }
 
 const RUN_ROLE_LABELS: Record<string, string> = {
   INTAKE: '案件受理', REASSESSMENT: '重新核验', SUBMISSION: '提交执行', READ: '案件读取',
+  EVIDENCE_UPDATE: '证据更新与重规划',
 }
 
 const dateFormatter = new Intl.DateTimeFormat('zh-CN', {
@@ -125,7 +129,15 @@ function CaseDossier({ detail }: { detail: AfterSalesCaseDetail }) {
   const { case: caseData, policy, refund, runs } = detail
   const decision = caseData.latest_decision
   const reasons = decision?.reason_codes ?? []
-  const allowedActions = decision?.allowed_actions ?? []
+  const stale = decision?.valid === false
+  const allowedActions = stale ? [] : decision?.allowed_actions ?? []
+  const requirements = decision?.facts.evidence_requirements ?? []
+  const plans = caseData.plans ?? []
+  const plan = plans.at(-1)
+  const planActions: Record<string, string> = {
+    REQUEST_CUSTOMER_EVIDENCE: '请求补充材料', COLLECT_BUSINESS_EVIDENCE: '读取权威业务证据',
+    REQUEST_CUSTOMER_CONFIRMATION: '等待新的退款确认', REQUIRES_HUMAN_CAPABILITY: '需要人工处理能力',
+  }
   return <div className="case-dossier">
     <header className="case-dossier-header">
       <div>
@@ -136,11 +148,11 @@ function CaseDossier({ detail }: { detail: AfterSalesCaseDetail }) {
       <div className="case-identity"><StatusBadge status={caseData.status} /><code title={caseData.case_id}>{caseData.case_id}</code></div>
     </header>
 
-    <section className={`policy-verdict ${decision?.outcome.toLowerCase() ?? 'pending'}`} aria-label="政策裁决">
+    <section className={`policy-verdict ${stale ? 'pending' : decision?.outcome.toLowerCase() ?? 'pending'}`} aria-label="政策裁决">
       <div className="policy-verdict-mark"><Scale size={19} /><span>POLICY<br />DECISION</span></div>
       <div className="policy-verdict-copy">
         <small>确定性政策引擎裁决</small>
-        <h3>{decision ? STATUS_LABELS[decision.outcome] ?? decision.outcome : '尚未生成裁决'}</h3>
+        <h3>{stale ? '旧裁决已失效，需重新核验' : decision ? STATUS_LABELS[decision.outcome] ?? decision.outcome : '尚未生成裁决'}</h3>
         {reasons.length > 0
           ? <div className="policy-reason-list">{reasons.map((reason) => <span key={reason} title={reason}>{policyReasonLabel(reason)}</span>)}</div>
           : <p>当前案件尚无可展示的裁决依据。</p>}
@@ -155,7 +167,7 @@ function CaseDossier({ detail }: { detail: AfterSalesCaseDetail }) {
     <dl className="case-fact-grid">
       <div><dt>案件版本</dt><dd>REV {caseData.revision}</dd></div>
       <div><dt>订单商品</dt><dd>{caseData.order_item_id ?? '未绑定行项目'}</dd></div>
-      <div><dt>活动证据</dt><dd>{caseData.evidence.length} 条</dd></div>
+      <div><dt>活动证据</dt><dd>{caseData.evidence.filter(e => e.status === 'ACTIVE').length} 条</dd></div>
       <div><dt>关联运行</dt><dd>{runs.length} 个</dd></div>
       <div><dt>退款副作用</dt><dd>{refund ? `#${refund.refund_id} · ${STATUS_LABELS[refund.status] ?? refund.status}` : '尚未创建'}</dd></div>
       <div><dt>最后更新</dt><dd>{formatTimestamp(caseData.updated_at)}</dd></div>
@@ -179,11 +191,45 @@ function CaseDossier({ detail }: { detail: AfterSalesCaseDetail }) {
       </section>
 
       <div className="case-side-ledgers">
+        <section className="case-ledger-panel" aria-label="案件计划与证据要求">
+          <div className="case-panel-title"><span>案件计划与证据要求</span><small>{plan ? `PLAN ${plan.revision}` : 'NO PLAN'}</small></div>
+          {plan ? <div className="case-record-list">
+            <article><strong>{plan.valid ? '当前计划' : '历史计划，等待重新核验'}</strong>
+              <p>保留 {plan.retained_goal_ids.length} 个目标 · 修订 {plan.changed_goal_ids.length} 个目标</p>
+              <code>{plan.plan_id}</code>
+            </article>
+            {plan.valid && plan.next_actions.map((action, index) => <article key={`${action.goal_id}-${index}`}>
+              <strong>{planActions[action.kind] ?? action.kind}</strong>
+              {action.question && <p className="case-plan-question">{action.question}</p>}
+              {action.requires_approval && <p>补证不会授权退款，提交前必须再次明确确认。</p>}
+            </article>)}
+          </div> : <div className="case-inline-state">尚无持久化案件计划。</div>}
+          {requirements.length > 0 ? <div className="case-record-list">{requirements.map(requirement => <article key={requirement.requirement_id}>
+            <div><strong>{requirement.description}</strong><span>{stale ? '待重新核验' : requirement.status === 'SATISFIED' ? '要求已满足' : '要求未满足'}</span></div>
+            <p>接受来源：{requirement.accepted_sources.map(source => source === 'CUSTOMER_STATEMENT' ? '用户原始陈述' : source === 'ORDER_RECORD' ? '权威订单记录' : source).join('、') || '尚未定义'}</p>
+            <p>采用 {requirement.evidence_refs.length} 条证据 · 未采用 {Object.keys(requirement.rejected_evidence).length} 条</p>
+            {requirement.validation_condition === 'CUSTOMER_ATTESTATION' && (requirement.semantic_assessment ? <section className="case-semantic-assessment" aria-label="材料语义核验">
+              <p>语义核验：{{ SUFFICIENT: '陈述充分', INCOMPLETE: '信息不足', IRRELEVANT: '材料无关', CONFLICT: '陈述冲突', UNKNOWN: '无法判断' }[requirement.semantic_assessment.status]}{stale ? '（历史结果）' : ''}</p>
+              <p>{requirement.semantic_assessment.explanation}</p>
+              {requirement.semantic_assessment.question && <p>待澄清：{requirement.semantic_assessment.question}</p>}
+              {requirement.semantic_assessment.citations.map((citation, index) => <blockquote key={index}>
+                {citation.quote}<small> · {compactId(citation.evidence_id)}</small>
+              </blockquote>)}
+              {requirement.semantic_assessment.error_code && <p>核验暂不可用：{requirement.semantic_assessment.error_code}</p>}
+              <p>语义核验只判断陈述是否回答要求，不代表客观鉴定。</p>
+            </section> : <p className="case-plan-question">语义尚未核验，来源通过不能替代充分性判断。</p>)}
+          </article>)}</div> : <div className="case-inline-state">当前裁决没有结构化补证要求。</div>}
+          {plans.length > 1 && <details><summary>查看 {plans.length} 次计划修订</summary><div className="case-record-list">{plans.map(item => <article key={item.plan_id}>
+            <strong>PLAN {item.revision} · {STATUS_LABELS[item.status] ?? item.status}</strong><p>案件版本 {item.case_revision} · {formatTimestamp(item.created_at)}</p>
+            <code>{item.decision_id}</code>
+          </article>)}</div></details>}
+        </section>
         <section className="case-ledger-panel">
           <div className="case-panel-title"><span>证据引用</span><small>{decision?.evidence_refs.length ?? 0} REFS</small></div>
           {caseData.evidence.length > 0 && <div className="case-record-list">{caseData.evidence.map((evidence) => <article key={evidence.evidence_id}>
-            <div><strong>{EVIDENCE_LABELS[evidence.evidence_type] ?? evidence.evidence_type}</strong><StatusBadge status={evidence.status} /></div>
+            <div><strong>{EVIDENCE_LABELS[evidence.evidence_type] ?? evidence.evidence_type}</strong><span>{evidence.status === 'ACTIVE' ? '材料在用' : evidence.status === 'REVOKED' ? '已撤回' : '材料失效'}</span></div>
             <p>{evidence.source_type} · {evidence.source_ref}</p>
+            <p>{evidence.validation?.status === 'VERIFIED' ? '来源已核验；充分性由政策判定' : evidence.validation?.status === 'REJECTED' ? '来源核验未通过' : '来源尚未核验'}</p>
             <code title={evidence.checksum}>{compactId(evidence.checksum, 18)}</code>
           </article>)}</div>}
           {decision?.evidence_refs.length ? <div className="evidence-reference-list">{decision.evidence_refs.map((reference) => <code key={reference}>{reference}</code>)}</div> : <div className="case-inline-state">裁决尚未引用业务证据。</div>}

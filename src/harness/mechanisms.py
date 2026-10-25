@@ -68,6 +68,15 @@ class EmbeddedMechanism:
 
 
 @dataclass(frozen=True)
+class EvidenceVerificationMechanism(EmbeddedMechanism):
+    """保留既有目标审查，同时提供可替换的证据语义核验槽位。"""
+
+    def assess_evidence(self, inputs, *, model, runtime):
+        from src.after_sales.semantic import assess
+        return assess(inputs, model=model, runtime=runtime)
+
+
+@dataclass(frozen=True)
 class ContextMechanism(EmbeddedMechanism):
     """A real context seam used by durable execution before the engine starts."""
 
@@ -190,6 +199,7 @@ def built_in_mechanisms() -> tuple[HarnessMechanism, ...]:
     """Return exact implementations referenced by built-in Profiles."""
 
     from src.liveplan import LivePlanSteeringMechanism
+    from src.pg_context import PGContextMechanism
 
     return (
         EmbeddedMechanism("planning", "structured-dialogue-understanding", "1", ("orchestrator",),
@@ -199,8 +209,10 @@ def built_in_mechanisms() -> tuple[HarnessMechanism, ...]:
                            "src/catalog_metadata.py", "src/intake.py")),
         EmbeddedMechanism("tool_protocol", "runtime-tool-ledger", "2", ("orchestrator",),
                           ("src/runtime.py", "src/persistence.py")),
-        EmbeddedMechanism("verification", "deterministic-business-gates", "1", ("orchestrator",),
-                          ("src/direct_executor.py", "src/task_plan.py", "src/catalog_query.py")),
+        EvidenceVerificationMechanism("verification", "deterministic-business-gates", "2", ("orchestrator",),
+                          ("src/direct_executor.py", "src/task_plan.py", "src/catalog_query.py",
+                           "src/after_sales/semantic.py", "src/after_sales/evidence.py",
+                           "src/after_sales/actions.py", "src/after_sales/policy.py", "src/tools.py")),
         EmbeddedMechanism("planning", "bounded-model-loop", "1", ("adaptive",),
                           ("src/adaptive.py", "src/adaptive_decision.py")),
         ContextMechanism("context", "evidence-reference-context", "1", ("adaptive",),
@@ -211,10 +223,34 @@ def built_in_mechanisms() -> tuple[HarnessMechanism, ...]:
                             ("src/ace_context.py", "src/context_engine.py", "src/harness/mechanisms.py")),
         EmbeddedMechanism("memory", "objective-ledger", "1", ("adaptive",),
                           ("src/adaptive_goals.py",)),
-        EmbeddedMechanism("verification", "independent-request-audit", "1", ("adaptive",),
-                          ("src/request_audit.py", "src/adaptive_goals.py")),
+        EvidenceVerificationMechanism("verification", "independent-request-audit", "2", ("adaptive",),
+                          ("src/request_audit.py", "src/adaptive_goals.py", "src/after_sales/semantic.py",
+                           "src/after_sales/evidence.py", "src/after_sales/actions.py", "src/after_sales/policy.py", "src/tools.py")),
         EmbeddedMechanism("tool_protocol", "native-strict-tools", "1", ("adaptive",),
                           ("src/native_protocol.py", "src/runtime.py")),
         LivePlanSteeringMechanism(),
+        PGContextMechanism(),
+        PGContextMechanism(
+            mechanism_version="2",
+            retrieval_strategy="trajectory-state-v2",
+            max_local_edges=6,
+            min_localization_score=55,
+        ),
+        PGContextMechanism(
+            mechanism_version="3",
+            retrieval_strategy="trajectory-state-v2",
+            max_local_edges=6,
+            min_localization_score=55,
+            guidance_strategy="deterministic-contract-v1",
+        ),
+        PGContextMechanism(
+            mechanism_version="4",
+            retrieval_strategy="trajectory-state-v2",
+            max_local_edges=6,
+            min_localization_score=55,
+            guidance_strategy="deterministic-contract-v1",
+            applicability_strategy="typed-evidence-v1",
+            path_ranking_strategy="goal-progress-cost-v1",
+        ),
     )
 

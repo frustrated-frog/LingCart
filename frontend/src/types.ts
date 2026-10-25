@@ -385,6 +385,31 @@ export type AfterSalesCaseStatus = 'OPEN' | 'AWAITING_EVIDENCE' | 'AWAITING_CONF
 
 export type PolicyOutcome = 'ELIGIBLE' | 'NEEDS_EVIDENCE' | 'INELIGIBLE' | 'MANUAL_REVIEW'
 
+export interface EvidenceRequirement {
+  requirement_id: string
+  policy_version_id: string
+  policy_checksum: string
+  target_case_id: string
+  evidence_type: string
+  description: string
+  accepted_sources: string[]
+  validation_condition: string
+  max_age_days: number | null
+  status: 'SATISFIED' | 'UNSATISFIED'
+  evidence_refs: string[]
+  rejected_evidence: Record<string, string>
+  semantic_assessment?: {
+    assessment_id: string
+    verifier_version: string
+    status: 'SUFFICIENT' | 'INCOMPLETE' | 'IRRELEVANT' | 'CONFLICT' | 'UNKNOWN'
+    explanation: string
+    question: string
+    missing_information: string[]
+    citations: { evidence_id: string; quote: string }[]
+    error_code?: string | null
+  } | null
+}
+
 export interface PolicyDecision {
   decision_id: string
   policy_version_id: string
@@ -393,7 +418,9 @@ export interface PolicyDecision {
   outcome: PolicyOutcome
   reason_codes: string[]
   allowed_actions: string[]
-  facts: Record<string, unknown>
+  facts: Record<string, unknown> & { evidence_requirements?: EvidenceRequirement[] }
+  valid?: boolean
+  stale_reason?: string
   evidence_refs: string[]
   evaluator_version: string
   decided_at: string
@@ -410,6 +437,14 @@ export interface AfterSalesEvidence {
   status: string
   observed_at: string
   created_at: string
+  validation?: {
+    status: 'VERIFIED' | 'UNVERIFIED' | 'REJECTED'
+    reason_code: string
+    validator_version: string
+    checksum: string
+    case_revision: number
+    validated_at: string
+  } | null
 }
 
 export interface AfterSalesCaseEvent {
@@ -443,6 +478,28 @@ export interface AfterSalesCaseProjection {
   latest_decision: PolicyDecision | null
   evidence: AfterSalesEvidence[]
   events: AfterSalesCaseEvent[]
+  plans?: CasePlan[]
+}
+
+export interface CasePlan {
+  schema_version: number
+  planner_version: string
+  plan_id: string
+  case_id: string
+  revision: number
+  case_revision: number
+  decision_id: string
+  policy_version_id: string
+  status: string
+  supersedes_plan_id: string | null
+  goals: { goal_id: string; description: string; status: string; depends_on: string[]; evidence_refs: string[]; basis_hash: string; requirement_id?: string }[]
+  next_actions: { kind: string; goal_id: string; operation?: string; requirement_id?: string; question?: string; requires_approval?: boolean }[]
+  retained_goal_ids: string[]
+  changed_goal_ids: string[]
+  removed_goal_ids: string[]
+  invalidated_decision_id: string | null
+  created_at: string
+  valid: boolean
 }
 
 export interface AfterSalesCaseSummary {
@@ -555,4 +612,95 @@ export interface Preference {
   value: { value: unknown }
   version: number
   updated_at: string
+}
+
+export type PGPreset = 'smoke' | 'full'
+export type PGArm = 'baseline' | 'seed' | 'evolved'
+export interface PGGraph {
+  graph_id: string; version: number; parent_sha256: string | null
+  nodes: { id: string; kind: string; description: string }[]
+  edges: PGEdge[]
+}
+export interface PGEdge {
+  id: string; source: string; target: string; relation: string
+  condition: string; guidance: string; pitfalls: string
+  applicability?: { all_of?: PGConditionClause[]; any_of?: PGConditionClause[] } | null
+}
+export interface PGConditionClause { fact: string; operator: string; value?: string | boolean | number | string[] | null }
+export interface PGPlan {
+  preset: PGPreset; spec: { repeats: number; iterations: number; max_model_calls_per_run: number
+    max_prompt_tokens_per_run?: number; max_completion_tokens_per_run?: number; max_seconds_per_run?: number }
+  groups: Record<'train' | 'validation' | 'test', string[]>
+  max_samples: number; max_model_attempts: number; max_token_units: number | null; dataset_sha256: string; seed_sha256: string
+}
+export interface PGCatalog {
+  dataset: { cases: { id: string; learning_partition: 'train' | 'validation' | 'test'; scenario_family: string; category: string; description: string }[] }
+  plans: Record<PGPreset, PGPlan>; seed_graph: PGGraph; model_configured: boolean; current_identity: Record<string, unknown>
+}
+export interface PGSample {
+  stage: string; case_id: string; repetition: number; passed: boolean; failures: string[]
+  interventions: number; failure_stage: string | null
+}
+export interface PGIntervention {
+  intervention_id: string; graph: { graph_id: string; graph_version: number; graph_sha256: string }
+  localization: { anchor: string | null; fallback: boolean; abstained?: boolean; algorithm?: string; status?: string
+    reason?: string; confidence?: number | null; candidates?: Record<string, unknown>[]
+    shadow?: { algorithm?: string; anchor?: string | null; fallback?: boolean; node_ids?: string[]; edge_ids?: string[] } | null
+    shadow_changed?: boolean; node_ids: string[]; state_snapshot: Record<string, unknown>; sequence: number }
+  retrieval: { retrieved_edge_ids: string[]; selected_edge_ids: string[]; excluded_edge_ids?: string[]; subgraph: { edges?: PGEdge[] } | null }
+  applicability?: { strategy?: string | null; status?: string | null; reason?: string | null
+    evaluations?: { edge_id?: string; source?: string; target?: string; status?: string; reason?: string; score?: number | null
+      evaluation?: { evidence_bindings?: { fact?: string; actual?: unknown; source?: string }[] } }[]
+    selected_edge_ids?: string[]; false_edge_ids?: string[]; unknown_edge_ids?: string[]
+    projected_paths?: { path_id?: string; edge_ids?: string[]; currently_applicable_prefix?: number; future_edges_require_reevaluation?: string[] }[] }
+  guidance: { status: string; reason: string | null; content: string; exposed: boolean; sequence: number
+    generation_mode?: string; generation_model_calls?: number | null
+    contract?: { contract_id?: string; policy?: string; recommended_actions?: string[]; forbidden_repeats?: Record<string, unknown>[] } | null }
+  decision: { sequence: number; source: string; payload: Record<string, unknown> } | null
+  action_alignment: { status: string; matched_edge_ids: string[]; expected_actions?: string[]; actual_action?: string; reason?: string
+    blocked?: boolean; review_id?: string }
+  action_progress?: { status?: string; reason?: string; signals?: string[]; cost_delta?: { model_calls?: number; tool_calls?: number }
+    outcome_id?: string; review_id?: string; matched_edge_ids?: string[]; before_sha256?: string; after_sha256?: string } | null
+  tool: { name: string; args: Record<string, unknown>; status: string; sequence: number; result: unknown; invalid_result: boolean } | null
+  verification: Record<string, unknown> | null
+}
+export interface PGSampleDetail {
+  case_id: string; repetition: number; passed: boolean; [key: string]: unknown
+  pg_evidence?: { schema_version: number; summary: { interventions: number; exposed: number; aligned: number; diverged: number
+    unknown_alignment: number; blocked_repeats?: number; deterministic_contracts?: number; guidance_model_calls?: number
+    localization_fallbacks: number; localization_abstentions?: number
+    shadow_differences?: number; shadow_fallbacks?: number
+    progressed_actions?: number; no_progress_actions?: number; failed_actions?: number; deferred_actions?: number
+    unknown_progress_actions?: number; typed_applicability_interventions?: number
+    environment_triggered: boolean; recovered: boolean; failure_stage: string | null }
+    turns: { turn_index: number; request: string; passed: boolean; failures: string[]; interventions: PGIntervention[] }[] }
+}
+export interface PGSelection {
+  iteration: number; status: string; reason: string; parent_sha256: string; candidate_sha256?: string; retained_sha256: string
+  incumbent_metrics?: { score: number; model_attempts: number }
+  candidate_metrics?: { score: number; model_attempts: number }
+  patch?: { reason: string; source_cases: string[]; add_nodes: PGGraph['nodes']; delete_nodes: string[]; add_edges: PGEdge[]; delete_edges: string[] }
+}
+export interface PGArmResult {
+  profile: { profile_id: string }; execution_source: string; live_verified: boolean
+  metrics: { samples: number; mean_success_rate: number | null; recovery_rate: number | null
+    triggered_samples: number; pg_exposure_rate: number | null; repeated_ineffective_calls: number; model_attempts: number
+    pg_localization_fallbacks?: number; pg_localization_abstentions?: number
+    pg_shadow_disagreements?: number; pg_shadow_full_graph_fallbacks?: number
+    pg_no_progress_repeats_blocked?: number; pg_deterministic_contracts?: number; pg_guidance_model_calls?: number
+    pg_typed_applicability_interventions?: number; pg_actions_progressed?: number
+    pg_actions_without_progress?: number; pg_actions_failed?: number
+    tool_calls: number; tokens: { total_tokens: number | null }; latency_ms: { p95: number | null } }
+}
+export interface PGJobSummary {
+  job_id: string; created_at: string; preset: PGPreset; status: string; stage: string; completed_samples: number
+}
+export interface PGJob extends PGJobSummary {
+  cases: PGCatalog['dataset']['cases']
+  learning_cost: { rollout_model_attempts: number; refiner_model_attempts: number; rollout_tokens: number | null; refiner_token_units: number }
+  budget_usage: { model_attempts: number | null; token_units: number | null }
+  frozen: PGPlan; stage_completed: number; stage_total: number; cancel_requested: boolean; stale: boolean
+  identity: Record<string, unknown>; execution_source: string; history: PGSelection[]; arms: Partial<Record<PGArm, PGArmResult>>
+  error: string | null; error_type?: string | null; seed_graph: PGGraph; retained_graph: PGGraph | null
+  comparison: { conclusion: string; evidence_valid: boolean; failures: string[]; gates: Record<string, { passed: boolean; failures: string[] }> } | null
 }
