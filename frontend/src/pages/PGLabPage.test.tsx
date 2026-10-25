@@ -163,6 +163,21 @@ it('launches credit memory policy with a dev-only frozen budget', async () => {
   await waitFor(() => expect(start).toHaveBeenCalledWith(expect.objectContaining({ evolution_policy: 'credit-memory-v1', preset: 'smoke' })))
 })
 
+it('shows frozen dev groups instead of an empty test comparison for a learning job', async () => {
+  const frozen = { ...plan, evolution_policy: 'credit-memory-v1' as const, evaluation_scope: 'dev_only' as const,
+    groups: { train: ['PG01'], validation: ['PG07'], test: [] }, max_samples: 3, max_model_attempts: 26 }
+  const learningJob = { ...job, frozen, comparison: { conclusion: 'DEV_ONLY', evidence_valid: false, failures: [], gates: {} } }
+  vi.mocked(api.pgCatalog).mockResolvedValue({ ...catalog, learning_plans: { smoke: frozen, full: frozen }, learning_seed_graph: graph })
+  vi.mocked(api.pgJobs).mockResolvedValue({ jobs: [learningJob] })
+  vi.mocked(api.pgJob).mockResolvedValue(learningJob)
+  page()
+  expect(await screen.findByText('开发集学习闭环')).toBeInTheDocument()
+  expect(screen.getByText('测试 · 本轮不运行')).toBeInTheDocument()
+  expect(screen.queryByText('测试成功率')).not.toBeInTheDocument()
+  await waitFor(() => expect(screen.getByLabelText('演化策略')).toHaveValue('credit-memory-v1'))
+  expect(screen.getByText('26')).toBeInTheDocument()
+})
+
 it('opens the persisted training sample from a selected graph contribution', async () => {
   const trained: PGJob = { ...job, history: [{ ...job.history[0], training_graph: graph,
     edge_credit: { graph_sha256: 'seed', graph_id: 'test-graph', graph_version: 0, sample_refs: ['PG01:1'],

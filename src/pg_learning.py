@@ -167,7 +167,9 @@ class ModelGraphRefiner:
             prompt += ('\n输出 EvolutionProposal 包装：hypothesis 与 patch。hypothesis 声明问题、失败类型、预期行为、'
                        '实际修改的目标边及训练样本引用。edge_credit 只是关联证据，UNKNOWN 不能当作正负贡献，'
                        '失败任务中的支持证据仍然保留。先检查 hypothesis_memory，避开 blocks_retry=true 的同父图失败方向，'
-                       '不能仅改写指导文案。source_samples 使用 sample_refs，evidence_ids 只能引用训练贡献报告。')
+                       '不能仅改写指导文案。source_samples 使用 sample_refs，evidence_ids 只能引用训练贡献报告。'
+                       'patch.source_cases 必须使用 training.case_id 的纯案例编号，不带 :repetition；'
+                       'hypothesis.target_edges 必须覆盖实际增删的全部边 ID，包括新增边，不能仅填写发现问题的旧边。')
             payload.pop('rejected_history')
             payload.update(edge_credit=report['edge_credit'], hypothesis_memory=rejected_history)
         messages = [SystemMessage(content=prompt + "\nSchema:" + canonical(schema.model_json_schema())),
@@ -242,8 +244,9 @@ def evolve(graph, spec, *, evaluator, refiner, output_dir: Path, execution_sourc
             if credit:
                 structured = EvolutionProposal.model_validate_json(proposal['proposal'])
                 patch = structured.patch
+                record['hypothesis'] = structured.hypothesis.model_dump(mode='json')
                 hypothesis_id = hypothesis_identity(retained, structured, credit)
-                record.update(hypothesis_id=hypothesis_id, hypothesis=structured.hypothesis.model_dump(mode='json'))
+                record['hypothesis_id'] = hypothesis_id
                 if any(m['hypothesis_id'] == hypothesis_id and m['blocks_retry'] for m in memory):
                     record['reason'] = 'REPEATED_REJECTED_HYPOTHESIS'
                     raise ValueError('拒绝重复的已否定修改方向')
@@ -277,7 +280,7 @@ def evolve(graph, spec, *, evaluator, refiner, output_dir: Path, execution_sourc
                     retained, incumbent_report, incumbent_metrics = candidate, candidate_report, metrics
                     record.update(status="ACCEPTED", reason="VALIDATION_NON_REGRESSION")
         except (ValueError, TypeError, KeyError) as error:
-            record["reason"] = record["reason"] or "INVALID_PROPOSAL_OR_REPORT"
+            record["reason"] = record["reason"] or getattr(error, 'code', "INVALID_PROPOSAL_OR_REPORT")
             # 验证错误不回显包含具体输入的 Pydantic 文本，原提案已单独保存。
             record["error_type"] = type(error).__name__
         record["retained_sha256"] = retained.fingerprint

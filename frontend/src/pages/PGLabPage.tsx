@@ -26,6 +26,9 @@ const reasons: Record<string, string> = {
   INVALID_PROPOSAL_OR_REPORT: '提案或验证报告无效', INCOMPARABLE_VALIDATION: '验证条件不一致',
   REFINER_FAILED: '图修改模型调用失败', REFINER_CONTEXT_TOO_LARGE: '训练轨迹超过上下文上限',
   REPEATED_REJECTED_HYPOTHESIS: '已否定的修改方向再次提出，跳过验证调用',
+  HYPOTHESIS_SOURCE_MISMATCH: '假设样本引用与 Patch 训练案例不匹配',
+  HYPOTHESIS_EVIDENCE_MISMATCH: '假设引用的证据不属于当前训练样本',
+  HYPOTHESIS_TARGET_MISMATCH: '假设目标没有完整对应实际修改关系',
 }
 const errors: Record<string, string> = {
   PG_WORKER_START_FAILED: '实验进程启动失败。', PG_CANCELLED: '实验已停止，已完成样本仍可查看。',
@@ -196,6 +199,13 @@ export function PGLabPage() {
     if (jobId) void queryClient.invalidateQueries({ queryKey: ['pg-samples', jobId] })
   }, [jobId, jobQuery.data?.completed_samples, queryClient])
   useEffect(() => { if (sampleKey) document.getElementById('pg-sample-details')?.scrollIntoView?.({ block: 'start' }) }, [sampleKey])
+  useEffect(() => {
+    const savedPolicy = jobQuery.data?.frozen.evolution_policy
+    if (savedPolicy) {
+      setPolicy(savedPolicy)
+      setPartition(savedPolicy === 'credit-memory-v1' ? 'train' : 'test')
+    }
+  }, [jobId, jobQuery.data?.frozen.evolution_policy])
   if (catalog.isPending) return <LoadingState label="正在读取 PG 冻结任务与程序图" />
   if (!catalog.data) return <ErrorState error={catalog.error} retry={() => { void catalog.refetch() }} />
   const data = catalog.data
@@ -243,13 +253,18 @@ export function PGLabPage() {
     {cancel.isError && <ErrorState error={cancel.error} />}
     {job?.stale && <div className="pg-alert">历史实验：当前源码、数据或模型配置已变化，以下结果不能代表当前版本。</div>}
     {job?.execution_source === 'test_harness' && <div className="pg-alert">测试替身数据 · 仅验证工程链路，不代表真实模型效果。</div>}
-    <SectionHeading index="01" title="三组对照" note={`${frozen.groups.test.length} 个测试情境 × ${frozen.spec.repeats} 次重复 / 每组`} />
-    <Comparison job={job} />
+    <SectionHeading index="01" title={frozen.evaluation_scope === 'dev_only' ? '开发集学习闭环' : '三组对照'}
+      note={frozen.evaluation_scope === 'dev_only' ? '训练提出假设 · 验证决定保留' : `${frozen.groups.test.length} 个测试情境 × ${frozen.spec.repeats} 次重复 / 每组`} />
+    {frozen.evaluation_scope === 'dev_only' ? <div className="pg-dev-scope" aria-label="冻结学习分组">
+      <div><strong>训练 · {frozen.groups.train.length} 个情境</strong><code>{frozen.groups.train.join('、')}</code><small>贡献报告与修改假设的来源</small></div>
+      <div><strong>验证 · {frozen.groups.validation.length} 个情境</strong><code>{frozen.groups.validation.join('、')}</code><small>只用于选择图与记录聚合反馈</small></div>
+      <div><strong>测试 · 本轮不运行</strong><small>保留图身份确定后另行冻结正式对照</small></div>
+    </div> : <Comparison job={job} />}
     {job && <p className="pg-training-cost">累计硬预算：模型尝试 {number(job.budget_usage.model_attempts)} / {number(frozen.max_model_attempts)} · token unit {number(job.budget_usage.token_units)} / {number(frozen.max_token_units)}。学习阶段：轨迹调用 {number(job.learning_cost.rollout_model_attempts)} 次 · Refiner {number(job.learning_cost.refiner_model_attempts)} 次。停止时未结束调用可能尚未汇总。</p>}
     <div className="pg-verdict"><GitBranch size={20} /><div><strong>{job?.comparison ? conclusions[job.comparison.conclusion] : job ? '实验尚未完成，保留已获得的证据' : '尚无实验结果'}</strong>
       <p>{frozen.evaluation_scope === 'dev_only' ? '本轮仅运行开发集训练与验证，不评估测试收益；机制仍为 candidate。'
         : job?.comparison ? '结论仅适用于本次冻结挑战集，未进行统计显著性检验；机制仍为 candidate。' : '完成训练、验证和三组测试后，这里会展示门禁结论。'}</p>
-      {job?.comparison && <details><summary>检查对照门禁与失败原因</summary>{job.comparison.failures.map(f => <p key={f}>{f}</p>)}
+      {job?.comparison && frozen.evaluation_scope !== 'dev_only' && <details><summary>检查对照门禁与失败原因</summary>{job.comparison.failures.map(f => <p key={f}>{f}</p>)}
         {Object.entries(job.comparison.gates).map(([name, gate]) => <div key={name}><b>{arms.find(a => a.id === name)?.label}：{gate.passed ? '门禁通过' : '门禁未通过'}</b>{gate.failures.map(f => <p key={f}>{f}</p>)}</div>)}</details>}</div></div>
     <SectionHeading index="02" title="程序图与演化记录" note="查看学习实际修改了什么" />
     <div className="pg-graph-toolbar"><div className="pg-tabs" role="tablist" aria-label="图版本"><button role="tab" aria-selected={graphView === 'seed'} onClick={() => setGraphView('seed')}>种子图</button>
