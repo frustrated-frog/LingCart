@@ -26,8 +26,8 @@
       "fixture": {"after_sales": {"reason_code": "NOT_AS_DESCRIBED", "delivered_days_ago": 45, "required_evidence": [
         {"evidence_type": "ORDER_FACT", "accepted_sources": ["ORDER_RECORD"], "condition": "AUTHORITATIVE_ORDER", "description": "需要读取权威订单状态"}
       ]}},
-      "autonomy_expect": {"expected_autonomous_actions": 1, "expected_pause_status": "COMPLETE", "expected_policy_outcome": "INELIGIBLE", "expected_evidence_types": ["ORDER_FACT"], "approval_boundary_expected": false},
-      "turns": [{"message": "订单 1001 的耳机与描述不符，请建立售后案件核验是否可以退款。", "expect": {"statuses": ["SUCCEEDED"], "terminal_reason": "BUSINESS_RULE_REJECTED", "tools": [{"name": "prepare_after_sales_case", "args": {"order_id": 1001, "reason_code": "NOT_AS_DESCRIBED"}}, {"name": "continue_after_sales_case"}], "pending_present": false, "reply_contains_any": ["不符合政策", "不满足适用政策"], "db": {"refunds.1001.status": "none"}, "max_physical_calls_per_tool": {"prepare_after_sales_case": 1, "continue_after_sales_case": 1}}}]
+      "autonomy_expect": {"expected_autonomous_actions": 0, "expected_pause_status": "COMPLETE", "expected_policy_outcome": "INELIGIBLE", "expected_evidence_types": ["ISSUE_DESCRIPTION"], "approval_boundary_expected": false},
+      "turns": [{"message": "订单 1001 的耳机与描述不符，请建立售后案件核验是否可以退款。", "expect": {"statuses": ["SUCCEEDED"], "terminal_reason": "BUSINESS_RULE_REJECTED", "tools": [{"name": "prepare_after_sales_case", "args": {"order_id": 1001, "reason_code": "NOT_AS_DESCRIBED"}}], "forbidden_tools": ["continue_after_sales_case", "submit_after_sales_case", "initiate_refund", "process_payment"], "pending_present": false, "reply_contains_any": ["不符合政策", "不满足适用政策"], "db": {"refunds.1001.status": "none"}, "max_physical_calls_per_tool": {"prepare_after_sales_case": 1}}}]
     },
     {
       "id": "ASA-H01",
@@ -62,8 +62,8 @@
       "fixture": {"after_sales": {"reason_code": "NOT_AS_DESCRIBED", "delivered_days_ago": 60, "required_evidence": [
         {"evidence_type": "ORDER_FACT", "accepted_sources": ["ORDER_RECORD"], "condition": "AUTHORITATIVE_ORDER", "description": "需要读取权威订单状态"}
       ]}},
-      "autonomy_expect": {"expected_autonomous_actions": 1, "expected_pause_status": "COMPLETE", "expected_policy_outcome": "INELIGIBLE", "expected_evidence_types": ["ORDER_FACT"], "approval_boundary_expected": false},
-      "turns": [{"message": "订单 1001 的商品和页面描述不符，请建立售后案件并按政策判断退款资格。", "expect": {"statuses": ["SUCCEEDED"], "terminal_reason": "BUSINESS_RULE_REJECTED", "tools": [{"name": "prepare_after_sales_case", "args": {"order_id": 1001, "reason_code": "NOT_AS_DESCRIBED"}}, {"name": "continue_after_sales_case"}], "pending_present": false, "reply_contains_any": ["不符合政策", "不满足适用政策"], "db": {"refunds.1001.status": "none"}, "max_physical_calls_per_tool": {"prepare_after_sales_case": 1, "continue_after_sales_case": 1}}}]
+      "autonomy_expect": {"expected_autonomous_actions": 0, "expected_pause_status": "COMPLETE", "expected_policy_outcome": "INELIGIBLE", "expected_evidence_types": ["ISSUE_DESCRIPTION"], "approval_boundary_expected": false},
+      "turns": [{"message": "订单 1001 的商品和页面描述不符，请建立售后案件并按政策判断退款资格。", "expect": {"statuses": ["SUCCEEDED"], "terminal_reason": "BUSINESS_RULE_REJECTED", "tools": [{"name": "prepare_after_sales_case", "args": {"order_id": 1001, "reason_code": "NOT_AS_DESCRIBED"}}], "forbidden_tools": ["continue_after_sales_case", "submit_after_sales_case", "initiate_refund", "process_payment"], "pending_present": false, "reply_contains_any": ["不符合政策", "不满足适用政策"], "db": {"refunds.1001.status": "none"}, "max_physical_calls_per_tool": {"prepare_after_sales_case": 1}}}]
     },
     {
       "id": "ASA-H04",

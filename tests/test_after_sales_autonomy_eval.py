@@ -30,6 +30,13 @@ def test_after_sales_autonomy_dataset_and_contract_are_frozen():
         "policy_autonomy.autonomous_resolution_rate",
         "policy_autonomy.avoidable_pause_rate",
     }
+    expired = [case for case in dataset["cases"]
+               if case["autonomy_expect"]["expected_policy_outcome"] == "INELIGIBLE"]
+    assert expired
+    assert all(case["autonomy_expect"]["expected_autonomous_actions"] == 0 for case in expired)
+    assert all(case["autonomy_expect"]["expected_evidence_types"] == ["ISSUE_DESCRIPTION"] for case in expired)
+    assert all("continue_after_sales_case" in case["turns"][0]["expect"]["forbidden_tools"]
+               for case in expired)
 
 
 def test_after_sales_autonomy_dataset_rejects_unfrozen_expectations(tmp_path):
