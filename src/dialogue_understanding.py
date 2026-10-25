@@ -157,8 +157,6 @@ evaluates a literal expression. Constraint shape: {version,constraints,optimizat
 goal_id,quantity,domain:{requirement_id,source_quote,provider,parameters}}]}. Constraint kinds are AGGREGATE
 {scope_goal_ids,attribute,function,operator,value}, COMPARISON {left,right,operator}, and ALL_DIFFERENT
 {scope_goal_ids,attribute}; every constraint and optimization also has requirement_id/source_quote. Leave missing values empty.
-For AFTER_SALES_CASE only, evidence_context_quotes may contain exact current HUMAN substrings describing the availability
-or absence of supporting policy evidence. They are audited context for that case, never a separate goal or authorization.
 """
 
 _CASE_FIRST_EVIDENCE_BOUNDARY_PROMPT = """
@@ -168,7 +166,8 @@ when the HUMAN also says supporting policy evidence or an attestation is current
 Known evidence absence is not missing case-intake information. Do not invent or claim that evidence,
 do not use AFTER_SALES_CONTINUE before a case exists, and do not CLARIFY solely for that known absence. The policy runtime
 will persist NEEDS_EVIDENCE and WAIT_USER_INPUT. Put each exact HUMAN substring describing that known absence in
-evidence_context_quotes so request coverage remains auditable. Still CLARIFY when order_id or the policy reason itself is ambiguous.
+evidence_context_quotes so request coverage remains auditable. evidence_context_quotes are audited context for the
+AFTER_SALES_CASE, never a separate goal or authorization. Still CLARIFY when order_id or the policy reason itself is ambiguous.
 """
 
 _RESULT_SET_REFERENCE = re.compile(
@@ -432,8 +431,17 @@ def _prompt(user_message: str, history: list | None, pending_action: dict | None
             return [compact_schema(item) for item in value]
         return value
 
+    runtime = current_runtime()
+    planning_mechanism = runtime.mechanisms.get("planning") if runtime is not None else None
+    case_first_evidence = (
+        getattr(planning_mechanism, "evidence_intake_mode", "model_default") == "case_first"
+    )
     repair = "\nPrevious output was invalid. Correct it using this error: " + error if error else ""
     schema = constrain_catalog_query_schema(TurnUnderstanding.model_json_schema())
+    if not case_first_evidence:
+        ((schema.get("$defs") or {}).get("BusinessObjective") or {}).get("properties", {}).pop(
+            "evidence_context_quotes", None
+        )
     catalog_context = None
     catalog_capability = next((kind for kind in ("CONSTRAINT_PLAN", "CATALOG_QUERY")
                                if any(item[0] == kind for item in capabilities)), None)
@@ -447,11 +455,9 @@ def _prompt(user_message: str, history: list | None, pending_action: dict | None
             "concepts": get_catalog_concept_registry().prompt_catalog(),
             "constraint_domain_providers": constraint_provider_prompt_catalog(),
         }
-    runtime = current_runtime()
-    planning_mechanism = runtime.mechanisms.get("planning") if runtime is not None else None
     evidence_boundary_prompt = (
         _CASE_FIRST_EVIDENCE_BOUNDARY_PROMPT
-        if getattr(planning_mechanism, "evidence_intake_mode", "model_default") == "case_first"
+        if case_first_evidence
         else ""
     )
     audit_repair = (

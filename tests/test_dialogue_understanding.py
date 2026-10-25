@@ -46,7 +46,9 @@ def test_evidence_boundary_profile_adds_case_first_instruction_only_for_candidat
     candidate_prompt = prompt_for("after-sales-evidence-boundary-v2")
 
     assert "Known evidence absence is not missing case-intake information" not in baseline_prompt
+    assert "evidence_context_quotes" not in baseline_prompt
     assert "Known evidence absence is not missing case-intake information" in candidate_prompt
+    assert "evidence_context_quotes" in candidate_prompt
 
 
 def test_evidence_context_quotes_are_scoped_to_after_sales_cases():
