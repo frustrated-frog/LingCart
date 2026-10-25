@@ -20,6 +20,7 @@ from src.backend.db import (
     OrderItem,
     PendingAction,
     Payment,
+    PolicyVersion,
     Refund,
     ShipmentEvent,
     ToolLedger,
@@ -27,6 +28,7 @@ from src.backend.db import (
     get_session_factory,
 )
 from src.backend.seed import DEFAULT_AFTER_SALES_POLICY_VERSION_ID, seed
+from src.after_sales.service import AfterSalesCaseService, _checksum
 from src.durable import resume_run, run_conversation
 from src.errors import AgentError
 from src.persistence import RunStore
@@ -107,6 +109,35 @@ class MultiItemAfterSalesUnderstandingModel(AfterSalesUnderstandingModel):
                 ensure_ascii=False,
             )
         )
+
+
+class SemanticModelMustNotRun:
+    def json_mode(self):
+        return self
+
+    def invoke(self, _prompt):
+        raise AssertionError("权威业务证据收集不应调用语义模型")
+
+
+def require_authoritative_order_evidence(session):
+    policy = session.get(PolicyVersion, DEFAULT_AFTER_SALES_POLICY_VERSION_ID)
+    policy.rules = {
+        **policy.rules,
+        "required_evidence_by_reason": {
+            **policy.rules["required_evidence_by_reason"],
+            "NOT_AS_DESCRIBED": ["ORDER_FACT"],
+        },
+        "evidence_acceptance": {
+            **policy.rules["evidence_acceptance"],
+            "ORDER_FACT": {
+                "accepted_sources": ["ORDER_RECORD"],
+                "condition": "AUTHORITATIVE_ORDER",
+                "description": "需要读取权威订单状态",
+            },
+        },
+    }
+    policy.checksum = _checksum(policy.rules)
+    session.commit()
 
 
 @pytest.fixture()
@@ -237,6 +268,43 @@ def test_case_assessment_and_confirmed_submission_are_one_auditable_chain(databa
         assert len(session.scalars(select(AfterSalesCase)).all()) == 1
 
 
+def test_policy_aware_loop_collects_authoritative_evidence_before_requesting_approval(database, monkeypatch):
+    from src import llm
+
+    with tools._session() as session:
+        require_authoritative_order_evidence(session)
+    monkeypatch.setattr(llm, "get_llm", lambda **_kwargs: SemanticModelMustNotRun())
+
+    result = run_conversation(MESSAGE, "autonomous-after-sales", request_id="open-case")
+
+    assert result["status"] == "WAITING_APPROVAL"
+    assert [entry["tool"] for entry in result["trace"]] == [
+        "prepare_after_sales_case",
+        "continue_after_sales_case",
+    ]
+    event_types = [event["type"] for event in result["events"]]
+    assert event_types.count("case_state_projected") == 2
+    assert "case_autonomous_action_selected" in event_types
+    assert "case_autonomous_action_completed" in event_types
+    assert "case_execution_paused" in event_types
+    autonomous = result["plan"]["steps"][0]["result"]["autonomous_execution"]
+    assert autonomous["status"] == "WAIT_APPROVAL"
+    assert autonomous["reason_code"] == "EXPLICIT_APPROVAL_REQUIRED"
+    assert autonomous["executed_actions"][0]["operation"] == "continue_after_sales_case"
+    with tools._session() as session:
+        case = AfterSalesCaseService(session).get_case(result["pending_action"]["case_id"])
+        evidence_types = {row["evidence_type"] for row in case.evidence}
+        refund = session.scalar(select(Refund).where(Refund.order_id == 1001))
+        continuation_rows = session.scalars(select(ToolLedger).where(
+            ToolLedger.run_id == result["run_id"],
+            ToolLedger.tool_name == "continue_after_sales_case",
+        )).all()
+        assert case.status == "AWAITING_CONFIRMATION"
+        assert "ORDER_FACT" in evidence_types
+        assert refund.status == "none"
+        assert len(continuation_rows) == 1
+
+
 def test_multi_item_case_is_routed_to_manual_review_without_order_refund(database, monkeypatch):
     with tools._session() as session:
         session.add(
@@ -363,6 +431,14 @@ class CrashAfterCaseToolResult(RunStore):
         super().save_checkpoint(run_id, token, snapshot, event)
 
 
+class CrashAfterAutonomousCaseToolResult(RunStore):
+    def save_checkpoint(self, run_id, token, snapshot, event=None):
+        if (event and event.get("type") == "tool_result"
+                and event.get("tool") == "continue_after_sales_case" and not event.get("reused")):
+            raise CrashAfterCaseWrite()
+        super().save_checkpoint(run_id, token, snapshot, event)
+
+
 def test_case_creation_reuses_transactional_ledger_after_process_restart(database):
     with pytest.raises(CrashAfterCaseWrite):
         run_conversation(
@@ -388,6 +464,41 @@ def test_case_creation_reuses_transactional_ledger_after_process_restart(databas
         cases = session.scalars(select(AfterSalesCase)).all()
         assert len(cases) == 1
         assert cases[0].revision == 5
+
+
+def test_autonomous_case_step_reuses_transactional_ledger_after_process_restart(database, monkeypatch):
+    from src import llm
+
+    with tools._session() as session:
+        require_authoritative_order_evidence(session)
+    monkeypatch.setattr(llm, "get_llm", lambda **_kwargs: SemanticModelMustNotRun())
+
+    with pytest.raises(CrashAfterCaseWrite):
+        run_conversation(
+            MESSAGE,
+            "autonomous-case-recovery",
+            request_id="recoverable-autonomous-case",
+            store=CrashAfterAutonomousCaseToolResult(),
+        )
+    active_run_id = RunStore().conversation("autonomous-case-recovery")["active_run_id"]
+
+    resumed = resume_run("autonomous-case-recovery", active_run_id)
+
+    assert resumed["status"] == "WAITING_APPROVAL"
+    assert [entry["tool"] for entry in resumed["trace"]] == [
+        "prepare_after_sales_case",
+        "continue_after_sales_case",
+    ]
+    assert all(entry["status"] == "REUSED" for entry in resumed["trace"])
+    with tools._session() as session:
+        case = AfterSalesCaseService(session).get_case(resumed["pending_action"]["case_id"])
+        order_evidence = [row for row in case.evidence if row["evidence_type"] == "ORDER_FACT"]
+        continuation_rows = session.scalars(select(ToolLedger).where(
+            ToolLedger.run_id == active_run_id,
+            ToolLedger.tool_name == "continue_after_sales_case",
+        )).all()
+        assert len(order_evidence) == 1
+        assert len(continuation_rows) == 1
 
 
 def test_after_sales_read_api_returns_case_timeline_policy_and_refund_link(database):

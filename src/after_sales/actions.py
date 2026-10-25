@@ -1,10 +1,11 @@
 """跨轮案件操作；调用者提供 ToolExecutor 的原子事务。"""
 from datetime import UTC, datetime
+from sqlalchemy import select
 
 from src.after_sales.contracts import EvidenceCommand
 from src.after_sales.policy import AfterSalesPolicyEngine
-from src.after_sales.service import AfterSalesCaseService, AfterSalesDomainError
-from src.backend.db import AgentRun, Order
+from src.after_sales.service import AfterSalesCaseService, AfterSalesDomainError, _checksum
+from src.backend.db import AgentRun, AfterSalesCaseRun, Order
 from src.errors import AgentError
 
 
@@ -54,10 +55,26 @@ def continue_case(*, case_id, expected_revision, requirement_id, evidence_text, 
                 "case_id": case_id, "expected_revision": expected_revision, "requirement_id": requirement_id,
                 "evidence_text": evidence_text, "revoke_evidence_id": revoke_evidence_id,
             }, case, evaluation)
-            case = service.attach_run(case_id, run.run_id, session_id=run.session_id, role="EVIDENCE_UPDATE",
-                                      idempotency_key=f"run:{run.run_id}", expected_revision=case.revision, now=now)
+            action_identity = _checksum({
+                "case_id": case_id,
+                "run_id": run.run_id,
+                "requirement_id": requirement_id,
+                "evidence_text": evidence_text,
+                "revoke_evidence_id": revoke_evidence_id,
+            })[:24]
+            existing_link = session.scalar(select(AfterSalesCaseRun).where(
+                AfterSalesCaseRun.case_id == case_id,
+                AfterSalesCaseRun.run_id == run.run_id,
+            ))
+            if existing_link is None:
+                case = service.attach_run(case_id, run.run_id, session_id=run.session_id, role="EVIDENCE_UPDATE",
+                                          idempotency_key=f"run:{run.run_id}:{action_identity}",
+                                          expected_revision=case.revision, now=now)
+            elif existing_link.session_id != run.session_id:
+                raise AgentError("CASE_RUN_CONFLICT", "运行与案件会话不一致", retryable=False)
             if revoke_evidence_id:
-                case = service.revoke_evidence(case_id, revoke_evidence_id, idempotency_key=f"revoke:{run.run_id}",
+                case = service.revoke_evidence(case_id, revoke_evidence_id,
+                                               idempotency_key=f"revoke:{run.run_id}:{action_identity}",
                                                expected_revision=case.revision, actor_id=run.session_id, now=now)
             command = None
             if evidence_text:
@@ -74,14 +91,16 @@ def continue_case(*, case_id, expected_revision, requirement_id, evidence_text, 
             elif requirement_id:
                 raise AgentError("EVIDENCE_TEXT_REQUIRED", "该政策要求用户补充原始陈述", retryable=False)
             if command:
-                case = service.add_evidence(case_id, command, idempotency_key=f"evidence:{run.run_id}",
+                case = service.add_evidence(case_id, command,
+                                            idempotency_key=f"evidence:{run.run_id}:{action_identity}",
                                             expected_revision=case.revision, actor_id=run.session_id, now=now)
             incoming_id = next((e['evidence_id'] for e in case.evidence
                                 if evidence_text and e['source_ref'] == f'agent_runs:{run.run_id}:request'
                                 and e['payload'].get('statement') == evidence_text), None)
             assessment = persist_assessment(session, case, run.run_id, prepared, incoming_id=incoming_id, now=now)
             case = service.record_semantic_assessment(case_id, assessment.assessment_id,
-                        idempotency_key=f"semantic:{run.run_id}", expected_revision=case.revision, now=now)
+                        idempotency_key=f"semantic:{run.run_id}:{action_identity}",
+                        expected_revision=case.revision, now=now)
             evaluation = AfterSalesPolicyEngine(session).evaluate(case_id, as_of=now)
             case = service.record_policy_decision(case_id, evaluation, idempotency_key=f"policy:{evaluation.input_hash}",
                                                  expected_revision=case.revision)
