@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "profile_id": "after-sales-evidence-readiness-v3",
-  "version": "3.0.0",
+  "version": "3.1.0",
   "display_name": "售后证据就绪度账本候选",
   "description": "把用户明确延期的政策材料建模为独立时态声明，绑定原文、政策义务和案件版本；不把延期声明当作证据或授权。",
   "engine": {

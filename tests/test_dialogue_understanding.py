@@ -56,7 +56,8 @@ def test_evidence_boundary_profile_adds_case_first_instruction_only_for_candidat
     assert "evidence_readiness_claims" not in candidate_prompt
     assert "EvidenceReadinessClaim" not in candidate_prompt
     assert "Evidence-readiness ledger for this Harness Profile" in readiness_prompt
-    assert "evidence_context_quotes" not in readiness_prompt
+    assert "Known evidence absence is not missing case-intake information" in readiness_prompt
+    assert "evidence_context_quotes" in readiness_prompt
     assert "evidence_readiness_claims" in readiness_prompt
     assert "after-sales-evidence-readiness/2026-01" in readiness_prompt
 

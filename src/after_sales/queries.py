@@ -25,7 +25,9 @@ from src.backend.db import (
 )
 
 
-def _current_projection(session, case):
+def current_case_projection(session, case):
+    """Invalidate a persisted projection when live policy inputs have changed."""
+
     decision = case.latest_decision
     if not decision or case.status in {"SUBMITTED", "RESOLVED", "REJECTED", "CANCELLED"}:
         return case
@@ -73,7 +75,7 @@ def list_cases(
     } if rows else {}
     items: list[CaseListItem] = []
     for row in rows:
-        projection = _current_projection(session, service.get_case(row.case_id))
+        projection = current_case_projection(session, service.get_case(row.case_id))
         decision = projection.latest_decision or {}
         outcome = decision.get("outcome")
         items.append(
@@ -100,7 +102,7 @@ def list_cases(
 
 def get_case_detail(session: Session, case_id: str) -> CaseDetail:
     service = AfterSalesCaseService(session)
-    case = _current_projection(session, service.get_case(case_id))
+    case = current_case_projection(session, service.get_case(case_id))
     run_rows = session.scalars(
         select(AfterSalesCaseRun)
         .where(AfterSalesCaseRun.case_id == case_id)

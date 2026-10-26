@@ -38,7 +38,9 @@ from src.runtime import ReplayPolicy, ToolEffect, ToolRiskLevel, tool_spec
 MESSAGE = "订单 1001 的耳机出现间歇性异响，需要建立售后案件处理"
 MULTI_ITEM_MESSAGE = "订单 1001 的行项目 OI-1001-1 出现异响，需要申请售后退款"
 EVIDENCE_MISSING_MESSAGE = "订单 1001 的耳机与描述不符，请建立售后案件；原包装情况稍后才能确认。"
+EVIDENCE_UNKNOWN_MESSAGE = "订单 1001 的耳机与描述不符，请建立售后案件；原包装情况目前不确定。"
 EVIDENCE_DEFERRED_FOLLOWUP = "原包装情况稍后才能确认"
+READINESS_CONTEXT_ACK = "好的，明白了"
 
 
 class AfterSalesUnderstandingModel:
@@ -172,6 +174,33 @@ class EvidenceReadinessUnderstandingModel(AfterSalesUnderstandingModel):
         )
 
 
+class EvidenceReadinessUnknownUnderstandingModel(AfterSalesUnderstandingModel):
+    def invoke(self, prompt):
+        prompt = str(prompt)
+        assert EVIDENCE_UNKNOWN_MESSAGE in prompt
+        assert "Known evidence absence is not missing case-intake information" in prompt
+        assert "Evidence-readiness ledger for this Harness Profile" in prompt
+        return AIMessage(
+            content=json.dumps(
+                {
+                    "reason": "案件受理信息完整，但用户只表达了原包装状态未知",
+                    "commands": [],
+                    "objectives": [
+                        {
+                            "id": "after-sales-case",
+                            "kind": "AFTER_SALES_CASE",
+                            "source_quote": "订单 1001 的耳机与描述不符，请建立售后案件",
+                            "evidence_context_quotes": ["原包装情况目前不确定"],
+                            "order_id": 1001,
+                            "reason_code": "NOT_AS_DESCRIBED",
+                        }
+                    ],
+                },
+                ensure_ascii=False,
+            )
+        )
+
+
 class ExistingCaseReadinessUnderstandingModel(AfterSalesUnderstandingModel):
     def invoke(self, prompt):
         prompt = str(prompt)
@@ -201,6 +230,28 @@ class ExistingCaseReadinessUnderstandingModel(AfterSalesUnderstandingModel):
                 ensure_ascii=False,
             )
         )
+
+
+class ReadinessContextInspectionModel(AfterSalesUnderstandingModel):
+    def invoke(self, prompt):
+        payload = json.loads(str(prompt).split("\nConversation input:\n")[-1])
+        assert payload["latest_human_message"] == READINESS_CONTEXT_ACK
+        case = payload["session_cases"][0]
+        requirement = case["requirements"][0]
+        assert case["policy"]["valid"] is True
+        assert requirement["readiness"]["disposition"] == "DEFERRED"
+        assert requirement["readiness"]["source_quote"] == EVIDENCE_DEFERRED_FOLLOWUP
+        assert requirement["next_action"]["kind"] == "WAIT_FOR_CUSTOMER_EVIDENCE"
+        assert requirement["waiting_reason"] == "CUSTOMER_EVIDENCE_DEFERRED"
+        return AIMessage(content=json.dumps({
+            "reason": "用户知晓案件正在等待已延期的证据",
+            "commands": [{
+                "kind": "ACKNOWLEDGEMENT",
+                "source_quote": READINESS_CONTEXT_ACK,
+                "message": None,
+            }],
+            "objectives": [],
+        }, ensure_ascii=False))
 
 
 class SemanticModelMustNotRun:
@@ -542,6 +593,37 @@ def test_evidence_readiness_profile_persists_deferral_without_treating_it_as_evi
         assert refund.status == "none"
 
 
+def test_evidence_readiness_profile_inherits_case_first_boundary_for_unknown_evidence(database, monkeypatch):
+    from src.harness import get_runner
+
+    with tools._session() as session:
+        require_original_packaging_evidence(session)
+    monkeypatch.setattr(
+        orchestrator,
+        "get_llm",
+        lambda **_kwargs: EvidenceReadinessUnknownUnderstandingModel(),
+    )
+
+    result = run_conversation(
+        EVIDENCE_UNKNOWN_MESSAGE,
+        "readiness-inherits-boundary",
+        request_id="open-case-with-unknown-evidence",
+        runner=get_runner("after-sales-evidence-readiness-v3"),
+    )
+
+    assert result["status"] == "PARTIAL"
+    assert result["terminal_reason"] == "EVIDENCE_UNAVAILABLE"
+    assert [entry["tool"] for entry in result["trace"]] == ["prepare_after_sales_case"]
+    assert "evidence_readiness_claims" not in result["trace"][0]["args"]
+    autonomous = result["plan"]["steps"][0]["result"]["autonomous_execution"]
+    assert autonomous["status"] == "WAIT_USER_INPUT"
+    assert autonomous["reason_code"] == "CUSTOMER_EVIDENCE_REQUIRED"
+    with tools._session() as session:
+        case = AfterSalesCaseService(session).get_case(result["trace"][0]["result"]["case_id"])
+        assert not any(event["event_type"] == "EVIDENCE_READINESS_RECORDED" for event in case.events)
+        assert case.plans[-1]["next_actions"][0]["kind"] == "REQUEST_CUSTOMER_EVIDENCE"
+
+
 def test_evidence_readiness_profile_records_cross_turn_deferral_without_semantic_reassessment(database, monkeypatch):
     from src import llm
     from src.harness import get_runner
@@ -581,6 +663,16 @@ def test_evidence_readiness_profile_records_cross_turn_deferral_without_semantic
         ).order_by(AfterSalesCaseRun.linked_at)).all()] == ["INTAKE", "READINESS_UPDATE"]
         assert case.plans[-1]["next_actions"][0]["kind"] == "WAIT_FOR_CUSTOMER_EVIDENCE"
         assert session.scalar(select(Refund).where(Refund.order_id == 1001)).status == "none"
+
+    monkeypatch.setattr(orchestrator, "get_llm", lambda **_kwargs: ReadinessContextInspectionModel())
+    third = run_conversation(
+        READINESS_CONTEXT_ACK,
+        "cross-turn-readiness",
+        request_id="read-trusted-readiness-context",
+        runner=runner,
+    )
+    assert third["status"] == "SUCCEEDED"
+    assert third["trace"] == []
 
 
 def test_multi_item_case_is_routed_to_manual_review_without_order_refund(database, monkeypatch):

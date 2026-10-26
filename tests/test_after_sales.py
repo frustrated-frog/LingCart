@@ -246,6 +246,48 @@ def test_evidence_readiness_is_grounded_policy_bound_and_never_becomes_evidence(
     assert inapplicable.value.code == "EVIDENCE_READINESS_NOT_APPLICABLE"
 
 
+def test_corrupt_evidence_readiness_event_fails_closed_during_projection(session):
+    from src.after_sales.readiness import project_evidence_readiness
+
+    service = AfterSalesCaseService(session)
+    case = service.open_case(_command())
+    policy = session.get(PolicyVersion, DEFAULT_AFTER_SALES_POLICY_VERSION_ID)
+    service.record_evidence_readiness(
+        case.case_id,
+        EvidenceReadinessClaim(
+            evidence_type="DAMAGE_DESCRIPTION",
+            disposition="DEFERRED",
+            source_quote="损坏情况稍后才能确认",
+        ),
+        policy_version_id=policy.policy_version_id,
+        policy_checksum=policy.checksum,
+        source_ref="agent_runs:readiness-run:request",
+        idempotency_key="readiness-corrupt",
+        expected_revision=case.revision,
+    )
+    evaluation = AfterSalesPolicyEngine(session).evaluate(
+        case.case_id,
+        as_of=datetime(2026, 6, 20, 12, 0),
+    )
+    event = session.scalar(select(AfterSalesCaseEvent).where(
+        AfterSalesCaseEvent.case_id == case.case_id,
+        AfterSalesCaseEvent.event_type == "EVIDENCE_READINESS_RECORDED",
+    ))
+    event.payload = {**event.payload, "claim_id": "0" * 64}
+    session.flush()
+
+    with pytest.raises(AfterSalesDomainError) as caught:
+        project_evidence_readiness(
+            session,
+            case_id=case.case_id,
+            policy_version_id=policy.policy_version_id,
+            policy_checksum=policy.checksum,
+            requirements=evaluation.facts["evidence_requirements"],
+        )
+
+    assert caught.value.code == "EVIDENCE_READINESS_CORRUPT"
+
+
 def test_policy_decision_requires_evidence_then_becomes_eligible(session):
     service = AfterSalesCaseService(session)
     case = service.open_case(_command())

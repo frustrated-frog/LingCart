@@ -1,9 +1,77 @@
 """从业务账本解析会话内案件，模型输出不能扩大访问范围。"""
 from sqlalchemy import func, select
 
+from src.after_sales.queries import current_case_projection
 from src.after_sales.service import AfterSalesCaseService
 from src.backend.db import AgentRun, AfterSalesCase
 from src.errors import AgentError
+
+
+_WAITING_REASON_BY_ACTION = {
+    "COLLECT_BUSINESS_EVIDENCE": "AUTHORITATIVE_EVIDENCE_AVAILABLE",
+    "REQUEST_CUSTOMER_EVIDENCE": "CUSTOMER_EVIDENCE_REQUIRED",
+    "WAIT_FOR_CUSTOMER_EVIDENCE": "CUSTOMER_EVIDENCE_DEFERRED",
+    "REQUIRES_HUMAN_CAPABILITY": "CAPABILITY_UNAVAILABLE",
+}
+
+
+def _requirements_context(session, case, decision: dict) -> list[dict]:
+    """Project only current, policy-bound obligation state into model context."""
+
+    if not decision or decision.get("valid") is not True:
+        return []
+    requirements = [
+        requirement
+        for requirement in decision.get("facts", {}).get("evidence_requirements", [])
+        if isinstance(requirement, dict)
+    ]
+    policy_version_id = decision.get("policy_version_id")
+    policy_checksum = decision.get("policy_checksum")
+    readiness_by_requirement = {}
+    if policy_version_id and policy_checksum:
+        from src.after_sales.readiness import project_evidence_readiness
+
+        readiness_by_requirement = project_evidence_readiness(
+            session,
+            case_id=case.case_id,
+            policy_version_id=policy_version_id,
+            policy_checksum=policy_checksum,
+            requirements=requirements,
+        )
+    valid_plans = [plan for plan in case.plans if isinstance(plan, dict) and plan.get("valid") is True]
+    latest_plan = valid_plans[-1] if valid_plans else {}
+    action_by_requirement = {
+        action.get("requirement_id"): action
+        for action in latest_plan.get("next_actions") or []
+        if isinstance(action, dict) and action.get("requirement_id")
+    }
+    projected = []
+    for requirement in requirements:
+        requirement_id = requirement.get("requirement_id")
+        readiness = readiness_by_requirement.get(requirement_id)
+        action = action_by_requirement.get(requirement_id)
+        item = {
+            "requirement_id": requirement_id,
+            "evidence_type": requirement.get("evidence_type"),
+            "description": requirement.get("description"),
+            "status": requirement.get("status"),
+            "question": (action or {}).get("question")
+            or (requirement.get("semantic_assessment") or {}).get("question"),
+        }
+        if readiness is not None:
+            item["readiness"] = {
+                "disposition": readiness.disposition,
+                "source_quote": readiness.source_quote,
+            }
+        if action is not None:
+            item["next_action"] = {
+                key: action.get(key)
+                for key in ("kind", "requires_approval")
+                if action.get(key) is not None
+            }
+            item["waiting_reason"] = _WAITING_REASON_BY_ACTION.get(action.get("kind"))
+        projected.append(item)
+    return projected
 
 
 def current_case_context() -> list[dict]:
@@ -37,21 +105,15 @@ def current_case_context() -> list[dict]:
         service = AfterSalesCaseService(session)
         result = []
         for row in rows:
-            case = service.get_case(row.case_id)
+            case = current_case_projection(session, service.get_case(row.case_id))
             decision = case.latest_decision or {}
-            requirements = [
-                {
-                    "requirement_id": requirement.get("requirement_id"),
-                    "evidence_type": requirement.get("evidence_type"),
-                    "description": requirement.get("description"),
-                    "status": requirement.get("status"),
-                    "question": (requirement.get("semantic_assessment") or {}).get("question"),
-                }
-                for requirement in decision.get("facts", {}).get("evidence_requirements", [])
-                if isinstance(requirement, dict)
-            ]
+            requirements = _requirements_context(session, case, decision)
             result.append({"case_id": row.case_id, "order_id": row.order_id,
                            "revision": row.revision, "status": row.status,
+                           "policy": {
+                               "policy_version_id": decision.get("policy_version_id"),
+                               "valid": decision.get("valid") is True,
+                           },
                            "requirements": requirements,
                            "evidence": [{"evidence_id": e["evidence_id"], "evidence_type": e["evidence_type"],
                                          "statement_excerpt": str(e['payload'].get('statement', ''))[:512],

@@ -99,6 +99,7 @@ def test_evidence_readiness_profile_is_a_research_only_planning_mechanism():
     boundary = get_runner("after-sales-evidence-boundary-v2").provenance()
     readiness = get_runner("after-sales-evidence-readiness-v3").provenance()
 
+    assert readiness["profile_version"] == "3.1.0"
     assert boundary["engine"] == readiness["engine"]
     assert [item for item in boundary["mechanisms"] if item["slot"] != "planning"] == [
         item for item in readiness["mechanisms"] if item["slot"] != "planning"

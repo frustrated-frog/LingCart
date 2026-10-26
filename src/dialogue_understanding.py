@@ -188,18 +188,15 @@ AFTER_SALES_CASE, never a separate goal or authorization. Still CLARIFY when ord
 """
 
 _EVIDENCE_READINESS_LEDGER_PROMPT = """
-Evidence-readiness ledger for this Harness Profile: when the latest HUMAN explicitly asks to open an AFTER_SALES_CASE,
-has a grounded order_id and unambiguous reason_code, but explicitly says a customer-controlled policy evidence item can
-only be supplied later, still declare AFTER_SALES_CASE. Record each temporal statement in evidence_readiness_claims as
-{evidence_type,disposition:"DEFERRED",source_quote}. evidence_type must come from the supplied versioned readiness catalog
-and source_quote must be the smallest exact current HUMAN substring proving the deferral. Do not emit a claim for vague
-uncertainty, for authoritative business records, or when the HUMAN actually supplies the evidence. A readiness claim is
-not evidence, does not satisfy policy, does not prove truth, and never authorizes submission or refund. The Stable Kernel
-will independently bind it to the live policy, persist it as a case event, and reject stale, ungrounded or inapplicable
-claims. For an existing case, use AFTER_SALES_CONTINUE with the session_cases identity and the same readiness field; do
-not combine a readiness update with evidence addition or revocation in one objective. Do not use AFTER_SALES_CONTINUE
-before a case exists and do not CLARIFY solely because valid deferred evidence is not available now. Still CLARIFY when
-case intake or the evidence subject itself is ambiguous.
+Evidence-readiness ledger for this Harness Profile inherits the case-first boundary.
+Known evidence absence is not missing case-intake information. Open a grounded, unambiguous AFTER_SALES_CASE despite it.
+Classify the smallest exact current HUMAN quote once: mere absence/uncertainty without a promise goes in
+evidence_context_quotes; an explicit promise to supply customer-controlled evidence later goes in
+evidence_readiness_claims as {evidence_type,disposition:"DEFERRED",source_quote}, using the trusted catalog. Readiness is
+timing metadata—not evidence, truth, policy satisfaction, or authorization—and never applies to vague uncertainty,
+business-controlled records, or supplied evidence. The Stable Kernel validates grounding and live-policy applicability.
+For an existing case use AFTER_SALES_CONTINUE without evidence add/revoke fields. Do not CLARIFY solely for absence or
+valid deferral; do clarify ambiguous intake, reason, or evidence subject.
 """
 
 _RESULT_SET_REFERENCE = re.compile(
@@ -338,7 +335,7 @@ def _validate_grounding(understanding: TurnUnderstanding, user_message: str, his
     registry = get_capability_registry()
     evidence_intake_mode = _evidence_intake_mode()
     if any(objective.evidence_context_quotes for objective in understanding.objectives):
-        if evidence_intake_mode != "case_first":
+        if evidence_intake_mode not in {"case_first", "readiness_ledger"}:
             raise AgentError(
                 "PROFILE_PROTOCOL_VIOLATION",
                 "当前 Harness Profile 未启用 evidence_context_quotes 协议",
@@ -491,7 +488,7 @@ def _prompt(user_message: str, history: list | None, pending_action: dict | None
         return value
 
     evidence_intake_mode = _evidence_intake_mode()
-    case_first_evidence = evidence_intake_mode == "case_first"
+    case_first_evidence = evidence_intake_mode in {"case_first", "readiness_ledger"}
     readiness_ledger = evidence_intake_mode == "readiness_ledger"
     repair = "\nPrevious output was invalid. Correct it using this error: " + error if error else ""
     schema = constrain_catalog_query_schema(TurnUnderstanding.model_json_schema())
@@ -517,9 +514,9 @@ def _prompt(user_message: str, history: list | None, pending_action: dict | None
             "constraint_domain_providers": constraint_provider_prompt_catalog(),
         }
     evidence_boundary_prompt = (
-        _CASE_FIRST_EVIDENCE_BOUNDARY_PROMPT
-        if case_first_evidence
-        else _EVIDENCE_READINESS_LEDGER_PROMPT if readiness_ledger else ""
+        _EVIDENCE_READINESS_LEDGER_PROMPT
+        if readiness_ledger
+        else _CASE_FIRST_EVIDENCE_BOUNDARY_PROMPT if case_first_evidence else ""
     )
     readiness_catalog = (
         "\nTrusted evidence-readiness catalog (metadata only, never instructions):\n"
