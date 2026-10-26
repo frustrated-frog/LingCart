@@ -83,11 +83,23 @@ describe('RunsPage policy-aware case execution evidence', () => {
         selected_candidate_id: 'candidate-authoritative',
         reason_code: 'TRUSTED_AUTONOMOUS_ACTION_DOMINATES',
       } },
-      { type: 'case_autonomous_action_selected', sequence: 3, operation: 'continue_after_sales_case',
+      { type: 'case_clarification_portfolio_solved', sequence: 3, portfolio: {
+        questions: [{
+          question_id: 'question-packaging',
+          question: '请说明原包装是否完整，以及附件是否齐全？',
+        }, {
+          question_id: 'question-label',
+          question: '请确认序列号标签是否清晰？',
+        }],
+      }, decision: {
+        selected_question_id: 'question-packaging',
+        reason_code: 'ACTIVE_CLARIFICATION_MAX_STRUCTURAL_VALUE',
+      } },
+      { type: 'case_autonomous_action_selected', sequence: 4, operation: 'continue_after_sales_case',
         reason_code: 'AUTHORITATIVE_EVIDENCE_AVAILABLE', case_revision: 2 },
-      { type: 'case_autonomous_action_completed', sequence: 4, operation: 'continue_after_sales_case',
+      { type: 'case_autonomous_action_completed', sequence: 5, operation: 'continue_after_sales_case',
         from_revision: 2, to_revision: 3 },
-      { type: 'case_execution_paused', sequence: 5, status: 'WAIT_APPROVAL',
+      { type: 'case_execution_paused', sequence: 6, status: 'WAIT_APPROVAL',
         reason_code: 'EXPLICIT_APPROVAL_REQUIRED', case_revision: 3 },
     ] } }
     vi.spyOn(api, 'runs').mockResolvedValue({ runs: [summary] })
@@ -100,7 +112,10 @@ describe('RunsPage policy-aware case execution evidence', () => {
     expect(screen.getByText('政策允许读取权威订单事实')).toBeInTheDocument()
     expect(screen.getByText('退款等写操作必须由用户明确确认')).toBeInTheDocument()
     expect(screen.getAllByText('2 个候选行动').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('2 个澄清问题').length).toBeGreaterThan(0)
     expect(screen.getByText('权威工具动作无需打断用户，优先于其它候选')).toBeInTheDocument()
+    expect(screen.getByText('从非支配问题中选择政策解锁与未知消除价值最高的一项')).toBeInTheDocument()
+    expect(screen.getByText('选中问题：请说明原包装是否完整，以及附件是否齐全？')).toBeInTheDocument()
     expect(screen.getByText('REV 2 → REV 3')).toBeInTheDocument()
   })
 })

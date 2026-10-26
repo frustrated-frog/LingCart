@@ -262,6 +262,37 @@ class SemanticModelMustNotRun:
         raise AssertionError("权威业务证据收集不应调用语义模型")
 
 
+class ActiveClarificationSemanticModel:
+    def json_mode(self):
+        return self
+
+    def invoke(self, prompt):
+        inputs = json.loads(str(prompt).split("\nEvidence input:\n")[-1])
+        rows = []
+        for requirement in inputs["requirements"]:
+            if requirement["evidence_type"] == "ORIGINAL_PACKAGING":
+                status = "INCOMPLETE"
+                missing = ["原包装是否完整", "附件是否齐全"]
+                question = "请说明原包装是否完整，以及附件是否齐全？"
+            else:
+                status = "UNKNOWN"
+                missing = ["序列号标签是否清晰"]
+                question = "请确认序列号标签是否清晰？"
+            rows.append({
+                "requirement_id": requirement["requirement_id"],
+                "status": status,
+                "citations": [],
+                "missing_information": missing,
+                "explanation": "测试中的结构化语义缺口",
+                "question": question,
+            })
+        return AIMessage(content=json.dumps({
+            "requirements": rows,
+            "withdrawal_confirmed": False,
+            "withdrawal_quote": "",
+        }, ensure_ascii=False))
+
+
 def require_authoritative_order_evidence(session):
     policy = session.get(PolicyVersion, DEFAULT_AFTER_SALES_POLICY_VERSION_ID)
     policy.rules = {
@@ -323,6 +354,32 @@ def require_mixed_authoritative_and_customer_evidence(session):
                 "accepted_sources": ["CUSTOMER_STATEMENT"],
                 "condition": "CUSTOMER_ATTESTATION",
                 "description": "需要确认原包装及附件是否完整",
+            },
+        },
+    }
+    policy.checksum = _checksum(policy.rules)
+    session.commit()
+
+
+def require_two_customer_evidence(session):
+    policy = session.get(PolicyVersion, DEFAULT_AFTER_SALES_POLICY_VERSION_ID)
+    policy.rules = {
+        **policy.rules,
+        "required_evidence_by_reason": {
+            **policy.rules["required_evidence_by_reason"],
+            "NOT_AS_DESCRIBED": ["ORIGINAL_PACKAGING", "SERIAL_LABEL"],
+        },
+        "evidence_acceptance": {
+            **policy.rules["evidence_acceptance"],
+            "ORIGINAL_PACKAGING": {
+                "accepted_sources": ["CUSTOMER_STATEMENT"],
+                "condition": "CUSTOMER_ATTESTATION",
+                "description": "需要确认原包装和附件状态",
+            },
+            "SERIAL_LABEL": {
+                "accepted_sources": ["CUSTOMER_STATEMENT"],
+                "condition": "CUSTOMER_ATTESTATION",
+                "description": "需要确认序列号标签是否清晰",
             },
         },
     }
@@ -554,6 +611,52 @@ def test_obligation_graph_profile_solves_all_candidates_before_asking_user(datab
     with tools._session() as session:
         case = AfterSalesCaseService(session).get_case(result["trace"][0]["result"]["case_id"])
         assert "ORDER_FACT" in {item["evidence_type"] for item in case.evidence}
+        assert session.scalar(select(Refund).where(Refund.order_id == 1001)).status == "none"
+
+
+def test_active_clarification_profile_selects_one_policy_bound_question(database, monkeypatch):
+    from src import llm
+    from src.harness import get_runner
+
+    with tools._session() as session:
+        require_two_customer_evidence(session)
+    monkeypatch.setattr(llm, "get_llm", lambda **_kwargs: ActiveClarificationSemanticModel())
+
+    result = run_conversation(
+        MESSAGE,
+        "active-clarification-after-sales",
+        request_id="select-active-question",
+        runner=get_runner("after-sales-active-clarification-v5"),
+    )
+
+    assert result["status"] == "PARTIAL"
+    assert result["terminal_reason"] == "EVIDENCE_UNAVAILABLE"
+    assert "请说明原包装是否完整，以及附件是否齐全？" in result["reply"]
+    assert "请确认序列号标签是否清晰？" not in result["reply"]
+    assert [entry["tool"] for entry in result["trace"]] == ["prepare_after_sales_case"]
+    clarification_events = [
+        event for event in result["events"]
+        if event["type"] == "case_clarification_portfolio_solved"
+    ]
+    assert len(clarification_events) == 1
+    event = clarification_events[0]
+    assert event["portfolio"]["status"] == "READY"
+    assert len(event["portfolio"]["questions"]) == 2
+    selected = next(
+        question for question in event["portfolio"]["questions"]
+        if question["question_id"] == event["decision"]["selected_question_id"]
+    )
+    assert selected["requirement_id"].endswith(":ORIGINAL_PACKAGING")
+    assert selected["information_gain_upper_bound"] == 2
+    assert event["decision"]["reason_code"] == "ACTIVE_CLARIFICATION_MAX_STRUCTURAL_VALUE"
+    autonomous = result["plan"]["steps"][0]["result"]["autonomous_execution"]
+    assert autonomous["planner_version"] == "policy-aware-active-clarification-v1"
+    assert autonomous["action_selection_mode"] == "active_clarification"
+    assert autonomous["selected_question_id"] == selected["question_id"]
+    assert autonomous["question"] == selected["question"]
+    assert autonomous["clarification_portfolio_ids"] == [event["portfolio"]["portfolio_id"]]
+    assert autonomous["clarification_decision_ids"] == [event["decision"]["decision_id"]]
+    with tools._session() as session:
         assert session.scalar(select(Refund).where(Refund.order_id == 1001)).status == "none"
 
 
@@ -959,26 +1062,50 @@ def test_autonomous_case_step_reuses_transactional_ledger_after_process_restart(
         assert len(continuation_rows) == 1
 
 
-def test_obligation_graph_step_reuses_transactional_ledger_after_process_restart(database, monkeypatch):
+@pytest.mark.parametrize(
+    ("profile_id", "conversation_id", "request_id", "selection_mode"),
+    [
+        (
+            "after-sales-obligation-graph-v4",
+            "obligation-graph-recovery",
+            "recoverable-obligation-graph",
+            "obligation_graph",
+        ),
+        (
+            "after-sales-active-clarification-v5",
+            "active-clarification-recovery",
+            "recoverable-active-clarification",
+            "active_clarification",
+        ),
+    ],
+)
+def test_graph_based_step_reuses_transactional_ledger_after_process_restart(
+    database,
+    monkeypatch,
+    profile_id,
+    conversation_id,
+    request_id,
+    selection_mode,
+):
     from src import llm
     from src.harness import get_runner
 
     with tools._session() as session:
         require_authoritative_order_evidence(session)
     monkeypatch.setattr(llm, "get_llm", lambda **_kwargs: SemanticModelMustNotRun())
-    runner = get_runner("after-sales-obligation-graph-v4")
+    runner = get_runner(profile_id)
 
     with pytest.raises(CrashAfterCaseWrite):
         run_conversation(
             MESSAGE,
-            "obligation-graph-recovery",
-            request_id="recoverable-obligation-graph",
+            conversation_id,
+            request_id=request_id,
             store=CrashAfterAutonomousCaseToolResult(),
             runner=runner,
         )
-    active_run_id = RunStore().conversation("obligation-graph-recovery")["active_run_id"]
+    active_run_id = RunStore().conversation(conversation_id)["active_run_id"]
 
-    resumed = resume_run("obligation-graph-recovery", active_run_id)
+    resumed = resume_run(conversation_id, active_run_id)
 
     assert resumed["status"] == "WAITING_APPROVAL"
     assert [entry["tool"] for entry in resumed["trace"]] == [
@@ -987,8 +1114,11 @@ def test_obligation_graph_step_reuses_transactional_ledger_after_process_restart
     ]
     assert all(entry["status"] == "REUSED" for entry in resumed["trace"])
     autonomous = resumed["plan"]["steps"][0]["result"]["autonomous_execution"]
-    assert autonomous["action_selection_mode"] == "obligation_graph"
+    assert autonomous["action_selection_mode"] == selection_mode
     assert len(autonomous["obligation_graph_ids"]) == 2
+    if selection_mode == "active_clarification":
+        assert len(autonomous["clarification_portfolio_ids"]) == 2
+        assert len(autonomous["clarification_decision_ids"]) == 2
     with tools._session() as session:
         case = AfterSalesCaseService(session).get_case(resumed["pending_action"]["case_id"])
         order_evidence = [row for row in case.evidence if row["evidence_type"] == "ORDER_FACT"]

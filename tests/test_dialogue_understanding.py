@@ -47,6 +47,7 @@ def test_evidence_boundary_profile_adds_case_first_instruction_only_for_candidat
     candidate_prompt = prompt_for("after-sales-evidence-boundary-v2")
     readiness_prompt = prompt_for("after-sales-evidence-readiness-v3")
     graph_prompt = prompt_for("after-sales-obligation-graph-v4")
+    clarification_prompt = prompt_for("after-sales-active-clarification-v5")
 
     assert "Known evidence absence is not missing case-intake information" not in baseline_prompt
     assert "evidence_context_quotes" not in baseline_prompt
@@ -64,6 +65,9 @@ def test_evidence_boundary_profile_adds_case_first_instruction_only_for_candidat
     assert "Known evidence absence is not missing case-intake information" in graph_prompt
     assert "evidence_context_quotes" in graph_prompt
     assert "evidence_readiness_claims" in graph_prompt
+    assert "Known evidence absence is not missing case-intake information" in clarification_prompt
+    assert "evidence_context_quotes" in clarification_prompt
+    assert "evidence_readiness_claims" in clarification_prompt
 
 
 def test_evidence_protocol_fields_are_rejected_outside_the_bound_profile():

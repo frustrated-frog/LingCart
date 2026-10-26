@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "profile_id": "after-sales-active-clarification-v5",
+  "version": "5.0.0",
+  "display_name": "售后信息价值主动澄清候选",
+  "description": "在政策义务图上编译单义务问题、未知条件与反事实答案分支，以无概率的结构化信息价值和 Pareto 前沿选择最小澄清。",
+  "engine": {
+    "id": "orchestrator",
+    "version": "1"
+  },
+  "mechanisms": [
+    {"slot": "planning", "id": "active-clarification-case-execution", "version": "5"},
+    {"slot": "tool_protocol", "id": "runtime-tool-ledger", "version": "2"},
+    {"slot": "verification", "id": "deterministic-business-gates", "version": "2"}
+  ],
+  "capabilities": [
+    "open_set_dialogue_understanding",
+    "after_sales_case_planning",
+    "policy_aware_case_execution",
+    "after_sales_evidence_boundary",
+    "evidence_readiness_ledger",
+    "cross_turn_evidence_readiness",
+    "obligation_graph_planning",
+    "multi_candidate_action_solver",
+    "active_clarification",
+    "counterfactual_answer_branches",
+    "pareto_question_selection",
+    "durable_runtime",
+    "approval_guard",
+    "tool_ledger"
+  ],
+  "research": {
+    "status": "candidate",
+    "source_type": "paper",
+    "paper_id": "PMLR:v306:deng26l",
+    "hypothesis": "在可信工具路径优先的前提下，用政策解锁上界、可消除未知条件和回答负担选择单义务澄清问题，可以减少无效提问，同时不依赖未经校准的概率或放宽证据边界。"
+  }
+}

@@ -131,6 +131,9 @@ def test_harness_profiles_are_discoverable_but_candidates_are_research_only():
     obligation_graph = next(item for item in profiles.json()['profiles']
                             if item['profile_id'] == 'after-sales-obligation-graph-v4')
     assert obligation_graph['product_eligible'] is False
+    active_clarification = next(item for item in profiles.json()['profiles']
+                                if item['profile_id'] == 'after-sales-active-clarification-v5')
+    assert active_clarification['product_eligible'] is False
     result = client.post('/chat', json={'message': '查询订单1002状态',
                                         'harness_profile': 'adaptive-objective-context-v1'})
     assert result.status_code == 409
@@ -139,6 +142,12 @@ def test_harness_profiles_are_discoverable_but_candidates_are_research_only():
                                               'harness_profile': 'after-sales-obligation-graph-v4'})
     assert graph_result.status_code == 409
     assert graph_result.json()['detail']['code'] == 'HARNESS_PROFILE_NOT_APPROVED'
+    clarification_result = client.post('/chat', json={
+        'message': '订单1001需要售后',
+        'harness_profile': 'after-sales-active-clarification-v5',
+    })
+    assert clarification_result.status_code == 409
+    assert clarification_result.json()['detail']['code'] == 'HARNESS_PROFILE_NOT_APPROVED'
     baseline = client.post('/chat', json={'message': '查询订单1002状态',
                                           'harness_profile': 'adaptive-v1'}).json()
     assert baseline['harness']['profile_id'] == 'adaptive-v1'

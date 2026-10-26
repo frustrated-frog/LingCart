@@ -706,6 +706,20 @@ def _render_after_sales_case(result: object, _arguments: Mapping[str, object]) -
         return f"售后案件 {result['case_id']} 已经提交，无需重复确认。"
     requirements = decision.get("facts", {}).get("evidence_requirements", [])
     latest_plan = next(reversed(case.get("plans") or []), {})
+    autonomous = result.get("autonomous_execution") or {}
+    selected_question = autonomous.get("question")
+    if (
+        autonomous.get("action_selection_mode") == "active_clarification"
+        and autonomous.get("status") == "WAIT_USER_INPUT"
+        and isinstance(autonomous.get("selected_question_id"), str)
+        and isinstance(selected_question, str)
+        and selected_question.strip()
+    ):
+        return (
+            f"售后案件 {result['case_id']}：{messages[decision['outcome']]}。"
+            + (f"依据：{reasons}。" if reasons else "")
+            + f"为推进当前政策义务，请先确认：{selected_question}"
+        )
     deferred = [
         action for action in latest_plan.get("next_actions") or []
         if action.get("kind") == "WAIT_FOR_CUSTOMER_EVIDENCE"

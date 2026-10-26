@@ -7,6 +7,7 @@ from src.after_sales.obligation_graph import (
     decide_next_obligation_action,
     solve_obligation_graph,
 )
+from src.after_sales.service import _checksum
 from tests.test_after_sales_execution import _case_result
 
 
@@ -62,6 +63,13 @@ def test_graph_compiles_all_obligations_and_prefers_trusted_autonomous_progress(
     assert {row.mode for row in graph.candidates} == {"AUTONOMOUS", "ASK_USER"}
     assert selection.reason_code == "TRUSTED_AUTONOMOUS_ACTION_DOMINATES"
     assert len(selection.dominated_candidate_ids) == 1
+    assert selection.selection_id == _checksum({
+        "graph_id": graph.graph_id,
+        "selected_candidate_id": selection.selected_candidate_id,
+        "eligible_candidate_ids": selection.eligible_candidate_ids,
+        "dominated_candidate_ids": selection.dominated_candidate_ids,
+        "reason_code": selection.reason_code,
+    })
     assert directive.status == "EXECUTE"
     assert directive.requirement_id == "policy:v1:ORDER_FACT"
     assert directive.arguments["expected_revision"] == 4

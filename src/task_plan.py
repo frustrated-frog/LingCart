@@ -14,9 +14,15 @@ from src.intake import (FAQ, ORDER_DETAILS, ORDER_STATUS, PAYMENT_PROCESS, PAYME
 from src.runtime import ToolExecutor, TraceRecorder, current_runtime
 from src.after_sales.execution import ACTION_PLANNER_VERSION, decide_next_case_action, project_case_execution_state
 from src.after_sales.obligation_graph import (
+    ACTIVE_CLARIFICATION_PLANNER_VERSION,
     OBLIGATION_ACTION_PLANNER_VERSION,
+    abstain_obligation_action,
     build_obligation_graph,
     decide_next_obligation_action,
+)
+from src.after_sales.clarification import (
+    build_clarification_portfolio,
+    solve_active_clarification,
 )
 
 
@@ -263,6 +269,10 @@ def _advance_after_sales_case(
     final_status = "ABSTAINED"
     final_reason = "CASE_STATE_NOT_EXECUTABLE"
     graph_ids = []
+    clarification_portfolio_ids = []
+    clarification_decision_ids = []
+    final_question = None
+    final_question_id = None
     planner_version = ACTION_PLANNER_VERSION
     for index in range(max_actions + 1):
         state = project_case_execution_state(current)
@@ -273,10 +283,45 @@ def _advance_after_sales_case(
             state=state.model_dump(mode="json"),
             autonomous_action_index=index,
         )
-        if action_selection_mode == "obligation_graph":
+        if action_selection_mode in {"obligation_graph", "active_clarification"}:
             graph = build_obligation_graph(state) if state.status == "READY" else None
-            directive = decide_next_obligation_action(state, graph)
-            planner_version = OBLIGATION_ACTION_PLANNER_VERSION
+            clarification_portfolio = None
+            clarification_decision = None
+            if action_selection_mode == "active_clarification" and graph is not None:
+                clarification_portfolio = build_clarification_portfolio(state, graph, current)
+                clarification_decision = solve_active_clarification(graph, clarification_portfolio)
+                if graph.status != "READY":
+                    directive = decide_next_obligation_action(
+                        state,
+                        graph,
+                        planner_version=ACTIVE_CLARIFICATION_PLANNER_VERSION,
+                    )
+                elif clarification_decision.status == "INVALID":
+                    directive = abstain_obligation_action(
+                        state,
+                        graph,
+                        clarification_decision.reason_code,
+                        planner_version=ACTIVE_CLARIFICATION_PLANNER_VERSION,
+                    )
+                else:
+                    directive = decide_next_obligation_action(
+                        state,
+                        graph,
+                        selection=clarification_decision.candidate_selection,
+                        planner_version=ACTIVE_CLARIFICATION_PLANNER_VERSION,
+                    )
+                planner_version = ACTIVE_CLARIFICATION_PLANNER_VERSION
+            else:
+                planner_version = (
+                    ACTIVE_CLARIFICATION_PLANNER_VERSION
+                    if action_selection_mode == "active_clarification"
+                    else OBLIGATION_ACTION_PLANNER_VERSION
+                )
+                directive = decide_next_obligation_action(
+                    state,
+                    graph,
+                    planner_version=planner_version,
+                )
             if graph is not None:
                 graph_ids.append(graph.graph_id)
                 recorder.record(
@@ -286,6 +331,17 @@ def _advance_after_sales_case(
                         directive.selection.model_dump(mode="json")
                         if directive.selection is not None else None
                     ),
+                    directive_id=directive.directive_id,
+                    autonomous_action_index=index,
+                )
+            if clarification_portfolio is not None and clarification_decision is not None:
+                clarification_portfolio_ids.append(clarification_portfolio.portfolio_id)
+                clarification_decision_ids.append(clarification_decision.decision_id)
+                final_question_id = clarification_decision.selected_question_id
+                recorder.record(
+                    "case_clarification_portfolio_solved",
+                    portfolio=clarification_portfolio.model_dump(mode="json"),
+                    decision=clarification_decision.model_dump(mode="json"),
                     directive_id=directive.directive_id,
                     autonomous_action_index=index,
                 )
@@ -303,6 +359,7 @@ def _advance_after_sales_case(
             autonomous_action_index=index,
         )
         final_status, final_reason = directive.status, directive.reason_code
+        final_question = directive.question
         if directive.status != "EXECUTE":
             recorder.record(
                 "case_execution_paused",
@@ -392,6 +449,10 @@ def _advance_after_sales_case(
             "initial_state_id": initial_state_id,
             "final_state_id": final_state_id,
             "obligation_graph_ids": graph_ids,
+            "clarification_portfolio_ids": clarification_portfolio_ids,
+            "clarification_decision_ids": clarification_decision_ids,
+            "selected_question_id": final_question_id,
+            "question": final_question,
             "executed_actions": executed,
             "status": final_status,
             "reason_code": final_reason,

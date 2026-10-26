@@ -13,6 +13,8 @@ OBLIGATION_GRAPH_VERSION = "after-sales-obligation-graph-v1"
 OBLIGATION_ACTION_SOLVER_VERSION = "obligation-action-solver-v1"
 OBLIGATION_ACTION_PLANNER_VERSION = "policy-aware-obligation-planner-v1"
 OBLIGATION_GRAPH_VERIFIER_VERSION = "policy-obligation-graph-verifier-v1"
+ACTIVE_CLARIFICATION_SOLVER_VERSION = "active-clarification-solver-v1"
+ACTIVE_CLARIFICATION_PLANNER_VERSION = "policy-aware-active-clarification-v1"
 AUTONOMOUS_OPERATION = "continue_after_sales_case"
 
 
@@ -77,7 +79,10 @@ class ObligationGraph(BaseModel):
 class CandidateSelection(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    solver_version: Literal["obligation-action-solver-v1"] = OBLIGATION_ACTION_SOLVER_VERSION
+    solver_version: Literal[
+        "obligation-action-solver-v1",
+        "active-clarification-solver-v1",
+    ] = OBLIGATION_ACTION_SOLVER_VERSION
     selection_id: str = Field(pattern=r"^[0-9a-f]{64}$")
     graph_id: str = Field(pattern=r"^[0-9a-f]{64}$")
     selected_candidate_id: str = Field(pattern=r"^[0-9a-f]{64}$")
@@ -99,7 +104,10 @@ class ObligationActionDirective(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     schema_version: Literal[1] = 1
-    planner_version: Literal["policy-aware-obligation-planner-v1"] = OBLIGATION_ACTION_PLANNER_VERSION
+    planner_version: Literal[
+        "policy-aware-obligation-planner-v1",
+        "policy-aware-active-clarification-v1",
+    ] = OBLIGATION_ACTION_PLANNER_VERSION
     verifier_version: Literal["policy-obligation-graph-verifier-v1"] = OBLIGATION_GRAPH_VERIFIER_VERSION
     directive_id: str = Field(pattern=r"^[0-9a-f]{64}$")
     state_id: str = Field(pattern=r"^[0-9a-f]{64}$")
@@ -485,14 +493,71 @@ def solve_obligation_graph(graph: ObligationGraph) -> CandidateSelection | None:
         "WAIT": "DEFERRED_OBLIGATION_PRESERVED",
         "BLOCKED": "CAPABILITY_BOUNDARY_PRESERVED",
     }
+    return build_candidate_selection(
+        graph,
+        eligible,
+        reason_code=reasons[selected.mode],
+        solver_version=OBLIGATION_ACTION_SOLVER_VERSION,
+        ranking_policy=CandidateSelection.model_fields["ranking_policy"].default,
+    )
+
+
+def build_candidate_selection(
+    graph: ObligationGraph,
+    ordered_candidates: list[ObligationActionCandidate],
+    *,
+    reason_code: str,
+    solver_version: str,
+    ranking_policy: tuple[str, ...],
+) -> CandidateSelection:
+    """Create a graph-complete selection whose identity binds the active solver contract."""
+
+    admissible_ids = {row.candidate_id for row in graph.candidates if row.admissible}
+    ordered_ids = tuple(row.candidate_id for row in ordered_candidates)
+    if (
+        graph.status != "READY"
+        or not ordered_ids
+        or len(ordered_ids) != len(set(ordered_ids))
+        or set(ordered_ids) != admissible_ids
+    ):
+        raise ValueError("Candidate selection must contain every admissible graph candidate exactly once")
     payload = {
         "graph_id": graph.graph_id,
-        "selected_candidate_id": selected.candidate_id,
-        "eligible_candidate_ids": tuple(row.candidate_id for row in eligible),
-        "dominated_candidate_ids": tuple(row.candidate_id for row in eligible[1:]),
-        "reason_code": reasons[selected.mode],
+        "selected_candidate_id": ordered_ids[0],
+        "eligible_candidate_ids": ordered_ids,
+        "dominated_candidate_ids": ordered_ids[1:],
+        "reason_code": reason_code,
     }
-    return CandidateSelection(selection_id=_checksum(payload), **payload)
+    identity = (
+        payload
+        if solver_version == OBLIGATION_ACTION_SOLVER_VERSION
+        else {
+            "solver_version": solver_version,
+            "ranking_policy": ranking_policy,
+            **payload,
+        }
+    )
+    return CandidateSelection(
+        selection_id=_checksum(identity),
+        solver_version=solver_version,
+        ranking_policy=ranking_policy,
+        **payload,
+    )
+
+
+def _selection_is_valid(graph: ObligationGraph, selection: CandidateSelection) -> bool:
+    candidates = {row.candidate_id: row for row in graph.candidates if row.admissible}
+    try:
+        expected = build_candidate_selection(
+            graph,
+            [candidates[candidate_id] for candidate_id in selection.eligible_candidate_ids],
+            reason_code=selection.reason_code,
+            solver_version=selection.solver_version,
+            ranking_policy=selection.ranking_policy,
+        )
+    except (KeyError, ValueError):
+        return False
+    return expected == selection
 
 
 def _directive(
@@ -507,8 +572,10 @@ def _directive(
     arguments: dict[str, Any] | None = None,
     requires_approval: bool = False,
     question: str | None = None,
+    planner_version: str = OBLIGATION_ACTION_PLANNER_VERSION,
 ) -> ObligationActionDirective:
     payload = {
+        "planner_version": planner_version,
         "state_id": state.state_id,
         "graph_id": graph.graph_id if graph else None,
         "candidate_id": candidate.candidate_id if candidate else None,
@@ -523,23 +590,59 @@ def _directive(
         "question": question,
         "selection": selection,
     }
-    identity = {
+    identity_payload = {
         **payload,
         "selection": selection.model_dump(mode="json") if selection else None,
     }
+    # Preserve the already-published V4 directive identity while making the
+    # V5 identity explicitly bind its different planner contract.
+    identity = (
+        {key: value for key, value in identity_payload.items() if key != "planner_version"}
+        if planner_version == OBLIGATION_ACTION_PLANNER_VERSION
+        else identity_payload
+    )
     return ObligationActionDirective(directive_id=_checksum(identity), **payload)
+
+
+def abstain_obligation_action(
+    state: CaseExecutionState,
+    graph: ObligationGraph,
+    reason_code: str,
+    *,
+    planner_version: str = OBLIGATION_ACTION_PLANNER_VERSION,
+) -> ObligationActionDirective:
+    return _directive(
+        state,
+        graph=graph,
+        status="ABSTAINED",
+        reason_code=reason_code,
+        planner_version=planner_version,
+    )
 
 
 def decide_next_obligation_action(
     state: CaseExecutionState,
     graph: ObligationGraph | None = None,
+    *,
+    selection: CandidateSelection | None = None,
+    planner_version: str = OBLIGATION_ACTION_PLANNER_VERSION,
 ) -> ObligationActionDirective:
     """Solve one bounded action while keeping policy and authorization authoritative."""
 
     if state.status == "TERMINAL":
-        return _directive(state, status="COMPLETE", reason_code="CASE_TERMINAL")
+        return _directive(
+            state,
+            status="COMPLETE",
+            reason_code="CASE_TERMINAL",
+            planner_version=planner_version,
+        )
     if state.status != "READY":
-        return _directive(state, status="ABSTAINED", reason_code="CASE_STATE_NOT_EXECUTABLE")
+        return _directive(
+            state,
+            status="ABSTAINED",
+            reason_code="CASE_STATE_NOT_EXECUTABLE",
+            planner_version=planner_version,
+        )
     graph = graph or build_obligation_graph(state)
     if graph.state_id != state.state_id:
         return _directive(
@@ -547,10 +650,24 @@ def decide_next_obligation_action(
             graph=graph,
             status="ABSTAINED",
             reason_code="OBLIGATION_GRAPH_STATE_MISMATCH",
+            planner_version=planner_version,
         )
     if graph.status != "READY":
-        return _directive(state, graph=graph, status="ABSTAINED", reason_code=graph.reason_code)
-    selection = solve_obligation_graph(graph)
+        return _directive(
+            state,
+            graph=graph,
+            status="ABSTAINED",
+            reason_code=graph.reason_code,
+            planner_version=planner_version,
+        )
+    if selection is not None and not _selection_is_valid(graph, selection):
+        return abstain_obligation_action(
+            state,
+            graph,
+            "OBLIGATION_SELECTION_INVALID",
+            planner_version=planner_version,
+        )
+    selection = selection or solve_obligation_graph(graph)
     if selection is None:
         if not graph.candidates and state.policy_outcome == "INELIGIBLE":
             return _directive(
@@ -558,8 +675,15 @@ def decide_next_obligation_action(
                 graph=graph,
                 status="COMPLETE",
                 reason_code="NO_FURTHER_AUTONOMOUS_ACTION",
+                planner_version=planner_version,
             )
-        return _directive(state, graph=graph, status="ABSTAINED", reason_code="NO_SUPPORTED_NEXT_ACTION")
+        return _directive(
+            state,
+            graph=graph,
+            status="ABSTAINED",
+            reason_code="NO_SUPPORTED_NEXT_ACTION",
+            planner_version=planner_version,
+        )
     candidates = {row.candidate_id: row for row in graph.candidates}
     candidate = candidates[selection.selected_candidate_id]
     if candidate.mode == "AUTONOMOUS":
@@ -576,6 +700,7 @@ def decide_next_obligation_action(
                 "expected_revision": state.case_revision,
                 "requirement_id": candidate.requirement_id,
             },
+            planner_version=planner_version,
         )
     if candidate.mode == "ASK_USER":
         return _directive(
@@ -586,6 +711,7 @@ def decide_next_obligation_action(
             status="WAIT_USER_INPUT",
             reason_code=candidate.reason_code,
             question=candidate.question,
+            planner_version=planner_version,
         )
     if candidate.mode == "WAIT":
         return _directive(
@@ -596,6 +722,7 @@ def decide_next_obligation_action(
             status="WAIT_USER_INPUT",
             reason_code=candidate.reason_code,
             question=candidate.question,
+            planner_version=planner_version,
         )
     if candidate.mode == "APPROVAL":
         return _directive(
@@ -606,6 +733,7 @@ def decide_next_obligation_action(
             status="WAIT_APPROVAL",
             reason_code=candidate.reason_code,
             requires_approval=True,
+            planner_version=planner_version,
         )
     return _directive(
         state,
@@ -614,4 +742,5 @@ def decide_next_obligation_action(
         selection=selection,
         status="BLOCKED",
         reason_code=candidate.reason_code,
+        planner_version=planner_version,
     )

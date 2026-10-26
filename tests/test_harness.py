@@ -143,6 +143,29 @@ def test_obligation_graph_profile_changes_only_the_planning_mechanism():
         get_product_runner("after-sales-obligation-graph-v4")
 
 
+def test_active_clarification_profile_changes_only_the_planning_mechanism():
+    from src.harness.registry import get_product_runner, get_runner
+
+    graph = get_runner("after-sales-obligation-graph-v4").provenance()
+    active = get_runner("after-sales-active-clarification-v5").provenance()
+
+    assert active["profile_version"] == "5.0.0"
+    assert graph["engine"] == active["engine"]
+    assert [item for item in graph["mechanisms"] if item["slot"] != "planning"] == [
+        item for item in active["mechanisms"] if item["slot"] != "planning"
+    ]
+    planning = next(item for item in active["mechanisms"] if item["slot"] == "planning")
+    assert planning["id"] == "active-clarification-case-execution"
+    assert planning["version"] == "5"
+    assert planning["configuration"] == {
+        "case_execution_mode": "policy_aware",
+        "evidence_intake_mode": "readiness_ledger",
+        "action_selection_mode": "active_clarification",
+    }
+    with pytest.raises(AgentError, match="仅限研究"):
+        get_product_runner("after-sales-active-clarification-v5")
+
+
 def test_two_profiles_bind_different_context_implementations_to_same_engine():
     from src.task_plan import TaskPlan, TaskStep
 

@@ -248,6 +248,9 @@ def built_in_mechanisms() -> tuple[HarnessMechanism, ...]:
     obligation_graph_sources = evidence_readiness_sources + (
         "src/after_sales/obligation_graph.py",
     )
+    active_clarification_sources = obligation_graph_sources + (
+        "src/after_sales/clarification.py",
+    )
     return (
         EmbeddedMechanism("planning", "structured-dialogue-understanding", "1", ("orchestrator",),
                           ("src/orchestrator.py", "src/dialogue_understanding.py",
@@ -280,6 +283,13 @@ def built_in_mechanisms() -> tuple[HarnessMechanism, ...]:
             case_execution_mode="policy_aware",
             evidence_intake_mode="readiness_ledger",
             action_selection_mode="obligation_graph",
+        ),
+        AfterSalesPlanningMechanism(
+            "planning", "active-clarification-case-execution", "5", ("orchestrator",),
+            active_clarification_sources,
+            case_execution_mode="policy_aware",
+            evidence_intake_mode="readiness_ledger",
+            action_selection_mode="active_clarification",
         ),
         EmbeddedMechanism("tool_protocol", "runtime-tool-ledger", "2", ("orchestrator",),
                           ("src/runtime.py", "src/persistence.py")),
