@@ -360,7 +360,7 @@ class CapabilityRegistry:
         spec = self.registration(str(objective["kind"])).spec
         protocol_fields = {
             "id", "kind", "source_quote", "desired_outcome", "target_type", "evidence_requirement",
-            "evidence_context_quotes", "evidence_readiness_claims",
+            "evidence_context_quotes", "evidence_readiness_claims", "clarification_id",
         }
         supplied = {
             name for name, value in objective.items()
@@ -637,7 +637,9 @@ def _continue_after_sales_case(objective: Mapping[str, object], request: str) ->
             ),
             CompiledOperation("case-proposal", "after_sales", "prepare_case_submission", {}, ("case-assessment",)),
         )
-    arguments.update(_args(objective, ("requirement_id", "evidence_text", "revoke_evidence_id")))
+    arguments.update(_args(objective, (
+        "requirement_id", "clarification_id", "evidence_text", "revoke_evidence_id",
+    )))
     return (
         CompiledOperation("case-assessment", "after_sales", "continue_after_sales_case", arguments),
         CompiledOperation("case-proposal", "after_sales", "prepare_case_submission", {}, ("case-assessment",)),
@@ -951,7 +953,7 @@ def _builtin_registrations() -> tuple[CapabilityRegistration, ...]:
             accepted=("case_id", "case_revision", "order_id", "requirement_id", "evidence_text", "revoke_evidence_id"),
             side_effect="REQUIRES_APPROVAL",
             missing_question="请明确要继续的售后案件编号或订单号；存在多个案件时我不会猜测。",
-            normalizer=normalize_case_continuation, normalizer_version="session-case-ledger/v1",
+            normalizer=normalize_case_continuation, normalizer_version="session-case-ledger/v2",
             operations={
                 "continue_after_sales_case": OperationContract(
                     handler=tools.continue_after_sales_case,

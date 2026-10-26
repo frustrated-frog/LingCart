@@ -149,7 +149,7 @@ def test_active_clarification_profile_changes_only_the_planning_mechanism():
     graph = get_runner("after-sales-obligation-graph-v4").provenance()
     active = get_runner("after-sales-active-clarification-v5").provenance()
 
-    assert active["profile_version"] == "5.0.0"
+    assert active["profile_version"] == "5.1.0"
     assert graph["engine"] == active["engine"]
     assert [item for item in graph["mechanisms"] if item["slot"] != "planning"] == [
         item for item in active["mechanisms"] if item["slot"] != "planning"

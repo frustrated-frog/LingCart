@@ -95,11 +95,15 @@ describe('RunsPage policy-aware case execution evidence', () => {
         selected_question_id: 'question-packaging',
         reason_code: 'ACTIVE_CLARIFICATION_MAX_STRUCTURAL_VALUE',
       } },
-      { type: 'case_autonomous_action_selected', sequence: 4, operation: 'continue_after_sales_case',
+      { type: 'case_clarification_opened', sequence: 4, question_id: 'question-packaging',
+        question: '请说明原包装是否完整，以及附件是否齐全？', case_revision: 2 },
+      { type: 'case_autonomous_action_selected', sequence: 5, operation: 'continue_after_sales_case',
         reason_code: 'AUTHORITATIVE_EVIDENCE_AVAILABLE', case_revision: 2 },
-      { type: 'case_autonomous_action_completed', sequence: 5, operation: 'continue_after_sales_case',
+      { type: 'case_autonomous_action_completed', sequence: 6, operation: 'continue_after_sales_case',
         from_revision: 2, to_revision: 3 },
-      { type: 'case_execution_paused', sequence: 6, status: 'WAIT_APPROVAL',
+      { type: 'case_clarification_answer_bound', sequence: 7, requirement_id: 'policy:ORIGINAL_PACKAGING',
+        authorization_granted: false },
+      { type: 'case_execution_paused', sequence: 8, status: 'WAIT_APPROVAL',
         reason_code: 'EXPLICIT_APPROVAL_REQUIRED', case_revision: 3 },
     ] } }
     vi.spyOn(api, 'runs').mockResolvedValue({ runs: [summary] })
@@ -116,6 +120,9 @@ describe('RunsPage policy-aware case execution evidence', () => {
     expect(screen.getByText('权威工具动作无需打断用户，优先于其它候选')).toBeInTheDocument()
     expect(screen.getByText('从非支配问题中选择政策解锁与未知消除价值最高的一项')).toBeInTheDocument()
     expect(screen.getByText('选中问题：请说明原包装是否完整，以及附件是否齐全？')).toBeInTheDocument()
+    expect(screen.getByText('待回答问题已持久化')).toBeInTheDocument()
+    expect(screen.getByText('回答已绑定，等待独立核验')).toBeInTheDocument()
+    expect(screen.getByText('本轮原文只作为证据候选，是否满足义务仍由语义核验与政策裁决决定。')).toBeInTheDocument()
     expect(screen.getByText('REV 2 → REV 3')).toBeInTheDocument()
   })
 })

@@ -249,7 +249,7 @@ def built_in_mechanisms() -> tuple[HarnessMechanism, ...]:
         "src/after_sales/obligation_graph.py",
     )
     active_clarification_sources = obligation_graph_sources + (
-        "src/after_sales/clarification.py",
+        "src/after_sales/clarification.py", "src/after_sales/pending_clarification.py",
     )
     return (
         EmbeddedMechanism("planning", "structured-dialogue-understanding", "1", ("orchestrator",),
@@ -292,11 +292,13 @@ def built_in_mechanisms() -> tuple[HarnessMechanism, ...]:
             action_selection_mode="active_clarification",
         ),
         EmbeddedMechanism("tool_protocol", "runtime-tool-ledger", "2", ("orchestrator",),
-                          ("src/runtime.py", "src/persistence.py")),
+                          ("src/runtime.py", "src/persistence.py", "src/backend/db.py",
+                           "src/after_sales/pending_clarification.py")),
         EvidenceVerificationMechanism("verification", "deterministic-business-gates", "2", ("orchestrator",),
                           ("src/direct_executor.py", "src/task_plan.py", "src/catalog_query.py",
                            "src/after_sales/semantic.py", "src/after_sales/evidence.py",
-                           "src/after_sales/actions.py", "src/after_sales/policy.py", "src/tools.py")),
+                           "src/after_sales/actions.py", "src/after_sales/pending_clarification.py",
+                           "src/after_sales/policy.py", "src/tools.py")),
         EmbeddedMechanism("planning", "bounded-model-loop", "1", ("adaptive",),
                           ("src/adaptive.py", "src/adaptive_decision.py")),
         ContextMechanism("context", "evidence-reference-context", "1", ("adaptive",),

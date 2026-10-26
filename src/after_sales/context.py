@@ -108,12 +108,21 @@ def current_case_context() -> list[dict]:
             case = current_case_projection(session, service.get_case(row.case_id))
             decision = case.latest_decision or {}
             requirements = _requirements_context(session, case, decision)
+            from src.after_sales.pending_clarification import current_open_for_case
+            pending_clarification = current_open_for_case(
+                session,
+                session_id=run.session_id,
+                case_id=row.case_id,
+            )
             result.append({"case_id": row.case_id, "order_id": row.order_id,
                            "revision": row.revision, "status": row.status,
                            "policy": {
                                "policy_version_id": decision.get("policy_version_id"),
+                               "policy_checksum": decision.get("policy_checksum"),
+                               "policy_decision_id": decision.get("decision_id"),
                                "valid": decision.get("valid") is True,
                            },
+                           "pending_clarification": pending_clarification,
                            "requirements": requirements,
                            "evidence": [{"evidence_id": e["evidence_id"], "evidence_type": e["evidence_type"],
                                          "statement_excerpt": str(e['payload'].get('statement', ''))[:512],
@@ -124,6 +133,12 @@ def current_case_context() -> list[dict]:
 
 def normalize_case_continuation(objective: dict, sources: tuple[str, ...]):
     normalized = dict(objective)
+    if objective.get("clarification_id"):
+        raise AgentError(
+            "UNTRUSTED_CLARIFICATION_BINDING",
+            "澄清问题编号只能由运行时从当前案件账本绑定",
+            retryable=False,
+        )
     cases = current_case_context()
     quote = str(objective.get("source_quote") or "")
     requested = objective.get("case_id")
@@ -143,7 +158,17 @@ def normalize_case_continuation(objective: dict, sources: tuple[str, ...]):
     case = cases[0]
     if order_id and case["order_id"] != order_id:
         raise AgentError("CASE_CONTEXT_CONFLICT", "订单与案件引用不一致", retryable=False)
+    statement = objective.get("evidence_text")
+    pending_clarification = case.get("pending_clarification")
     requirement_id = objective.get("requirement_id")
+    if (
+        statement
+        and isinstance(pending_clarification, dict)
+        and requirement_id in {None, pending_clarification.get("requirement_id")}
+    ):
+        requirement_id = pending_clarification["requirement_id"]
+        normalized["requirement_id"] = requirement_id
+        normalized["clarification_id"] = pending_clarification["clarification_id"]
     if requirement_id and requirement_id not in {r['requirement_id'] for r in case['requirements']}:
         raise AgentError("EVIDENCE_REQUIREMENT_STALE", "证据要求不属于当前案件政策，请重新读取", retryable=False)
     readiness_types = {
@@ -154,13 +179,23 @@ def normalize_case_continuation(objective: dict, sources: tuple[str, ...]):
     known_types = {r.get("evidence_type") for r in case['requirements']}
     if readiness_types - known_types:
         raise AgentError("EVIDENCE_READINESS_NOT_APPLICABLE", "证据就绪度不属于当前案件政策要求", retryable=False)
-    statement = objective.get("evidence_text")
     if statement and (not requirement_id or statement not in quote):
         raise AgentError("UNGROUNDED_EVIDENCE", "补充材料必须引用当前原文并指定政策证据要求", retryable=False)
     revoked = objective.get("revoke_evidence_id")
     if revoked and revoked not in {e['evidence_id'] for e in case['evidence']}:
         raise AgentError("EVIDENCE_NOT_FOUND", "撤回材料不属于当前案件", retryable=False)
     normalized.update(case_id=case['case_id'], case_revision=case['revision'])
-    return normalized, {key: {"resolver": "session_case_ledger", "resolver_version": "1",
-                              "normalized_value": normalized[key], "source_quote": quote}
-                        for key in ("case_id", "case_revision")}
+    provenance = {
+        key: {"resolver": "session_case_ledger", "resolver_version": "2",
+              "normalized_value": normalized[key], "source_quote": quote}
+        for key in ("case_id", "case_revision")
+    }
+    if normalized.get("clarification_id"):
+        for key in ("requirement_id", "clarification_id"):
+            provenance[key] = {
+                "resolver": "pending_clarification_ledger",
+                "resolver_version": "1",
+                "normalized_value": normalized[key],
+                "source_quote": quote,
+            }
+    return normalized, provenance

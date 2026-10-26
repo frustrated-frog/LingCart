@@ -362,6 +362,30 @@ class RunStore:
                 action = session.get(PendingAction, old_action.get("action_id"))
                 if action and action.status in {"OPEN", "APPROVED"}:
                     action.status = "CANCELLED" if result.get("status") == "CANCELLED" else "CLOSED"
+            from src.after_sales.pending_clarification import (
+                persist_open_clarification,
+                reconcile_session_clarifications,
+            )
+            new_clarification = result.get("pending_clarification")
+            now = utcnow()
+            persisted_clarification = None
+            if isinstance(new_clarification, dict):
+                persisted_clarification = persist_open_clarification(
+                    session,
+                    payload=new_clarification,
+                    session_id=run.session_id,
+                    source_run_id=run_id,
+                    now=now,
+                )
+            pending_clarification = reconcile_session_clarifications(
+                session,
+                session_id=run.session_id,
+                now=now,
+            )
+            if persisted_clarification is not None:
+                pending_clarification = persisted_clarification
+            result["pending_clarification"] = pending_clarification
+            state["pending_clarification"] = pending_clarification
             run.result = json_value(result)
             run.status = result["status"]
             run.lease_token, run.lease_until = None, None

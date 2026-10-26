@@ -145,6 +145,7 @@ class ChatResponse(BaseModel):
     harness: dict = Field(default_factory=dict)
     plan: dict | None = None
     pending_action: dict | None = None
+    pending_clarification: dict | None = None
     error: dict | None = None
     latency_ms: float | None = None
     usage: Usage
@@ -280,6 +281,7 @@ def _response(session_id, result):
         harness=result.get("harness") or {},
         plan=result.get("plan"),
         pending_action=result.get("pending_action"),
+        pending_clarification=result.get("pending_clarification"),
         error=result.get("error"),
         latency_ms=result.get("latency_ms"),
         usage=Usage(**(result.get("usage") or {})),

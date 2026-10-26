@@ -101,7 +101,15 @@ def record_readiness(*, case_id, expected_revision, evidence_readiness_claims):
         raise AgentError(exc.code, str(exc), retryable=exc.retryable) from exc
 
 
-def continue_case(*, case_id, expected_revision, requirement_id, evidence_text, revoke_evidence_id):
+def continue_case(
+    *,
+    case_id,
+    expected_revision,
+    requirement_id,
+    clarification_id,
+    evidence_text,
+    revoke_evidence_id,
+):
     from src import tools
     from src.runtime import current_runtime
     from src.after_sales.semantic import prepared_assessment, persist_assessment
@@ -131,18 +139,32 @@ def continue_case(*, case_id, expected_revision, requirement_id, evidence_text, 
             if evidence_text and (requirement['validation_condition'] != 'CUSTOMER_ATTESTATION'
                                   or 'CUSTOMER_STATEMENT' not in requirement['accepted_sources']):
                 raise AgentError("EVIDENCE_SOURCE_NOT_ACCEPTED", "该要求不能用用户陈述替代权威证据", retryable=False)
+            clarification = None
+            if clarification_id:
+                from src.after_sales.pending_clarification import require_answer_binding
+                clarification = require_answer_binding(
+                    session,
+                    clarification_id=clarification_id,
+                    session_id=run.session_id,
+                    case_id=case_id,
+                    requirement_id=requirement_id,
+                    case_revision=expected_revision,
+                    answer_quote=evidence_text,
+                )
             if revoke_evidence_id and requirement and evidence_text:
                 old = next((e for e in case.evidence if e['evidence_id'] == revoke_evidence_id), None)
                 if not old or old['evidence_type'] != requirement['evidence_type']:
                     raise AgentError("EVIDENCE_REPLACEMENT_CONFLICT", "替换材料必须属于同一证据要求", retryable=False)
             prepared = prepared_assessment(session, runtime, {
                 "case_id": case_id, "expected_revision": expected_revision, "requirement_id": requirement_id,
-                "evidence_text": evidence_text, "revoke_evidence_id": revoke_evidence_id,
+                "clarification_id": clarification_id, "evidence_text": evidence_text,
+                "revoke_evidence_id": revoke_evidence_id,
             }, case, evaluation)
             action_identity = _checksum({
                 "case_id": case_id,
                 "run_id": run.run_id,
                 "requirement_id": requirement_id,
+                "clarification_id": clarification_id,
                 "evidence_text": evidence_text,
                 "revoke_evidence_id": revoke_evidence_id,
             })[:24]
@@ -188,7 +210,19 @@ def continue_case(*, case_id, expected_revision, requirement_id, evidence_text, 
             evaluation = AfterSalesPolicyEngine(session).evaluate(case_id, as_of=now)
             case = service.record_policy_decision(case_id, evaluation, idempotency_key=f"policy:{evaluation.input_hash}",
                                                  expected_revision=case.revision)
+            clarification_binding = None
+            if clarification is not None:
+                from src.after_sales.pending_clarification import bind_answer
+                clarification_binding = bind_answer(
+                    clarification,
+                    answer_run_id=run.run_id,
+                    answer_quote=evidence_text,
+                    resolved_at=now,
+                )
             tools._commit(session)
-            return case_result(case)
+            result = case_result(case)
+            if clarification_binding is not None:
+                result["clarification_binding"] = clarification_binding
+            return result
     except AfterSalesDomainError as exc:
         raise AgentError(exc.code, str(exc), retryable=exc.retryable) from exc

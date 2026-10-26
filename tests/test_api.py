@@ -153,6 +153,33 @@ def test_harness_profiles_are_discoverable_but_candidates_are_research_only():
     assert baseline['harness']['profile_id'] == 'adaptive-v1'
 
 
+def test_chat_response_preserves_pending_clarification_contract():
+    pending = {
+        "clarification_id": "a" * 64,
+        "case_id": "case-1",
+        "requirement_id": "policy:ORIGINAL_PACKAGING",
+        "question_id": "b" * 64,
+        "question": "请确认原包装是否完整？",
+        "status": "OPEN",
+    }
+
+    response = api._response("session-1", {
+        "run_id": "run-1",
+        "reply": pending["question"],
+        "agent": "after_sales",
+        "route": "DIRECT",
+        "status": "PARTIAL",
+        "terminal_reason": "EVIDENCE_UNAVAILABLE",
+        "trace": [],
+        "pending_action": None,
+        "pending_clarification": pending,
+        "usage": {},
+    })
+
+    assert response.pending_action is None
+    assert response.pending_clarification == pending
+
+
 def test_async_product_api_also_rejects_candidate_profile():
     result = client.post('/runs', json={'message': '查询订单1002状态',
                                         'harness_profile': 'adaptive-objective-context-v1'})

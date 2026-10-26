@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "profile_id": "after-sales-active-clarification-v5",
-  "version": "5.0.0",
+  "version": "5.1.0",
   "display_name": "售后信息价值主动澄清候选",
   "description": "在政策义务图上编译单义务问题、未知条件与反事实答案分支，以无概率的结构化信息价值和 Pareto 前沿选择最小澄清。",
   "engine": {
@@ -25,6 +25,8 @@
     "active_clarification",
     "counterfactual_answer_branches",
     "pareto_question_selection",
+    "durable_pending_clarification",
+    "cross_turn_answer_binding",
     "durable_runtime",
     "approval_guard",
     "tool_ledger"

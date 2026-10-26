@@ -85,14 +85,18 @@ describe('ExecutionSpine', () => {
       { type: 'case_state_projected', sequence: 1 },
       { type: 'case_obligation_graph_solved', sequence: 2 },
       { type: 'case_clarification_portfolio_solved', sequence: 3 },
-      { type: 'case_obligation_verified', sequence: 4 },
-      { type: 'case_autonomous_action_selected', sequence: 5 },
-      { type: 'case_autonomous_action_completed', sequence: 6 },
-      { type: 'case_execution_paused', sequence: 7 },
+      { type: 'case_clarification_opened', sequence: 4 },
+      { type: 'case_clarification_answer_bound', sequence: 5 },
+      { type: 'case_obligation_verified', sequence: 6 },
+      { type: 'case_autonomous_action_selected', sequence: 7 },
+      { type: 'case_autonomous_action_completed', sequence: 8 },
+      { type: 'case_execution_paused', sequence: 9 },
     ]} />)
     expect(screen.getByText('投影政策约束案件状态')).toBeInTheDocument()
     expect(screen.getByText('构建并求解政策义务图')).toBeInTheDocument()
     expect(screen.getByText('比较澄清问题的信息价值')).toBeInTheDocument()
+    expect(screen.getByText('持久化待回答问题')).toBeInTheDocument()
+    expect(screen.getByText('绑定本轮回答原文')).toBeInTheDocument()
     expect(screen.getByText('核验下一项政策义务')).toBeInTheDocument()
     expect(screen.getByText('选择受限自主动作')).toBeInTheDocument()
     expect(screen.getByText('自主动作产生版本进展')).toBeInTheDocument()

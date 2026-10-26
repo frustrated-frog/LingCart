@@ -148,10 +148,13 @@ function PolicyAwareCaseExecution({ detail }: { detail: RunDetail }) {
   const projections = events.filter((item) => item.type === 'case_state_projected')
   const graphEvents = events.filter((item) => item.type === 'case_obligation_graph_solved')
   const clarificationEvents = events.filter((item) => item.type === 'case_clarification_portfolio_solved')
+  const clarificationOpened = events.filter((item) => item.type === 'case_clarification_opened')
+  const clarificationBindings = events.filter((item) => item.type === 'case_clarification_answer_bound')
   const actions = events.filter((item) => item.type === 'case_autonomous_action_selected')
   const completed = events.filter((item) => item.type === 'case_autonomous_action_completed')
   const pause = events.filter((item) => item.type === 'case_execution_paused').at(-1)
-  if (!projections.length && !graphEvents.length && !clarificationEvents.length && !actions.length && !pause) return null
+  if (!projections.length && !graphEvents.length && !clarificationEvents.length
+      && !clarificationOpened.length && !clarificationBindings.length && !actions.length && !pause) return null
   const state = record(projections.at(-1)?.state)
   const latestGraphEvent = graphEvents.at(-1)
   const latestGraph = record(latestGraphEvent?.graph)
@@ -166,6 +169,8 @@ function PolicyAwareCaseExecution({ detail }: { detail: RunDetail }) {
   const ledgerItems: Array<Record<string, unknown>> = [
     ...graphEvents.map((item) => ({ ...item, displayKind: '义务求解' })),
     ...clarificationEvents.map((item) => ({ ...item, displayKind: '澄清求解' })),
+    ...clarificationOpened.map((item) => ({ ...item, displayKind: '问题入账' })),
+    ...clarificationBindings.map((item) => ({ ...item, displayKind: '回答绑定' })),
     ...actions.map((item) => ({ ...item, displayKind: '选择动作' })),
     ...completed.map((item) => ({ ...item, displayKind: '完成动作' })),
     ...(pause ? [{ ...pause, displayKind: '边界暂停' }] : []),
@@ -178,6 +183,8 @@ function PolicyAwareCaseExecution({ detail }: { detail: RunDetail }) {
       ['当前义务节点', latestGraphEvent ? latestNodes.filter((item) => record(item).kind === 'REQUIREMENT').length : '未启用'],
       ['当前候选行动', latestGraphEvent ? latestCandidates.length : '未启用'],
       ['当前澄清问题', clarificationEvents.length ? latestQuestions.length : '未启用'],
+      ['持久化待回答', clarificationOpened.length],
+      ['已绑定回答', clarificationBindings.length],
       ['案件版本', state.case_id ? `${String(state.case_id)} / REV ${String(state.case_revision ?? '—')}` : '未记录'],
       ['政策裁决', policyIdentity || '未记录'],
       ['案件计划', planIdentity || '未记录'],
@@ -186,6 +193,8 @@ function PolicyAwareCaseExecution({ detail }: { detail: RunDetail }) {
     <div className="steering-ledger">{ledgerItems.sort((left, right) => Number(left.sequence ?? 0) - Number(right.sequence ?? 0)).map((item, index) => {
       const isGraph = item.displayKind === '义务求解'
       const isClarification = item.displayKind === '澄清求解'
+      const isClarificationOpened = item.displayKind === '问题入账'
+      const isClarificationBinding = item.displayKind === '回答绑定'
       const graph = record(item.graph)
       const candidates = Array.isArray(graph.candidates) ? graph.candidates : []
       const portfolio = record(item.portfolio)
@@ -197,11 +206,38 @@ function PolicyAwareCaseExecution({ detail }: { detail: RunDetail }) {
       const selectedQuestion = isClarification
         ? record(questions.find((question) => record(question).question_id === decision.selected_question_id))
         : {}
+      const title = isGraph
+        ? `${candidates.length} 个候选行动`
+        : isClarification
+          ? `${questions.length} 个澄清问题`
+          : isClarificationOpened
+            ? '待回答问题已持久化'
+            : isClarificationBinding
+              ? '回答已绑定，等待独立核验'
+              : operation
+                ? (TOOL_LABELS[operation] ?? operation)
+                : (CASE_EXECUTION_STATUS_LABELS[String(item.status)] ?? String(item.status))
+      const description = isClarificationOpened
+        ? '问题绑定案件版本、政策指纹和内容指纹，不代表用户授权。'
+        : isClarificationBinding
+          ? '本轮原文只作为证据候选，是否满足义务仍由语义核验与政策裁决决定。'
+          : (CASE_EXECUTION_REASON_LABELS[itemReason] ?? itemReason)
+      const evidence = isClarificationOpened
+        ? `问题：${String(item.question ?? '未记录')} · ${String(item.question_id ?? '').slice(0, 12)}`
+        : isClarificationBinding
+          ? `义务 ${String(item.requirement_id ?? '未记录')} · 授权：否`
+          : isClarification && selectedQuestion.question
+            ? `选中问题：${String(selectedQuestion.question)}`
+            : isGraph && selection.selected_candidate_id
+              ? `候选 ${String(selection.selected_candidate_id).slice(0, 12)}`
+              : item.from_revision !== undefined
+                ? `REV ${String(item.from_revision)} → REV ${String(item.to_revision)}`
+                : `案件版本 REV ${String(item.case_revision ?? state.case_revision ?? '—')}`
       return <article key={`${String(item.sequence ?? index)}-${String(item.displayKind)}`}>
         <span>{String(item.sequence ?? '—')} / {String(item.displayKind)}</span>
-        <b>{isGraph ? `${candidates.length} 个候选行动` : isClarification ? `${questions.length} 个澄清问题` : operation ? (TOOL_LABELS[operation] ?? operation) : (CASE_EXECUTION_STATUS_LABELS[String(item.status)] ?? String(item.status))}</b>
-        <p>{CASE_EXECUTION_REASON_LABELS[itemReason] ?? itemReason}</p>
-        <small>{isClarification && selectedQuestion.question ? `选中问题：${String(selectedQuestion.question)}` : isGraph && selection.selected_candidate_id ? `候选 ${String(selection.selected_candidate_id).slice(0, 12)}` : item.from_revision !== undefined ? `REV ${String(item.from_revision)} → REV ${String(item.to_revision)}` : `案件版本 REV ${String(item.case_revision ?? state.case_revision ?? '—')}`}</small>
+        <b>{title}</b>
+        <p>{description}</p>
+        <small>{evidence}</small>
       </article>
     })}</div>
   </>

@@ -74,20 +74,24 @@ def test_trace_projector_surfaces_policy_aware_case_execution_phases():
         {"run_id": "case-run", "sequence": 1, "type": "case_state_projected"},
         {"run_id": "case-run", "sequence": 2, "type": "case_obligation_graph_solved"},
         {"run_id": "case-run", "sequence": 3, "type": "case_clarification_portfolio_solved"},
-        {"run_id": "case-run", "sequence": 4, "type": "case_obligation_verified"},
-        {"run_id": "case-run", "sequence": 5, "type": "case_autonomous_action_selected"},
-        {"run_id": "case-run", "sequence": 6, "type": "case_autonomous_action_completed"},
-        {"run_id": "case-run", "sequence": 7, "type": "case_execution_paused"},
-        {"run_id": "case-run", "sequence": 8, "type": "terminal", "status": "WAITING_APPROVAL"},
+        {"run_id": "case-run", "sequence": 4, "type": "case_clarification_opened"},
+        {"run_id": "case-run", "sequence": 5, "type": "case_clarification_answer_bound"},
+        {"run_id": "case-run", "sequence": 6, "type": "case_obligation_verified"},
+        {"run_id": "case-run", "sequence": 7, "type": "case_autonomous_action_selected"},
+        {"run_id": "case-run", "sequence": 8, "type": "case_autonomous_action_completed"},
+        {"run_id": "case-run", "sequence": 9, "type": "case_execution_paused"},
+        {"run_id": "case-run", "sequence": 10, "type": "terminal", "status": "WAITING_APPROVAL"},
     ])
 
-    assert [item["phase"] for item in projected["timeline"][:7]] == [
-        "CONTEXT", "PLAN", "PLAN", "VERIFY", "PLAN", "TOOL", "GUARD",
+    assert [item["phase"] for item in projected["timeline"][:9]] == [
+        "CONTEXT", "PLAN", "PLAN", "PLAN", "CONTEXT", "VERIFY", "PLAN", "TOOL", "GUARD",
     ]
-    assert [item["label"] for item in projected["timeline"][:7]] == [
+    assert [item["label"] for item in projected["timeline"][:9]] == [
         "已投影政策约束下的案件状态",
         "已构建并求解政策义务图",
         "已比较澄清问题的信息价值",
+        "已持久化待回答的政策澄清问题",
+        "已把本轮原文绑定到原澄清问题",
         "已核验下一项政策义务",
         "已选择受限自主动作",
         "受限自主动作已产生版本进展",

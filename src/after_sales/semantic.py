@@ -133,7 +133,8 @@ def assess(inputs: dict, *, model, runtime) -> dict:
 
 def preparation_key(args):
     return _checksum({key: args.get(key) for key in
-                      ("case_id", "expected_revision", "requirement_id", "evidence_text", "revoke_evidence_id",
+                      ("case_id", "expected_revision", "requirement_id", "clarification_id",
+                       "evidence_text", "revoke_evidence_id",
                        "order_id", "order_item_id", "reason_code", "reason_text",
                        "reason_taxonomy_version", "reason_taxonomy_fingerprint",
                        "evidence_readiness_claims")})

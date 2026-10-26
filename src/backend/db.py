@@ -259,6 +259,44 @@ class PolicyDecision(Base):
     )
 
 
+class AfterSalesPendingClarification(Base):
+    """A policy-bound question awaiting evidence, never an approval grant."""
+
+    __tablename__ = "after_sales_pending_clarifications"
+    __table_args__ = (
+        UniqueConstraint("source_run_id", "question_id", name="uq_pending_clarification_source"),
+        CheckConstraint(
+            "status IN ('OPEN', 'ANSWERED', 'SUPERSEDED', 'CLOSED')",
+            name="ck_pending_clarification_status",
+        ),
+        CheckConstraint("case_revision > 0", name="ck_pending_clarification_revision_positive"),
+    )
+
+    clarification_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    session_id: Mapped[str] = mapped_column(ForeignKey("conversations.session_id"), index=True)
+    case_id: Mapped[str] = mapped_column(ForeignKey("after_sales_cases.case_id"), index=True)
+    source_run_id: Mapped[str] = mapped_column(ForeignKey("agent_runs.run_id"), index=True)
+    question_id: Mapped[str] = mapped_column(String(64), index=True)
+    requirement_id: Mapped[str] = mapped_column(String(160), index=True)
+    case_revision: Mapped[int] = mapped_column(Integer)
+    policy_version_id: Mapped[str] = mapped_column(ForeignKey("policy_versions.policy_version_id"))
+    policy_checksum: Mapped[str] = mapped_column(String(64))
+    policy_decision_id: Mapped[str] = mapped_column(ForeignKey("policy_decisions.decision_id"))
+    state_id: Mapped[str] = mapped_column(String(64))
+    graph_id: Mapped[str] = mapped_column(String(64))
+    portfolio_id: Mapped[str] = mapped_column(String(64))
+    clarification_decision_id: Mapped[str] = mapped_column(String(64))
+    selection_id: Mapped[str] = mapped_column(String(64))
+    question: Mapped[str] = mapped_column(Text)
+    question_checksum: Mapped[str] = mapped_column(String(64))
+    binding_checksum: Mapped[str] = mapped_column(String(64))
+    status: Mapped[str] = mapped_column(String(24), default="OPEN", index=True)
+    answer_run_id: Mapped[str | None] = mapped_column(ForeignKey("agent_runs.run_id"), nullable=True)
+    answer_quote: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
 class AfterSalesCaseEvent(Base):
     """Append-only case timeline; sequence and revision advance together."""
 

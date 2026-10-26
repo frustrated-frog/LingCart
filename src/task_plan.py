@@ -24,6 +24,7 @@ from src.after_sales.clarification import (
     build_clarification_portfolio,
     solve_active_clarification,
 )
+from src.after_sales.pending_clarification import build_pending_clarification
 
 
 _PROPOSAL_OPERATIONS = {"prepare_refund", "prepare_payment", "prepare_case_submission"}
@@ -273,6 +274,7 @@ def _advance_after_sales_case(
     clarification_decision_ids = []
     final_question = None
     final_question_id = None
+    pending_clarification = None
     planner_version = ACTION_PLANNER_VERSION
     for index in range(max_actions + 1):
         state = project_case_execution_state(current)
@@ -360,6 +362,40 @@ def _advance_after_sales_case(
         )
         final_status, final_reason = directive.status, directive.reason_code
         final_question = directive.question
+        if (
+            action_selection_mode == "active_clarification"
+            and clarification_portfolio is not None
+            and clarification_decision is not None
+            and clarification_decision.status == "SELECTED"
+            and clarification_decision.selected_question_id
+            and clarification_decision.candidate_selection is not None
+            and directive.status == "WAIT_USER_INPUT"
+            and directive.reason_code == "CUSTOMER_EVIDENCE_REQUIRED"
+        ):
+            selected_question = next(
+                question for question in clarification_portfolio.questions
+                if question.question_id == clarification_decision.selected_question_id
+            )
+            pending_clarification = build_pending_clarification(
+                case_id=state.case_id,
+                requirement_id=selected_question.requirement_id,
+                question_id=selected_question.question_id,
+                question=selected_question.question,
+                case_revision=state.case_revision,
+                policy_version_id=state.policy_version_id,
+                policy_checksum=state.policy_checksum,
+                policy_decision_id=state.policy_decision_id,
+                state_id=state.state_id,
+                graph_id=clarification_portfolio.graph_id,
+                portfolio_id=clarification_portfolio.portfolio_id,
+                clarification_decision_id=clarification_decision.decision_id,
+                selection_id=clarification_decision.candidate_selection.selection_id,
+            ).model_dump(mode="json")
+            recorder.record(
+                "case_clarification_opened",
+                **pending_clarification,
+                authorization_granted=False,
+            )
         if directive.status != "EXECUTE":
             recorder.record(
                 "case_execution_paused",
@@ -411,6 +447,8 @@ def _advance_after_sales_case(
             next_result,
             event,
         ))
+        if isinstance(next_result, dict) and isinstance(next_result.get("clarification_binding"), dict):
+            recorder.record("case_clarification_answer_bound", **next_result["clarification_binding"])
         contract = get_capability_registry().operation_contract(directive.operation)
         if contract is None:
             raise AgentError("UNKNOWN_CAPABILITY_OPERATION", "案件自主执行动作没有注册输出契约", retryable=False)
@@ -443,7 +481,7 @@ def _advance_after_sales_case(
     return {
         **current,
         "autonomous_execution": {
-            "schema_version": 1,
+            "schema_version": 2,
             "planner_version": planner_version,
             "action_selection_mode": action_selection_mode,
             "initial_state_id": initial_state_id,
@@ -453,6 +491,7 @@ def _advance_after_sales_case(
             "clarification_decision_ids": clarification_decision_ids,
             "selected_question_id": final_question_id,
             "question": final_question,
+            "pending_clarification": pending_clarification,
             "executed_actions": executed,
             "status": final_status,
             "reason_code": final_reason,
@@ -603,6 +642,8 @@ def execute_plan(intake, run_id, *, plan=None, source="deterministic", incomplet
                 else:
                     step.result, event = executor.execute(step.tool, step.args)
                     trace.append(_trace_entry(run_id, step.specialist, step.tool, step.args, step.result, event))
+                    if isinstance(step.result, dict) and isinstance(step.result.get("clarification_binding"), dict):
+                        recorder.record("case_clarification_answer_bound", **step.result["clarification_binding"])
                     step.status = event["status"]
                     if step.status == "BUSINESS_ERROR":
                         code = ("INVALID_PRODUCT_SELECTION" if step.tool == "compare_products"
@@ -739,4 +780,13 @@ def execute_plan(intake, run_id, *, plan=None, source="deterministic", incomplet
     if any(step.tool == MODEL_ANSWER_OPERATION for step in plan.steps):
         response["route"] = "KNOWLEDGE" if len(plan.steps) == 1 else "MIXED"
     response["plan"] = plan.payload()
+    pending_clarifications = [
+        autonomous.get("pending_clarification")
+        for step in plan.steps
+        if isinstance(step.result, dict)
+        and isinstance((autonomous := step.result.get("autonomous_execution")), dict)
+        and isinstance(autonomous.get("pending_clarification"), dict)
+    ]
+    if pending_clarifications:
+        response["pending_clarification"] = pending_clarifications[-1]
     return response

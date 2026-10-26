@@ -170,6 +170,7 @@ export interface RunResult {
   budget?: Record<string, unknown>
   usage?: Record<string, number | null>
   pending_action?: PendingAction | null
+  pending_clarification?: PendingClarification | null
   artifacts?: ResultArtifact[]
   error?: RunFailure | null
   [key: string]: unknown
@@ -555,6 +556,23 @@ export interface PendingAction {
   [key: string]: unknown
 }
 
+export interface PendingClarification {
+  clarification_id: string
+  status: 'OPEN' | 'ANSWERED' | 'SUPERSEDED' | 'CLOSED'
+  case_id: string
+  requirement_id: string
+  question_id: string
+  question: string
+  case_revision: number
+  policy_version_id: string
+  policy_checksum: string
+  policy_decision_id: string
+  question_checksum: string
+  binding_checksum: string
+  authorization_granted?: false
+  [key: string]: unknown
+}
+
 export interface ExecutionResult extends RunResult {
   run_id: string
   reply: string
@@ -565,6 +583,7 @@ export interface ExecutionResult extends RunResult {
   events: RunEvent[]
   trace: Array<{ agent?: string; tool?: string; args?: Record<string, unknown>; result?: unknown }>
   pending_action?: PendingAction | null
+  pending_clarification?: PendingClarification | null
   usage: { input_tokens: number | null; output_tokens: number | null; total_tokens: number | null }
 }
 
@@ -574,7 +593,11 @@ export interface ChatResponse extends ExecutionResult {
 }
 
 export interface Conversation {
-  state: { pending_action?: PendingAction | null; [key: string]: unknown }
+  state: {
+    pending_action?: PendingAction | null
+    pending_clarification?: PendingClarification | null
+    [key: string]: unknown
+  }
   messages: Array<{ role: 'user' | 'assistant'; content: string; run_id: string; result?: ExecutionResult | null }>
   active_run_id: string | null
 }

@@ -635,13 +635,15 @@ def continue_after_sales_case(
     case_id: Annotated[str, Field(min_length=1, max_length=64)],
     expected_revision: Annotated[int, Field(gt=0)],
     requirement_id: Annotated[str, Field(min_length=1, max_length=160)] | None = None,
+    clarification_id: Annotated[str, Field(min_length=1, max_length=64)] | None = None,
     evidence_text: Annotated[str, Field(min_length=1, max_length=2000)] | None = None,
     revoke_evidence_id: Annotated[str, Field(min_length=1, max_length=64)] | None = None,
 ) -> dict:
     """Continue a session-owned case with policy-bound evidence; never authorizes a refund."""
     from src.after_sales.actions import continue_case
     return continue_case(case_id=case_id, expected_revision=expected_revision, requirement_id=requirement_id,
-                         evidence_text=evidence_text, revoke_evidence_id=revoke_evidence_id)
+                         clarification_id=clarification_id, evidence_text=evidence_text,
+                         revoke_evidence_id=revoke_evidence_id)
 
 
 def record_after_sales_evidence_readiness(

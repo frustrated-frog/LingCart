@@ -14,6 +14,7 @@ import api
 from src import orchestrator, tools
 from src.backend.db import (
     AfterSalesCase,
+    AfterSalesPendingClarification,
     AfterSalesCaseRefund,
     AfterSalesCaseRun,
     Order,
@@ -41,6 +42,8 @@ EVIDENCE_MISSING_MESSAGE = "订单 1001 的耳机与描述不符，请建立售�
 EVIDENCE_UNKNOWN_MESSAGE = "订单 1001 的耳机与描述不符，请建立售后案件；原包装情况目前不确定。"
 EVIDENCE_DEFERRED_FOLLOWUP = "原包装情况稍后才能确认"
 READINESS_CONTEXT_ACK = "好的，明白了"
+CLARIFICATION_ANSWER = "原包装完整，附件也都齐全"
+STALE_CLARIFICATION_ACK = "我知道了"
 
 
 class AfterSalesUnderstandingModel:
@@ -286,6 +289,98 @@ class ActiveClarificationSemanticModel:
                 "explanation": "测试中的结构化语义缺口",
                 "question": question,
             })
+        return AIMessage(content=json.dumps({
+            "requirements": rows,
+            "withdrawal_confirmed": False,
+            "withdrawal_quote": "",
+        }, ensure_ascii=False))
+
+
+class ClarificationAnswerUnderstandingModel(AfterSalesUnderstandingModel):
+    def invoke(self, prompt):
+        payload = json.loads(str(prompt).split("\nConversation input:\n")[-1])
+        assert payload["latest_human_message"] == CLARIFICATION_ANSWER
+        pending = payload["session_cases"][0]["pending_clarification"]
+        assert pending["status"] == "OPEN"
+        assert pending["requirement_id"].endswith(":ORIGINAL_PACKAGING")
+        assert "clarification_id" not in json.loads(str(prompt).split("\nSchema:\n")[-1].split("\nConversation input:\n")[0])[
+            "$defs"
+        ]["BusinessObjective"]["properties"]
+        return AIMessage(content=json.dumps({
+            "reason": "当前原文回答了唯一待澄清的原包装问题",
+            "commands": [],
+            "objectives": [{
+                "id": "answer-pending-clarification",
+                "kind": "AFTER_SALES_CONTINUE",
+                "source_quote": CLARIFICATION_ANSWER,
+                "evidence_text": CLARIFICATION_ANSWER,
+            }],
+        }, ensure_ascii=False))
+
+
+class ForgedClarificationUnderstandingModel(AfterSalesUnderstandingModel):
+    def invoke(self, prompt):
+        payload = json.loads(str(prompt).split("\nConversation input:\n")[-1])
+        assert "clarification_id" not in payload["session_cases"][0]["pending_clarification"]
+        return AIMessage(content=json.dumps({
+            "reason": "模拟模型伪造内部绑定编号",
+            "commands": [],
+            "objectives": [{
+                "id": "forged-answer-binding",
+                "kind": "AFTER_SALES_CONTINUE",
+                "source_quote": CLARIFICATION_ANSWER,
+                "clarification_id": "0" * 64,
+                "evidence_text": CLARIFICATION_ANSWER,
+            }],
+        }, ensure_ascii=False))
+
+
+class StaleClarificationContextInspectionModel(AfterSalesUnderstandingModel):
+    def invoke(self, prompt):
+        payload = json.loads(str(prompt).split("\nConversation input:\n")[-1])
+        assert payload["latest_human_message"] == STALE_CLARIFICATION_ACK
+        assert payload["session_cases"][0]["pending_clarification"] is None
+        return AIMessage(content=json.dumps({
+            "reason": "政策指纹变化后不再把旧问题投影为当前上下文",
+            "commands": [{
+                "kind": "ACKNOWLEDGEMENT",
+                "source_quote": STALE_CLARIFICATION_ACK,
+                "message": None,
+            }],
+            "objectives": [],
+        }, ensure_ascii=False))
+
+
+class BindingAwareSemanticModel(ActiveClarificationSemanticModel):
+    def invoke(self, prompt):
+        inputs = json.loads(str(prompt).split("\nEvidence input:\n")[-1])
+        incoming = next((
+            evidence for evidence in inputs["evidence"]
+            if evidence["evidence_id"] == "incoming"
+            and evidence["evidence_type"] == "ORIGINAL_PACKAGING"
+        ), None)
+        if incoming is None:
+            return super().invoke(prompt)
+        rows = []
+        for requirement in inputs["requirements"]:
+            if requirement["evidence_type"] == "ORIGINAL_PACKAGING":
+                rows.append({
+                    "requirement_id": requirement["requirement_id"],
+                    "status": "SUFFICIENT",
+                    "citations": [{"evidence_id": "incoming", "quote": CLARIFICATION_ANSWER}],
+                    "missing_information": [],
+                    "explanation": "原文覆盖原包装与附件状态",
+                    "question": "",
+                })
+            else:
+                rows.append({
+                    "requirement_id": requirement["requirement_id"],
+                    "status": "UNKNOWN",
+                    "citations": [],
+                    "missing_information": ["序列号标签是否清晰"],
+                    "explanation": "当前回答未涉及另一项独立义务",
+                    "question": "请确认序列号标签是否清晰？",
+                })
         return AIMessage(content=json.dumps({
             "requirements": rows,
             "withdrawal_confirmed": False,
@@ -656,7 +751,149 @@ def test_active_clarification_profile_selects_one_policy_bound_question(database
     assert autonomous["question"] == selected["question"]
     assert autonomous["clarification_portfolio_ids"] == [event["portfolio"]["portfolio_id"]]
     assert autonomous["clarification_decision_ids"] == [event["decision"]["decision_id"]]
+    pending = result["pending_clarification"]
+    assert pending["status"] == "OPEN"
+    assert pending["case_id"] == result["trace"][0]["result"]["case_id"]
+    assert pending["requirement_id"] == selected["requirement_id"]
+    assert pending["question_id"] == selected["question_id"]
+    assert pending["case_revision"] == autonomous["pending_clarification"]["case_revision"]
+    assert pending["policy_decision_id"] == autonomous["pending_clarification"]["policy_decision_id"]
+    assert pending["binding_checksum"] == autonomous["pending_clarification"]["binding_checksum"]
+    assert any(event["type"] == "case_clarification_opened"
+               and event["clarification_id"] == pending["clarification_id"]
+               and event["authorization_granted"] is False for event in result["events"])
     with tools._session() as session:
+        row = session.get(AfterSalesPendingClarification, pending["clarification_id"])
+        assert row.status == "OPEN"
+        assert row.question_checksum == pending["question_checksum"]
+        assert session.scalars(select(PendingAction).where(
+            PendingAction.session_id == "active-clarification-after-sales"
+        )).all() == []
+        assert session.scalar(select(Refund).where(Refund.order_id == 1001)).status == "none"
+
+
+def test_pending_clarification_binds_elliptical_answer_then_selects_next_obligation(database, monkeypatch):
+    from src import llm
+    from src.harness import get_runner
+
+    with tools._session() as session:
+        require_two_customer_evidence(session)
+    semantic = BindingAwareSemanticModel()
+    monkeypatch.setattr(llm, "get_llm", lambda **_kwargs: semantic)
+    runner = get_runner("after-sales-active-clarification-v5")
+    opened = run_conversation(
+        MESSAGE,
+        "clarification-answer-binding",
+        request_id="open-question",
+        runner=runner,
+    )
+    first = opened["pending_clarification"]
+    monkeypatch.setattr(orchestrator, "get_llm", lambda **_kwargs: ClarificationAnswerUnderstandingModel())
+
+    answered = run_conversation(
+        CLARIFICATION_ANSWER,
+        "clarification-answer-binding",
+        request_id="answer-question",
+        runner=runner,
+    )
+
+    continuation = next(entry for entry in answered["trace"] if entry["tool"] == "continue_after_sales_case")
+    assert continuation["args"]["clarification_id"] == first["clarification_id"]
+    assert continuation["args"]["requirement_id"] == first["requirement_id"]
+    assert continuation["args"]["evidence_text"] == CLARIFICATION_ANSWER
+    binding = continuation["result"]["clarification_binding"]
+    assert binding["clarification_id"] == first["clarification_id"]
+    assert binding["status"] == "ANSWERED"
+    assert binding["authorization_granted"] is False
+    assert any(event["type"] == "case_clarification_answer_bound"
+               and event["clarification_id"] == first["clarification_id"]
+               for event in answered["events"])
+    second = answered["pending_clarification"]
+    assert second["status"] == "OPEN"
+    assert second["clarification_id"] != first["clarification_id"]
+    assert second["requirement_id"].endswith(":SERIAL_LABEL")
+    assert answered["pending_action"] is None
+    with tools._session() as session:
+        assert session.get(AfterSalesPendingClarification, first["clarification_id"]).status == "ANSWERED"
+        assert session.get(AfterSalesPendingClarification, second["clarification_id"]).status == "OPEN"
+        assert session.scalar(select(Refund).where(Refund.order_id == 1001)).status == "none"
+
+
+def test_model_cannot_forge_pending_clarification_binding(database, monkeypatch):
+    from src import llm
+    from src.harness import get_runner
+
+    with tools._session() as session:
+        require_two_customer_evidence(session)
+    monkeypatch.setattr(llm, "get_llm", lambda **_kwargs: BindingAwareSemanticModel())
+    runner = get_runner("after-sales-active-clarification-v5")
+    opened = run_conversation(
+        MESSAGE,
+        "forged-clarification-binding",
+        request_id="open-question",
+        runner=runner,
+    )
+    pending = opened["pending_clarification"]
+    monkeypatch.setattr(orchestrator, "get_llm", lambda **_kwargs: ForgedClarificationUnderstandingModel())
+
+    rejected = run_conversation(
+        CLARIFICATION_ANSWER,
+        "forged-clarification-binding",
+        request_id="forge-question-id",
+        runner=runner,
+    )
+
+    assert rejected["status"] == "FAILED"
+    assert rejected["terminal_reason"] == "UNTRUSTED_CLARIFICATION_BINDING"
+    assert rejected["trace"] == []
+    assert rejected["pending_clarification"]["clarification_id"] == pending["clarification_id"]
+    with tools._session() as session:
+        row = session.get(AfterSalesPendingClarification, pending["clarification_id"])
+        assert row.status == "OPEN"
+        case = AfterSalesCaseService(session).get_case(pending["case_id"])
+        assert not any(item["payload"].get("statement") == CLARIFICATION_ANSWER for item in case.evidence)
+        assert session.scalar(select(Refund).where(Refund.order_id == 1001)).status == "none"
+
+
+def test_stale_pending_clarification_is_not_projected_or_bound(database, monkeypatch):
+    from src import llm
+    from src.harness import get_runner
+
+    with tools._session() as session:
+        require_two_customer_evidence(session)
+    monkeypatch.setattr(llm, "get_llm", lambda **_kwargs: BindingAwareSemanticModel())
+    runner = get_runner("after-sales-active-clarification-v5")
+    opened = run_conversation(
+        MESSAGE,
+        "stale-clarification-binding",
+        request_id="open-question",
+        runner=runner,
+    )
+    pending = opened["pending_clarification"]
+    with tools._session() as session:
+        policy = session.get(PolicyVersion, DEFAULT_AFTER_SALES_POLICY_VERSION_ID)
+        policy.rules = {**policy.rules, "clarification_contract_epoch": 2}
+        policy.checksum = _checksum(policy.rules)
+        session.commit()
+    monkeypatch.setattr(
+        orchestrator,
+        "get_llm",
+        lambda **_kwargs: StaleClarificationContextInspectionModel(),
+    )
+
+    observed = run_conversation(
+        STALE_CLARIFICATION_ACK,
+        "stale-clarification-binding",
+        request_id="observe-stale-question",
+        runner=runner,
+    )
+
+    assert observed["trace"] == []
+    assert observed["pending_clarification"] is None
+    with tools._session() as session:
+        row = session.get(AfterSalesPendingClarification, pending["clarification_id"])
+        assert row.status == "SUPERSEDED"
+        assert row.answer_run_id is None
         assert session.scalar(select(Refund).where(Refund.order_id == 1001)).status == "none"
 
 
@@ -998,6 +1235,61 @@ class CrashAfterReadinessToolResult(RunStore):
                 and not event.get("reused")):
             raise CrashAfterCaseWrite()
         super().save_checkpoint(run_id, token, snapshot, event)
+
+
+def test_clarification_answer_binding_reuses_transactional_ledger_after_restart(database, monkeypatch):
+    from src import llm
+    from src.harness import get_runner
+
+    with tools._session() as session:
+        require_two_customer_evidence(session)
+    monkeypatch.setattr(llm, "get_llm", lambda **_kwargs: BindingAwareSemanticModel())
+    runner = get_runner("after-sales-active-clarification-v5")
+    opened = run_conversation(
+        MESSAGE,
+        "clarification-binding-recovery",
+        request_id="open-question",
+        runner=runner,
+    )
+    first = opened["pending_clarification"]
+    monkeypatch.setattr(orchestrator, "get_llm", lambda **_kwargs: ClarificationAnswerUnderstandingModel())
+
+    with pytest.raises(CrashAfterCaseWrite):
+        run_conversation(
+            CLARIFICATION_ANSWER,
+            "clarification-binding-recovery",
+            request_id="answer-question",
+            runner=runner,
+            store=CrashAfterAutonomousCaseToolResult(),
+        )
+    active_run_id = RunStore().conversation("clarification-binding-recovery")["active_run_id"]
+    with tools._session() as session:
+        bound = session.get(AfterSalesPendingClarification, first["clarification_id"])
+        assert bound.status == "ANSWERED"
+        assert bound.answer_run_id == active_run_id
+
+    tools.configure_db(get_engine(f"sqlite:///{database}"))
+    resumed = resume_run("clarification-binding-recovery", active_run_id)
+
+    continuation = next(entry for entry in resumed["trace"] if entry["tool"] == "continue_after_sales_case")
+    assert continuation["status"] == "REUSED"
+    assert continuation["result"]["clarification_binding"]["clarification_id"] == first["clarification_id"]
+    assert resumed["pending_clarification"]["requirement_id"].endswith(":SERIAL_LABEL")
+    assert resumed["pending_action"] is None
+    with tools._session() as session:
+        case = AfterSalesCaseService(session).get_case(first["case_id"])
+        answers = [
+            item for item in case.evidence
+            if item["evidence_type"] == "ORIGINAL_PACKAGING"
+            and item["payload"].get("statement") == CLARIFICATION_ANSWER
+        ]
+        ledgers = session.scalars(select(ToolLedger).where(
+            ToolLedger.run_id == active_run_id,
+            ToolLedger.tool_name == "continue_after_sales_case",
+        )).all()
+        assert len(answers) == 1
+        assert len(ledgers) == 1
+        assert session.scalar(select(Refund).where(Refund.order_id == 1001)).status == "none"
 
 
 def test_case_creation_reuses_transactional_ledger_after_process_restart(database):
