@@ -82,6 +82,7 @@ class AfterSalesPlanningMechanism(EmbeddedMechanism):
 
     case_execution_mode: str = "policy_aware"
     evidence_intake_mode: str = "model_default"
+    action_selection_mode: str = "priority_v2"
 
     def install(self, context) -> None:
         super().install(context)
@@ -93,6 +94,7 @@ class AfterSalesPlanningMechanism(EmbeddedMechanism):
             configuration={
                 "case_execution_mode": self.case_execution_mode,
                 "evidence_intake_mode": self.evidence_intake_mode,
+                "action_selection_mode": self.action_selection_mode,
             },
         )
 
@@ -102,6 +104,7 @@ class AfterSalesPlanningMechanism(EmbeddedMechanism):
             "configuration": {
                 "case_execution_mode": self.case_execution_mode,
                 "evidence_intake_mode": self.evidence_intake_mode,
+                "action_selection_mode": self.action_selection_mode,
             },
         }
 
@@ -242,6 +245,9 @@ def built_in_mechanisms() -> tuple[HarnessMechanism, ...]:
         "src/after_sales/service.py", "src/after_sales/contracts.py", "src/after_sales/actions.py",
         "src/runtime.py", "src/tools.py",
     )
+    obligation_graph_sources = evidence_readiness_sources + (
+        "src/after_sales/obligation_graph.py",
+    )
     return (
         EmbeddedMechanism("planning", "structured-dialogue-understanding", "1", ("orchestrator",),
                           ("src/orchestrator.py", "src/dialogue_understanding.py",
@@ -267,6 +273,13 @@ def built_in_mechanisms() -> tuple[HarnessMechanism, ...]:
             evidence_readiness_sources,
             case_execution_mode="policy_aware",
             evidence_intake_mode="readiness_ledger",
+        ),
+        AfterSalesPlanningMechanism(
+            "planning", "obligation-graph-case-execution", "4", ("orchestrator",),
+            obligation_graph_sources,
+            case_execution_mode="policy_aware",
+            evidence_intake_mode="readiness_ledger",
+            action_selection_mode="obligation_graph",
         ),
         EmbeddedMechanism("tool_protocol", "runtime-tool-ledger", "2", ("orchestrator",),
                           ("src/runtime.py", "src/persistence.py")),

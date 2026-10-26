@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "profile_id": "after-sales-obligation-graph-v4",
+  "version": "4.0.0",
+  "display_name": "售后政策义务图候选",
+  "description": "把当前政策义务、依赖和持久化行动编译为可核验图，在权威工具、最小提问、等待与审批边界之间确定性求解下一步。",
+  "engine": {
+    "id": "orchestrator",
+    "version": "1"
+  },
+  "mechanisms": [
+    {"slot": "planning", "id": "obligation-graph-case-execution", "version": "4"},
+    {"slot": "tool_protocol", "id": "runtime-tool-ledger", "version": "2"},
+    {"slot": "verification", "id": "deterministic-business-gates", "version": "2"}
+  ],
+  "capabilities": [
+    "open_set_dialogue_understanding",
+    "after_sales_case_planning",
+    "policy_aware_case_execution",
+    "after_sales_evidence_boundary",
+    "evidence_readiness_ledger",
+    "cross_turn_evidence_readiness",
+    "obligation_graph_planning",
+    "multi_candidate_action_solver",
+    "durable_runtime",
+    "approval_guard",
+    "tool_ledger"
+  ],
+  "research": {
+    "status": "candidate",
+    "source_type": "native",
+    "paper_id": null,
+    "hypothesis": "显式编译并核验全部政策义务与候选行动，优先无交互的权威取证，再按结构化信息价值选择用户动作，可减少不必要停顿且不放宽证据与审批边界。"
+  }
+}

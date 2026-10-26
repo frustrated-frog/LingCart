@@ -134,21 +134,32 @@ const CASE_EXECUTION_REASON_LABELS: Record<string, string> = {
   NO_FURTHER_AUTONOMOUS_ACTION: '当前没有待执行的自主动作',
   NO_SUPPORTED_NEXT_ACTION: '计划没有当前执行器支持的下一步',
   CASE_TERMINAL: '案件已进入终态，无需继续执行',
+  TRUSTED_AUTONOMOUS_ACTION_DOMINATES: '权威工具动作无需打断用户，优先于其它候选',
+  HIGHEST_INFORMATION_GAIN_QUESTION: '选择结构化信息增益上界最高的问题',
+  POLICY_BOUND_APPROVAL_READY: '全部政策义务满足，进入明确授权边界',
+  DEFERRED_OBLIGATION_PRESERVED: '用户已明确延期，保留等待状态而不重复追问',
+  CAPABILITY_BOUNDARY_PRESERVED: '没有可安全自动执行的能力，保持阻断边界',
 }
 
 function PolicyAwareCaseExecution({ detail }: { detail: RunDetail }) {
   const events = detail.result.events ?? []
   const projections = events.filter((item) => item.type === 'case_state_projected')
+  const graphEvents = events.filter((item) => item.type === 'case_obligation_graph_solved')
   const actions = events.filter((item) => item.type === 'case_autonomous_action_selected')
   const completed = events.filter((item) => item.type === 'case_autonomous_action_completed')
   const pause = events.filter((item) => item.type === 'case_execution_paused').at(-1)
-  if (!projections.length && !actions.length && !pause) return null
+  if (!projections.length && !graphEvents.length && !actions.length && !pause) return null
   const state = record(projections.at(-1)?.state)
+  const latestGraphEvent = graphEvents.at(-1)
+  const latestGraph = record(latestGraphEvent?.graph)
+  const latestNodes = Array.isArray(latestGraph.nodes) ? latestGraph.nodes : []
+  const latestCandidates = Array.isArray(latestGraph.candidates) ? latestGraph.candidates : []
   const policyIdentity = [state.policy_version_id, state.policy_decision_id].filter(Boolean).map(String).join(' / ')
   const planIdentity = [state.plan_id, state.plan_revision].filter((value) => value !== undefined && value !== null).map(String).join(' / ')
   const pauseStatus = String(pause?.status ?? 'ABSTAINED')
   const reason = String(pause?.reason_code ?? 'NO_SUPPORTED_NEXT_ACTION')
   const ledgerItems: Array<Record<string, unknown>> = [
+    ...graphEvents.map((item) => ({ ...item, displayKind: '义务求解' })),
     ...actions.map((item) => ({ ...item, displayKind: '选择动作' })),
     ...completed.map((item) => ({ ...item, displayKind: '完成动作' })),
     ...(pause ? [{ ...pause, displayKind: '边界暂停' }] : []),
@@ -158,19 +169,25 @@ function PolicyAwareCaseExecution({ detail }: { detail: RunDetail }) {
     <DefinitionGrid items={[
       ['循环状态', CASE_EXECUTION_STATUS_LABELS[pauseStatus] ?? pauseStatus],
       ['自主工具动作', completed.length],
+      ['当前义务节点', latestGraphEvent ? latestNodes.filter((item) => record(item).kind === 'REQUIREMENT').length : '未启用'],
+      ['当前候选行动', latestGraphEvent ? latestCandidates.length : '未启用'],
       ['案件版本', state.case_id ? `${String(state.case_id)} / REV ${String(state.case_revision ?? '—')}` : '未记录'],
       ['政策裁决', policyIdentity || '未记录'],
       ['案件计划', planIdentity || '未记录'],
     ]} />
     <p className="muted">退款提交不会由该循环自动执行；需要用户材料、明确确认或系统不具备的能力时，循环都会持久化原因并暂停。</p>
     <div className="steering-ledger">{ledgerItems.sort((left, right) => Number(left.sequence ?? 0) - Number(right.sequence ?? 0)).map((item, index) => {
+      const isGraph = item.displayKind === '义务求解'
+      const graph = record(item.graph)
+      const candidates = Array.isArray(graph.candidates) ? graph.candidates : []
+      const selection = record(item.selection)
       const operation = String(item.operation ?? '')
-      const itemReason = String(item.reason_code ?? (item.displayKind === '完成动作' ? 'ACTION_COMPLETED_WITH_PROGRESS' : reason))
+      const itemReason = String(selection.reason_code ?? item.reason_code ?? (item.displayKind === '完成动作' ? 'ACTION_COMPLETED_WITH_PROGRESS' : reason))
       return <article key={`${String(item.sequence ?? index)}-${String(item.displayKind)}`}>
         <span>{String(item.sequence ?? '—')} / {String(item.displayKind)}</span>
-        <b>{operation ? (TOOL_LABELS[operation] ?? operation) : (CASE_EXECUTION_STATUS_LABELS[String(item.status)] ?? String(item.status))}</b>
+        <b>{isGraph ? `${candidates.length} 个候选行动` : operation ? (TOOL_LABELS[operation] ?? operation) : (CASE_EXECUTION_STATUS_LABELS[String(item.status)] ?? String(item.status))}</b>
         <p>{CASE_EXECUTION_REASON_LABELS[itemReason] ?? itemReason}</p>
-        <small>{item.from_revision !== undefined ? `REV ${String(item.from_revision)} → REV ${String(item.to_revision)}` : `案件版本 REV ${String(item.case_revision ?? state.case_revision ?? '—')}`}</small>
+        <small>{isGraph && selection.selected_candidate_id ? `候选 ${String(selection.selected_candidate_id).slice(0, 12)}` : item.from_revision !== undefined ? `REV ${String(item.from_revision)} → REV ${String(item.to_revision)}` : `案件版本 REV ${String(item.case_revision ?? state.case_revision ?? '—')}`}</small>
       </article>
     })}</div>
   </>

@@ -13,6 +13,11 @@ from src.intake import (FAQ, ORDER_DETAILS, ORDER_STATUS, PAYMENT_PROCESS, PAYME
                         PRODUCT_DISCOVERY, PRODUCT_SEARCH, REFUND_ELIGIBILITY, REFUND_REQUEST, SHIPMENT_TRACKING)
 from src.runtime import ToolExecutor, TraceRecorder, current_runtime
 from src.after_sales.execution import ACTION_PLANNER_VERSION, decide_next_case_action, project_case_execution_state
+from src.after_sales.obligation_graph import (
+    OBLIGATION_ACTION_PLANNER_VERSION,
+    build_obligation_graph,
+    decide_next_obligation_action,
+)
 
 
 _PROPOSAL_OPERATIONS = {"prepare_refund", "prepare_payment", "prepare_case_submission"}
@@ -27,6 +32,11 @@ _MAX_AUTONOMOUS_CASE_ACTIONS = 4
 def _case_execution_mode(context) -> str:
     mechanism = (context.mechanisms or {}).get("planning") if context else None
     return getattr(mechanism, "case_execution_mode", "policy_aware")
+
+
+def _case_action_selection_mode(context) -> str:
+    mechanism = (context.mechanisms or {}).get("planning") if context else None
+    return getattr(mechanism, "action_selection_mode", "priority_v2")
 
 
 @dataclass
@@ -235,7 +245,16 @@ def verify_observation(step):
         raise AgentError("INVALID_TOOL_RESULT", "工具结果未包含本步骤所需的业务证据", retryable=False)
 
 
-def _advance_after_sales_case(result, *, executor, recorder, trace, run_id, max_actions):
+def _advance_after_sales_case(
+    result,
+    *,
+    executor,
+    recorder,
+    trace,
+    run_id,
+    max_actions,
+    action_selection_mode="priority_v2",
+):
     """Consume persisted CasePlan actions without creating a second runtime or bypassing ToolExecutor."""
     current = result
     executed = []
@@ -243,6 +262,8 @@ def _advance_after_sales_case(result, *, executor, recorder, trace, run_id, max_
     final_state_id = None
     final_status = "ABSTAINED"
     final_reason = "CASE_STATE_NOT_EXECUTABLE"
+    graph_ids = []
+    planner_version = ACTION_PLANNER_VERSION
     for index in range(max_actions + 1):
         state = project_case_execution_state(current)
         initial_state_id = initial_state_id or state.state_id
@@ -252,7 +273,30 @@ def _advance_after_sales_case(result, *, executor, recorder, trace, run_id, max_
             state=state.model_dump(mode="json"),
             autonomous_action_index=index,
         )
-        directive = decide_next_case_action(state)
+        if action_selection_mode == "obligation_graph":
+            graph = build_obligation_graph(state) if state.status == "READY" else None
+            directive = decide_next_obligation_action(state, graph)
+            planner_version = OBLIGATION_ACTION_PLANNER_VERSION
+            if graph is not None:
+                graph_ids.append(graph.graph_id)
+                recorder.record(
+                    "case_obligation_graph_solved",
+                    graph=graph.model_dump(mode="json"),
+                    selection=(
+                        directive.selection.model_dump(mode="json")
+                        if directive.selection is not None else None
+                    ),
+                    directive_id=directive.directive_id,
+                    autonomous_action_index=index,
+                )
+        elif action_selection_mode == "priority_v2":
+            directive = decide_next_case_action(state)
+        else:
+            raise AgentError(
+                "HARNESS_ACTION_SELECTION_UNKNOWN",
+                "售后 Harness 配置了未知的候选行动求解模式",
+                retryable=False,
+            )
         recorder.record(
             "case_obligation_verified",
             directive=directive.model_dump(mode="json"),
@@ -268,6 +312,8 @@ def _advance_after_sales_case(result, *, executor, recorder, trace, run_id, max_
                 status=directive.status,
                 reason_code=directive.reason_code,
                 question=directive.question,
+                graph_id=getattr(directive, "graph_id", None),
+                candidate_id=getattr(directive, "candidate_id", None),
             )
             break
         if index >= max_actions:
@@ -279,6 +325,8 @@ def _advance_after_sales_case(result, *, executor, recorder, trace, run_id, max_
                 state_id=state.state_id,
                 status=final_status,
                 reason_code=final_reason,
+                graph_id=getattr(directive, "graph_id", None),
+                candidate_id=getattr(directive, "candidate_id", None),
             )
             break
         recorder.record(
@@ -290,6 +338,12 @@ def _advance_after_sales_case(result, *, executor, recorder, trace, run_id, max_
             operation=directive.operation,
             arguments=directive.arguments,
             reason_code=directive.reason_code,
+            graph_id=getattr(directive, "graph_id", None),
+            candidate_id=getattr(directive, "candidate_id", None),
+            selection_reason=(
+                directive.selection.reason_code
+                if getattr(directive, "selection", None) is not None else None
+            ),
         )
         next_result, event = executor.execute(directive.operation, directive.arguments)
         trace.append(_trace_entry(
@@ -314,6 +368,8 @@ def _advance_after_sales_case(result, *, executor, recorder, trace, run_id, max_
             "from_revision": state.case_revision,
             "to_revision": next_revision,
             "tool_status": event["status"],
+            "graph_id": getattr(directive, "graph_id", None),
+            "candidate_id": getattr(directive, "candidate_id", None),
         })
         recorder.record(
             "case_autonomous_action_completed",
@@ -323,15 +379,19 @@ def _advance_after_sales_case(result, *, executor, recorder, trace, run_id, max_
             from_revision=state.case_revision,
             to_revision=next_revision,
             tool_status=event["status"],
+            graph_id=getattr(directive, "graph_id", None),
+            candidate_id=getattr(directive, "candidate_id", None),
         )
         current = next_result
     return {
         **current,
         "autonomous_execution": {
             "schema_version": 1,
-            "planner_version": ACTION_PLANNER_VERSION,
+            "planner_version": planner_version,
+            "action_selection_mode": action_selection_mode,
             "initial_state_id": initial_state_id,
             "final_state_id": final_state_id,
+            "obligation_graph_ids": graph_ids,
             "executed_actions": executed,
             "status": final_status,
             "reason_code": final_reason,
@@ -501,6 +561,7 @@ def execute_plan(intake, run_id, *, plan=None, source="deterministic", incomplet
                             trace=trace,
                             run_id=run_id,
                             max_actions=min(_MAX_AUTONOMOUS_CASE_ACTIONS, autonomous_budget),
+                            action_selection_mode=_case_action_selection_mode(context),
                         )
                     verify_observation(step)
                     if step.tool == CATALOG_QUERY_OPERATION:

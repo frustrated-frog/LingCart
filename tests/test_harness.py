@@ -64,6 +64,8 @@ def test_after_sales_experiment_profiles_change_only_the_planning_mechanism():
     assert right["mechanisms"][0]["configuration"]["case_execution_mode"] == "policy_aware"
     assert left["mechanisms"][0]["configuration"]["evidence_intake_mode"] == "model_default"
     assert right["mechanisms"][0]["configuration"]["evidence_intake_mode"] == "model_default"
+    assert left["mechanisms"][0]["configuration"]["action_selection_mode"] == "priority_v2"
+    assert right["mechanisms"][0]["configuration"]["action_selection_mode"] == "priority_v2"
     for profile_id in ("after-sales-plan-observer-v0", "after-sales-policy-execution-v1"):
         with pytest.raises(AgentError, match="仅限研究"):
             get_product_runner(profile_id)
@@ -84,10 +86,12 @@ def test_evidence_boundary_profile_changes_only_the_planning_mechanism():
     assert baseline_planning["configuration"] == {
         "case_execution_mode": "policy_aware",
         "evidence_intake_mode": "model_default",
+        "action_selection_mode": "priority_v2",
     }
     assert candidate_planning["configuration"] == {
         "case_execution_mode": "policy_aware",
         "evidence_intake_mode": "case_first",
+        "action_selection_mode": "priority_v2",
     }
     with pytest.raises(AgentError, match="仅限研究"):
         get_product_runner("after-sales-evidence-boundary-v2")
@@ -110,9 +114,33 @@ def test_evidence_readiness_profile_is_a_research_only_planning_mechanism():
     assert planning["configuration"] == {
         "case_execution_mode": "policy_aware",
         "evidence_intake_mode": "readiness_ledger",
+        "action_selection_mode": "priority_v2",
     }
     with pytest.raises(AgentError, match="仅限研究"):
         get_product_runner("after-sales-evidence-readiness-v3")
+
+
+def test_obligation_graph_profile_changes_only_the_planning_mechanism():
+    from src.harness.registry import get_product_runner, get_runner
+
+    readiness = get_runner("after-sales-evidence-readiness-v3").provenance()
+    graph = get_runner("after-sales-obligation-graph-v4").provenance()
+
+    assert graph["profile_version"] == "4.0.0"
+    assert readiness["engine"] == graph["engine"]
+    assert [item for item in readiness["mechanisms"] if item["slot"] != "planning"] == [
+        item for item in graph["mechanisms"] if item["slot"] != "planning"
+    ]
+    planning = next(item for item in graph["mechanisms"] if item["slot"] == "planning")
+    assert planning["id"] == "obligation-graph-case-execution"
+    assert planning["version"] == "4"
+    assert planning["configuration"] == {
+        "case_execution_mode": "policy_aware",
+        "evidence_intake_mode": "readiness_ledger",
+        "action_selection_mode": "obligation_graph",
+    }
+    with pytest.raises(AgentError, match="仅限研究"):
+        get_product_runner("after-sales-obligation-graph-v4")
 
 
 def test_two_profiles_bind_different_context_implementations_to_same_engine():

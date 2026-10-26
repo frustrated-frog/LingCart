@@ -139,6 +139,7 @@ export const METRIC_LABELS: Record<string, string> = {
 const EVENT_LABELS: Record<string, [string, string]> = {
   case_plan_revised: ['案件', '修订证据与行动计划'],
   case_state_projected: ['案件', '投影政策约束案件状态'],
+  case_obligation_graph_solved: ['义务图', '构建并求解政策义务图'],
   case_obligation_verified: ['核验', '核验下一项政策义务'],
   case_autonomous_action_selected: ['决策', '选择受限自主动作'],
   case_autonomous_action_completed: ['进展', '自主动作产生版本进展'],

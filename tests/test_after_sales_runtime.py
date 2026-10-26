@@ -304,6 +304,32 @@ def require_original_packaging_evidence(session):
     session.commit()
 
 
+def require_mixed_authoritative_and_customer_evidence(session):
+    policy = session.get(PolicyVersion, DEFAULT_AFTER_SALES_POLICY_VERSION_ID)
+    policy.rules = {
+        **policy.rules,
+        "required_evidence_by_reason": {
+            **policy.rules["required_evidence_by_reason"],
+            "NOT_AS_DESCRIBED": ["ORDER_FACT", "ORIGINAL_PACKAGING"],
+        },
+        "evidence_acceptance": {
+            **policy.rules["evidence_acceptance"],
+            "ORDER_FACT": {
+                "accepted_sources": ["ORDER_RECORD"],
+                "condition": "AUTHORITATIVE_ORDER",
+                "description": "需要读取权威订单状态",
+            },
+            "ORIGINAL_PACKAGING": {
+                "accepted_sources": ["CUSTOMER_STATEMENT"],
+                "condition": "CUSTOMER_ATTESTATION",
+                "description": "需要确认原包装及附件是否完整",
+            },
+        },
+    }
+    policy.checksum = _checksum(policy.rules)
+    session.commit()
+
+
 @pytest.fixture()
 def database(tmp_path, monkeypatch):
     path = tmp_path / "after-sales-runtime.db"
@@ -476,6 +502,59 @@ def test_policy_aware_loop_collects_authoritative_evidence_before_requesting_app
         assert "ORDER_FACT" in evidence_types
         assert refund.status == "none"
         assert len(continuation_rows) == 1
+
+
+def test_obligation_graph_profile_solves_all_candidates_before_asking_user(database, monkeypatch):
+    from src import llm
+    from src.harness import get_runner
+
+    with tools._session() as session:
+        require_mixed_authoritative_and_customer_evidence(session)
+    monkeypatch.setattr(llm, "get_llm", lambda **_kwargs: SemanticModelMustNotRun())
+
+    result = run_conversation(
+        MESSAGE,
+        "obligation-graph-after-sales",
+        request_id="solve-mixed-evidence",
+        runner=get_runner("after-sales-obligation-graph-v4"),
+    )
+
+    assert result["status"] == "PARTIAL"
+    assert result["terminal_reason"] == "EVIDENCE_UNAVAILABLE"
+    assert result["pending_action"] is None
+    assert [entry["tool"] for entry in result["trace"]] == [
+        "prepare_after_sales_case",
+        "continue_after_sales_case",
+    ]
+    graph_events = [
+        event for event in result["events"]
+        if event["type"] == "case_obligation_graph_solved"
+    ]
+    assert len(graph_events) == 2
+    first_candidates = {
+        candidate["candidate_id"]: candidate
+        for candidate in graph_events[0]["graph"]["candidates"]
+    }
+    first_selection = graph_events[0]["selection"]
+    assert {candidate["mode"] for candidate in first_candidates.values()} == {
+        "AUTONOMOUS",
+        "ASK_USER",
+    }
+    assert first_candidates[first_selection["selected_candidate_id"]]["mode"] == "AUTONOMOUS"
+    assert first_selection["reason_code"] == "TRUSTED_AUTONOMOUS_ACTION_DOMINATES"
+    second_candidates = graph_events[1]["graph"]["candidates"]
+    assert [candidate["mode"] for candidate in second_candidates] == ["ASK_USER"]
+    assert graph_events[1]["selection"]["reason_code"] == "HIGHEST_INFORMATION_GAIN_QUESTION"
+    autonomous = result["plan"]["steps"][0]["result"]["autonomous_execution"]
+    assert autonomous["planner_version"] == "policy-aware-obligation-planner-v1"
+    assert autonomous["action_selection_mode"] == "obligation_graph"
+    assert autonomous["obligation_graph_ids"] == [event["graph"]["graph_id"] for event in graph_events]
+    assert autonomous["status"] == "WAIT_USER_INPUT"
+    assert autonomous["reason_code"] == "CUSTOMER_EVIDENCE_REQUIRED"
+    with tools._session() as session:
+        case = AfterSalesCaseService(session).get_case(result["trace"][0]["result"]["case_id"])
+        assert "ORDER_FACT" in {item["evidence_type"] for item in case.evidence}
+        assert session.scalar(select(Refund).where(Refund.order_id == 1001)).status == "none"
 
 
 def test_observer_profile_persists_plan_without_consuming_authoritative_action(database):
@@ -869,6 +948,47 @@ def test_autonomous_case_step_reuses_transactional_ledger_after_process_restart(
         "continue_after_sales_case",
     ]
     assert all(entry["status"] == "REUSED" for entry in resumed["trace"])
+    with tools._session() as session:
+        case = AfterSalesCaseService(session).get_case(resumed["pending_action"]["case_id"])
+        order_evidence = [row for row in case.evidence if row["evidence_type"] == "ORDER_FACT"]
+        continuation_rows = session.scalars(select(ToolLedger).where(
+            ToolLedger.run_id == active_run_id,
+            ToolLedger.tool_name == "continue_after_sales_case",
+        )).all()
+        assert len(order_evidence) == 1
+        assert len(continuation_rows) == 1
+
+
+def test_obligation_graph_step_reuses_transactional_ledger_after_process_restart(database, monkeypatch):
+    from src import llm
+    from src.harness import get_runner
+
+    with tools._session() as session:
+        require_authoritative_order_evidence(session)
+    monkeypatch.setattr(llm, "get_llm", lambda **_kwargs: SemanticModelMustNotRun())
+    runner = get_runner("after-sales-obligation-graph-v4")
+
+    with pytest.raises(CrashAfterCaseWrite):
+        run_conversation(
+            MESSAGE,
+            "obligation-graph-recovery",
+            request_id="recoverable-obligation-graph",
+            store=CrashAfterAutonomousCaseToolResult(),
+            runner=runner,
+        )
+    active_run_id = RunStore().conversation("obligation-graph-recovery")["active_run_id"]
+
+    resumed = resume_run("obligation-graph-recovery", active_run_id)
+
+    assert resumed["status"] == "WAITING_APPROVAL"
+    assert [entry["tool"] for entry in resumed["trace"]] == [
+        "prepare_after_sales_case",
+        "continue_after_sales_case",
+    ]
+    assert all(entry["status"] == "REUSED" for entry in resumed["trace"])
+    autonomous = resumed["plan"]["steps"][0]["result"]["autonomous_execution"]
+    assert autonomous["action_selection_mode"] == "obligation_graph"
+    assert len(autonomous["obligation_graph_ids"]) == 2
     with tools._session() as session:
         case = AfterSalesCaseService(session).get_case(resumed["pending_action"]["case_id"])
         order_evidence = [row for row in case.evidence if row["evidence_type"] == "ORDER_FACT"]
