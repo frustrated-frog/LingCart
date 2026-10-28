@@ -1,6 +1,7 @@
 import pytest
 
 from src.intake import (
+    APPROVAL_CANCELLED,
     APPROVAL_CONFIRMED,
     APPROVAL_UNKNOWN,
     CLARIFICATION_REQUIRED,
@@ -233,6 +234,29 @@ def test_explicit_confirmation_still_matches_pending_action():
 
 @pytest.mark.parametrize("message", ["确认退款", "取消退款", "confirm refund", "cancel the refund"])
 def test_approval_for_a_different_action_family_never_consumes_pending_payment(message):
+    pending = {"type": "PROCESS_PAYMENT", "order_id": 1003}
+
+    assert parse_approval_response(message, pending) == APPROVAL_UNKNOWN
+
+
+def test_explicit_sentence_cancels_the_matching_pending_payment():
+    pending = {"type": "PROCESS_PAYMENT", "order_id": 1003}
+
+    assert (
+        parse_approval_response("取消刚才订单 1003 的付款操作，不要扣款。", pending)
+        == APPROVAL_CANCELLED
+    )
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "不要取消订单 1003 的付款操作",
+        "取消订单 1004 的付款操作",
+        "取消订单 1003 的退款操作",
+    ],
+)
+def test_expanded_cancellation_still_requires_matching_polarity_target_and_family(message):
     pending = {"type": "PROCESS_PAYMENT", "order_id": 1003}
 
     assert parse_approval_response(message, pending) == APPROVAL_UNKNOWN

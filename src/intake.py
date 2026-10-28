@@ -188,8 +188,30 @@ def parse_approval_response(user_message: str, pending_action: dict | None = Non
         )
     if mentioned_family and pending_family and mentioned_family != pending_family:
         return APPROVAL_UNKNOWN
+    mentioned_order_ids = {int(value) for value in re.findall(r"(?<!\d)\d{4,}(?!\d)", normalized)}
+    pending_order_id = (pending_action or {}).get("order_id")
+    if mentioned_order_ids and pending_order_id not in mentioned_order_ids:
+        return APPROVAL_UNKNOWN
     cancelled = {"取消", "取消操作", "取消支付", "取消退款", "算了", "不要", "不支付", "不退款", "取消先不要执行", "取消先不要支付", "取消不退款了"}
-    if compact in cancelled or re.fullmatch(r"cancel(?: (?:it|this|the payment|the refund|never mind))?|never mind|no(?: thanks)?", english):
+    explicit_chinese_cancellation = bool(
+        pending_action
+        and not re.search(r"(?:不要|别|不)取消", normalized)
+        and (
+            re.search(r"取消.{0,32}(?:操作|支付|付款|退款|扣款)", normalized)
+            or re.search(r"(?:不要|别)(?:再)?(?:执行|扣款|支付|付款|退款)", normalized)
+        )
+    )
+    explicit_english_cancellation = bool(
+        pending_action
+        and re.fullmatch(
+            r"cancel(?: (?:it|this|the|my|that|previous|pending))*"
+            r"(?: payment| refund| operation)?(?: for order \d{4,})?"
+            r"|do not (?:charge|pay|refund|execute|proceed)(?: (?:it|this|order \d{4,}))?",
+            english,
+        )
+    )
+    if (compact in cancelled or explicit_chinese_cancellation or explicit_english_cancellation
+            or re.fullmatch(r"cancel(?: (?:it|this|the payment|the refund|never mind))?|never mind|no(?: thanks)?", english)):
         return APPROVAL_CANCELLED
     confirmed = {"确认", "同意", "确认继续", "确认继续执行", "继续执行", "可以执行", "确认支付", "确认退款", "同意支付", "同意退款"}
     if compact in confirmed or re.fullmatch(r"确认(?:使用)?(?:card|paypal|银行卡|信用卡)支付", compact) or re.fullmatch(r"(?:yes(?: (?:please|proceed))?|confirm|proceed|confirm (?:payment|refund))", english):

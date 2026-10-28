@@ -441,6 +441,45 @@ def test_model_protocol_gets_one_bounded_repair(monkeypatch):
     assert any(event["type"] == "dialogue_protocol_retry" for event in result["events"])
 
 
+def test_paraphrased_source_quote_gets_one_bounded_grounding_repair():
+    message = "订单 1001 的退货政策是什么"
+    model = ScriptedModel(
+        interpretation(objectives=[{
+            "id": "policy", "kind": "FAQ", "source_quote": "请解释订单退货规则",
+            "question": "请解释订单退货规则",
+        }]),
+        interpretation(objectives=[{
+            "id": "policy", "kind": "FAQ", "source_quote": message,
+            "question": "请解释订单退货规则",
+        }]),
+    )
+    understanding = understand_turn(message, None, None, model=model)
+    _intake, plan = to_task_plan(understanding, message)
+
+    assert understanding.objectives[0].question == message
+    assert plan.steps[0].args["question"] == message
+    assert plan.steps[0].argument_provenance["question"]["resolver"] == "exact_source_quote_binding"
+    assert model.index == 2
+
+
+def test_one_after_sales_case_cannot_be_fragmented_into_fact_objectives():
+    message = "订单 1006 不想要了，已经拆封试用，商品正常，包装不确定，只建立案件"
+    fragmented = interpretation(objectives=[
+        {"id": "case", "kind": "AFTER_SALES_CASE", "source_quote": "订单 1006 不想要了",
+         "order_id": 1006, "reason_code": "CHANGED_MIND"},
+        {"id": "opened", "kind": "AFTER_SALES_CASE", "source_quote": "已经拆封试用",
+         "order_id": 1006, "reason_code": "CHANGED_MIND"},
+    ])
+    repaired = interpretation(objectives=[{
+        "id": "case", "kind": "AFTER_SALES_CASE", "source_quote": "订单 1006 不想要了",
+        "order_id": 1006, "reason_code": "CHANGED_MIND",
+    }])
+
+    result = understand_turn(message, None, None, model=ScriptedModel(fragmented, repaired))
+
+    assert [objective.id for objective in result.objectives] == ["case"]
+
+
 def test_ungrounded_model_entity_never_reaches_a_tool(monkeypatch):
     message = "帮我处理一下那个订单"
     model = ScriptedModel(interpretation(objectives=[

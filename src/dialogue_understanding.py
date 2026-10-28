@@ -151,6 +151,16 @@ class TurnUnderstanding(StrictModel):
             raise ValueError("Conflicting terminal commands")
         if terminal and self.objectives:
             raise ValueError("Terminal commands cannot execute business objectives in the same turn")
+        case_targets = [
+            (objective.order_id, objective.order_item_id)
+            for objective in self.objectives
+            if objective.kind == "AFTER_SALES_CASE"
+        ]
+        if len(case_targets) != len(set(case_targets)):
+            raise ValueError(
+                "Facts, evidence readiness and execution boundaries for one order item "
+                "must stay on one AFTER_SALES_CASE objective"
+            )
         return self
 
 
@@ -177,6 +187,10 @@ evaluates a literal expression. Constraint shape: {version,constraints,optimizat
 goal_id,quantity,domain:{requirement_id,source_quote,provider,parameters}}]}. Constraint kinds are AGGREGATE
 {scope_goal_ids,attribute,function,operator,value}, COMPARISON {left,right,operator}, and ALL_DIFFERENT
 {scope_goal_ids,attribute}; every constraint and optimization also has requirement_id/source_quote. Leave missing values empty.
+
+For AFTER_SALES_CASE, create exactly one objective per order item. Receipt/opening/condition/packaging statements are
+facts or evidence-readiness claims on that case, not additional case objectives. "Do not submit/refund/pay yet" is an
+execution boundary, not a second business outcome; the runtime will stop every side effect at its approval boundary.
 """
 
 _CASE_FIRST_EVIDENCE_BOUNDARY_PROMPT = """
@@ -390,7 +404,18 @@ def _validate_grounding(understanding: TurnUnderstanding, user_message: str, his
         ):
             raise AgentError("UNGROUNDED_PLAN_ENTITY", "订单行项目编号必须来自用户或对话历史", retryable=False)
         if objective.question is not None and not any(objective.question in source for source in sources):
-            raise AgentError("UNGROUNDED_INTENT", "政策问题必须引用用户原文", retryable=False)
+            # Question-bearing capabilities need the user's words, not a model
+            # paraphrase.  source_quote has already passed exact-substring
+            # validation above, so binding to it is deterministic and auditable.
+            objective.question = objective.source_quote
+            objective._argument_provenance["question"] = {
+                "name": "question",
+                "normalized_value": objective.source_quote,
+                "resolver": "exact_source_quote_binding",
+                "resolver_version": "1",
+                "source_quote": objective.source_quote,
+                "confidence": 1.0,
+            }
         for product_id in objective.product_ids:
             if not any(re.search(r"(?<![A-Za-z0-9])" + re.escape(product_id) + r"(?![A-Za-z0-9])",
                                  source, re.IGNORECASE) for source in sources):
@@ -622,6 +647,7 @@ def understand_turn(user_message: str, history: list | None, pending_action: dic
                 "UNGROUNDED_CONSTRAINT_REQUIREMENT",
                 "UNGROUNDED_CONSTRAINT_VALUE",
                 "PROFILE_PROTOCOL_VIOLATION",
+                "UNGROUNDED_INTENT",
             }
             if exc.code == "UNKNOWN_CAPABILITY" and attempt > 0:
                 registered = {item["objective_kind"] for item in get_capability_registry().prompt_catalog()}
