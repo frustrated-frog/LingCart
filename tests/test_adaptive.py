@@ -717,6 +717,24 @@ def test_model_can_choose_another_candidate_after_stock_failure(monkeypatch):
     assert selected(result)['stock'] > 0
 
 
+def test_repeated_failed_selection_is_stopped_before_model_budget_exhaustion(monkeypatch):
+    first = search(first=True)
+    first['goal']['hard_constraints'][0].update(
+        description='价格不超过1元', field='price', op='lte', value=1,
+    )
+    script = model(monkeypatch, first, recommendation, recommendation, recommendation)
+
+    result = run_adaptive('推荐预算500的耳机')
+
+    assert result['status'] == 'PARTIAL'
+    assert result['terminal_reason'] == 'NO_PROGRESS_RECOMMENDATION_LOOP'
+    assert len([step for step in result['plan']['steps'] if step['tool'] == 'select_product']) == 2
+    assert any(event['type'] == 'loop_blocked'
+               and event['code'] == 'NO_PROGRESS_RECOMMENDATION_LOOP' for event in result['events'])
+    assert result['budget']['consumed']['model_calls'] < result['budget']['limits']['max_model_calls']
+    assert script.inputs[-1]['feedback']['repeat_count'] == 2
+
+
 @pytest.mark.parametrize('predicate', [dict(field='specs.未知特征', op='not_contains', value='主动降噪'),
                                      dict(field=None, op='eq', value=None),
                                      dict(field='price', op='lte', value=1)])
@@ -839,7 +857,7 @@ def test_version_four_resume_preserves_goal_and_initializes_empty_bindings(monke
     assert result['status'] == 'SUCCEEDED', result
     assert result['plan']['goal'] == original_goal
     assert result['plan']['constraint_bindings'] == {} and result['plan']['binding_revision'] == 0
-    assert store.run(active)['checkpoint']['adaptive']['schema_version'] == 6
+    assert store.run(active)['checkpoint']['adaptive']['schema_version'] == 7
     assert len(script.inputs) == 2
 
 
@@ -1227,13 +1245,13 @@ def test_supporting_search_citation_is_allowed_with_verified_selection(monkeypat
     assert result['plan']['steps'][3]['depends_on'] == ['step-1']
 
 
-def test_distinct_selected_products_still_need_an_unambiguous_completion_claim(monkeypatch):
+def test_recommendation_cannot_exceed_declared_quantity(monkeypatch):
     script = model(monkeypatch, compound_search(), recommendation,
-        lambda p: recommendation(p, 1, 'step-1'), order_query(),
-        complete(('shopping', ['step-2', 'step-3']), ('order', ['step-4'])), clarification)
+        lambda p: recommendation(p, 1, 'step-1'), clarification)
     result = run_adaptive(COMPOUND_REQUEST)
     assert result['status'] == 'WAITING_CLARIFICATION', result
-    assert any(f['code'] == 'AMBIGUOUS_RECOMMENDATION' for f in script.inputs[-1]['feedback']['failures'])
+    assert script.inputs[-1]['feedback']['code'] == 'RECOMMENDATION_QUANTITY_SATISFIED'
+    assert len([step for step in result['plan']['steps'] if step['tool'] == 'select_product']) == 1
 
 
 def test_model_cannot_drop_an_unfinished_objective(monkeypatch):

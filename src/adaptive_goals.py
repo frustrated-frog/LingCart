@@ -5,15 +5,24 @@ from src.task_plan import _facts, verify_observation
 
 
 def new_ledger(goal):
-    return [dict(objective_id=o['id'], status='PENDING', evidence_refs=[], failures=[])
+    return [dict(objective_id=o['id'], status='PENDING', evidence_refs=[], failures=[],
+                 target_count=o.get('quantity', 1) if o['kind'] == 'recommend' else 1,
+                 selected_product_ids=[])
             for o in goal['objectives']]
 
 
 def record_outcome(state, objective_id, step):
     row = next(row for row in state['objective_ledger'] if row['objective_id'] == objective_id)
-    row.update(status='VERIFIED' if step.status == 'SUCCEEDED' else 'INVALIDATED',
-               evidence_refs=[step.step_id], failures=(step.result or {}).get('failures', [])
-               or ([step.error['code']] if step.error else []))
+    if step.status == 'SUCCEEDED':
+        product_id = ((step.result or {}).get('selected_product') or {}).get('product_id')
+        if product_id and product_id not in row.setdefault('selected_product_ids', []):
+            row['selected_product_ids'].append(product_id)
+            row.setdefault('evidence_refs', []).append(step.step_id)
+        target = int(row.get('target_count', 1))
+        row.update(status='VERIFIED' if len(row['selected_product_ids']) >= target else 'PENDING', failures=[])
+        return
+    failures = (step.result or {}).get('failures', []) or ([step.error['code']] if step.error else [])
+    row.update(status='PENDING' if row.get('evidence_refs') else 'INVALIDATED', failures=failures)
 
 
 def _claim_error(state, objective, step, indexed):
@@ -76,26 +85,36 @@ def check_claims(state, plan, claims):
             failures.append(dict(objective_id=identity, code='MISSING_COMPLETION_CLAIM'))
             continue
         refs = list(claim.evidence_refs)
-        if objectives[identity]['kind'] == 'recommend' and len(refs) > 1:
+        if objectives[identity]['kind'] == 'recommend':
             selections = [indexed[ref] for ref in refs if ref in indexed and indexed[ref].tool == 'select_product'
                           and _claim_error(state, objectives[identity], indexed[ref], indexed) is None]
-            products = {s.result['selected_product']['product_id'] for s in selections}
-            if len(products) == 1:
-                product_id = next(iter(products))
-                support = [ref for ref in refs if ref not in {s.step_id for s in selections}]
-                valid_support = all(ref in indexed and indexed[ref].status in {'SUCCEEDED', 'REUSED'}
-                    and ref in state.get('read_evidence_refs', [])
-                    and isinstance(indexed[ref].result, dict)
-                    and any(p.get('product_id') == product_id for p in indexed[ref].result.get('products', []))
-                    for ref in support)
-                if valid_support:
-                    # 同一商品的支持引用不等于多选；账本归一到最新的已验证选择。
-                    refs = [max(selections, key=lambda s: list(indexed).index(s.step_id)).step_id]
-        errors = [_claim_error(state, objectives[identity], indexed.get(ref), indexed) for ref in refs]
-        if objectives[identity]['kind'] == 'recommend' and len(refs) != 1:
-            errors.append('AMBIGUOUS_RECOMMENDATION')
+            by_product = {}
+            for selection in selections:
+                product_id = selection.result['selected_product']['product_id']
+                by_product[product_id] = selection
+            selection_refs = {selection.step_id for selection in selections}
+            support = [ref for ref in refs if ref not in selection_refs]
+            valid_support = all(ref in indexed and indexed[ref].status in {'SUCCEEDED', 'REUSED'}
+                and ref in state.get('read_evidence_refs', []) and isinstance(indexed[ref].result, dict)
+                and any(p.get('product_id') in by_product for p in indexed[ref].result.get('products', []))
+                for ref in support)
+            errors = [_claim_error(state, objectives[identity], indexed.get(ref), indexed)
+                      for ref in refs if ref in selection_refs]
+            if not valid_support:
+                errors.extend(_claim_error(state, objectives[identity], indexed.get(ref), indexed)
+                              for ref in support)
+            target = int(objectives[identity].get('quantity', 1))
+            existing_errors = [error for error in errors if error]
+            if not existing_errors and len(by_product) != target:
+                errors.append('AMBIGUOUS_RECOMMENDATION' if target == 1
+                              else 'RECOMMENDATION_CARDINALITY_MISMATCH')
+            refs = [selection.step_id for selection in by_product.values()]
+        else:
+            errors = [_claim_error(state, objectives[identity], indexed.get(ref), indexed) for ref in refs]
         errors = sorted({error for error in errors if error})
-        row.update(status='INVALIDATED' if errors else 'VERIFIED', evidence_refs=refs, failures=errors)
+        row.update(status='INVALIDATED' if errors else 'VERIFIED', evidence_refs=refs, failures=errors,
+                   selected_product_ids=[indexed[ref].result['selected_product']['product_id'] for ref in refs]
+                   if objectives[identity]['kind'] == 'recommend' and not errors else row.get('selected_product_ids', []))
         failures.extend(dict(objective_id=identity, code=error) for error in errors)
     return failures
 
@@ -104,7 +123,9 @@ def verification(state, *, complete=False):
     rows = deepcopy(state.get('objective_ledger', []))
     return dict(all_goals_satisfied=complete and bool(rows) and all(r['status'] == 'VERIFIED' for r in rows),
                 side_effects_executed=False, goal_revision=state['goal_revision'], objectives=rows,
-                incomplete_objectives=[r['objective_id'] for r in rows if r['status'] != 'VERIFIED'])
+                delivery_committed=bool(complete),
+                incomplete_objectives=[r['objective_id'] for r in rows
+                                       if not complete or r['status'] != 'VERIFIED'])
 
 
 def recommendation_text(step):
@@ -124,17 +145,21 @@ def outcome_report(state, plan, *, complete=False):
         if row['status'] != 'VERIFIED':
             missing.append(objective['description'])
             continue
-        step = indexed[row['evidence_refs'][-1]]
-        while step.tool == 'read_evidence':
-            step = indexed[step.args['reference']]
         if objective['kind'] == 'recommend':
             # A selection remains provisional until the compound completion refresh.
-            fact = recommendation_text(step) if complete else '已选出候选，任务完成前仍需重新核验价格、库存及约束。'
+            steps = [indexed[reference] for reference in row['evidence_refs']]
+            fact = ('\n'.join(recommendation_text(step) for step in steps) if complete
+                    else f"已选出 {len(steps)}/{row.get('target_count', 1)} 个候选，任务完成前仍需重新核验价格、库存及约束。")
+            evidence = '、'.join(step.step_id for step in steps)
         else:
+            step = indexed[row['evidence_refs'][-1]]
+            while step.tool == 'read_evidence':
+                step = indexed[step.args['reference']]
             fact = _facts(step)
             if isinstance(step.result, dict) and step.result.get('observation'):
                 fact += f"（查询时间：{step.result['observation']['timestamp']}）"
-        parts.append(f"{objective['description']}：\n{fact}\n证据步骤：{step.step_id}。")
+            evidence = step.step_id
+        parts.append(f"{objective['description']}：\n{fact}\n证据步骤：{evidence}。")
     if missing:
         parts.append('尚未完成：' + '；'.join(missing) + '。')
     return '\n\n'.join(parts)

@@ -173,7 +173,8 @@ only when explicit; CONFIRM_PENDING/CANCEL_PENDING only for the shown action; UN
 inaccessible or unsafe action. Stable text work is GENERAL_ANSWER; current unsupported evidence is REALTIME_EXTERNAL.
 
 Use only runtime objective kinds and accepted fields. Ground every entity in HUMAN text/history and omit unrelated empty
-fields. CATALOG_QUERY is the complete structured catalog AST. Give every scope/filter/order/partition/selector/metric/
+fields. AFTER_SALES_CASE uses one objective per order item; facts and no-submit boundaries are not extra goals.
+CATALOG_QUERY is the complete structured catalog AST. Give every scope/filter/order/partition/selector/metric/
 projection requirement a unique ID and exact quote. PREVIOUS_RESULT_SET is only for an explicit or elliptical prior-set
 reference: POPULATION continues its parent query, DELIVERED means only rows already shown. A newly named category without
 such a reference uses CATALOG. ARGMIN/ARGMAX never use ordering, limit or page. PRODUCT_SEARCH is literal lookup;
@@ -187,10 +188,6 @@ evaluates a literal expression. Constraint shape: {version,constraints,optimizat
 goal_id,quantity,domain:{requirement_id,source_quote,provider,parameters}}]}. Constraint kinds are AGGREGATE
 {scope_goal_ids,attribute,function,operator,value}, COMPARISON {left,right,operator}, and ALL_DIFFERENT
 {scope_goal_ids,attribute}; every constraint and optimization also has requirement_id/source_quote. Leave missing values empty.
-
-For AFTER_SALES_CASE, create exactly one objective per order item. Receipt/opening/condition/packaging statements are
-facts or evidence-readiness claims on that case, not additional case objectives. "Do not submit/refund/pay yet" is an
-execution boundary, not a second business outcome; the runtime will stop every side effect at its approval boundary.
 """
 
 _CASE_FIRST_EVIDENCE_BOUNDARY_PROMPT = """

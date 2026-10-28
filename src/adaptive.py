@@ -541,6 +541,24 @@ def _accept(context, recorder, state, plan, decision, history, *, validated_tool
         if not any(o['id'] == decision.objective_id and o['kind'] == 'recommend' for o in state['goal']['objectives']):
             raise AgentError('INVALID_RECOMMENDATION_OBJECTIVE', '推荐必须对应当前目标中的选购项', retryable=False)
         indexed = {s.step_id: s for s in plan.steps}
+        row = next(row for row in state['objective_ledger'] if row['objective_id'] == decision.objective_id)
+        if len(row.get('selected_product_ids', [])) >= int(row.get('target_count', 1)):
+            raise AgentError('RECOMMENDATION_QUANTITY_SATISFIED',
+                             '该推荐目标已达到所需数量，请推进其他未完成目标或提交完整证据', retryable=False)
+        if decision.product_id in row.get('selected_product_ids', []):
+            raise AgentError('DUPLICATE_RECOMMENDATION', '同一推荐目标必须选择不同商品', retryable=False)
+        failure_key = fingerprint({
+            'goal_revision': state['goal_revision'], 'binding_revision': state.get('binding_revision', 0),
+            'objective_id': decision.objective_id, 'product_id': decision.product_id,
+        })
+        previous_failure = state.get('selection_failures', {}).get(failure_key) or {}
+        if previous_failure.get('count', 0) >= 2:
+            recorder.record('loop_blocked', code='NO_PROGRESS_RECOMMENDATION_LOOP',
+                            objective_id=decision.objective_id, product_id=decision.product_id,
+                            occurrence=previous_failure['count'] + 1,
+                            failure_signature=previous_failure.get('signature'))
+            raise AgentError('NO_PROGRESS_RECOMMENDATION_LOOP',
+                             '同一商品在相同目标和约束下重复核验失败，已停止无进展循环', retryable=False)
         for ref in decision.evidence_refs:
             if ref not in indexed or not any(p['product_id'] == decision.product_id for p in _products(indexed[ref])):
                 raise AgentError('UNGROUNDED_RECOMMENDATION', '推荐必须引用包含该商品的真实观察', retryable=False)
@@ -674,10 +692,25 @@ def _verify_recommendation(context, recorder, state, plan, decision, step):
         state['feedback'] = dict(code='RECOMMENDATION_VERIFICATION_FAILED', failures=failures, evidence_ref=step.step_id)
         if constraint_failures:
             state['feedback']['constraint_failures'] = constraint_failures
+        failure_key = fingerprint({
+            'goal_revision': state['goal_revision'], 'binding_revision': state.get('binding_revision', 0),
+            'objective_id': decision.objective_id, 'product_id': decision.product_id,
+        })
+        signature = fingerprint(sorted(failure.split(': step-', 1)[0] for failure in failures))
+        previous = state.setdefault('selection_failures', {}).get(failure_key) or {}
+        count = previous.get('count', 0) + 1 if previous.get('signature') == signature else 1
+        state['selection_failures'][failure_key] = {'signature': signature, 'count': count,
+                                                    'failures': deepcopy(failures)}
+        state['feedback']['repeat_count'] = count
         recorder.record('verification_failed', step_id=step.step_id, **state['feedback'])
         return None
     step.status = 'SUCCEEDED'
     step.result['selected_product'] = deepcopy(fresh)
+    failure_key = fingerprint({
+        'goal_revision': state['goal_revision'], 'binding_revision': state.get('binding_revision', 0),
+        'objective_id': decision.objective_id, 'product_id': decision.product_id,
+    })
+    state.setdefault('selection_failures', {}).pop(failure_key, None)
     return recommendation_text(step)
 
 
@@ -699,24 +732,27 @@ def _complete(context, recorder, state, plan, decision):
         if objective['kind'] != 'recommend':
             continue
         row = next(r for r in state['objective_ledger'] if r['objective_id'] == objective['id'])
-        source = next(s for s in plan.steps if s.step_id == row['evidence_refs'][0])
-        row.update(status='PENDING', failures=['FINAL_REFRESH_REQUIRED'])
+        sources = [next(s for s in plan.steps if s.step_id == reference)
+                   for reference in row['evidence_refs']]
+        row.update(status='PENDING', evidence_refs=[], selected_product_ids=[],
+                   failures=['FINAL_REFRESH_REQUIRED'])
         _save(context, state, plan)
-        proposal = Decision(action='recommend', objective_id=objective['id'],
-            product_id=source.result['selected_product']['product_id'], evidence_refs=[source.step_id],
-            reason=source.result['rationale'])
-        step = _selection_step(state, plan, proposal)
-        candidate = deepcopy(plan)
-        candidate.steps.append(step)
-        candidate.validate(context.limits.max_steps, context.limits.max_depth)
-        plan.steps.append(step)
-        _save(context, state, plan)
-        message = _verify_recommendation(context, recorder, state, plan, proposal, step)
-        record_outcome(state, objective['id'], step)
-        _save(context, state, plan)
-        recorder.record('step_completed', step_id=step.step_id, specialist='shopping', status=step.status)
-        if message is None:
-            return None
+        for source in sources:
+            proposal = Decision(action='recommend', objective_id=objective['id'],
+                product_id=source.result['selected_product']['product_id'], evidence_refs=[source.step_id],
+                reason=source.result['rationale'])
+            step = _selection_step(state, plan, proposal)
+            candidate = deepcopy(plan)
+            candidate.steps.append(step)
+            candidate.validate(context.limits.max_steps, context.limits.max_depth)
+            plan.steps.append(step)
+            _save(context, state, plan)
+            message = _verify_recommendation(context, recorder, state, plan, proposal, step)
+            record_outcome(state, objective['id'], step)
+            _save(context, state, plan)
+            recorder.record('step_completed', step_id=step.step_id, specialist='shopping', status=step.status)
+            if message is None:
+                return None
     return outcome_report(state, plan, complete=True)
 
 
@@ -758,10 +794,10 @@ def _run(context, user_message, history, pending_action):
     recorder = TraceRecorder(context.run_id)
     revision = context.snapshot.get('goal_revision', 0)
     if saved:
-        if saved.get('schema_version') not in {4, 5, 6}:
+        if saved.get('schema_version') not in {4, 5, 6, 7}:
             raise AgentError('ADAPTIVE_CHECKPOINT_INCOMPATIBLE', '旧检查点缺少独立需求审查记录，不能安全恢复，请新建任务；已完成操作记录保留', retryable=False)
         state = deepcopy(saved)
-        state.update(schema_version=6)
+        state.update(schema_version=7)
         state.setdefault('constraint_bindings', {})
         state.setdefault('binding_revision', 0)
         state.setdefault('binding_audit', None)
@@ -772,6 +808,12 @@ def _run(context, user_message, history, pending_action):
         state.setdefault('decision_surface', None)
         state.setdefault('native_queue', [])
         state.setdefault('dialogue_commands', [])
+        state.setdefault('selection_failures', {})
+        objectives_by_id = {objective['id']: objective for objective in (state.get('goal') or {}).get('objectives', [])}
+        for row in state.get('objective_ledger', []):
+            objective = objectives_by_id.get(row['objective_id'], {})
+            row.setdefault('target_count', objective.get('quantity', 1) if objective.get('kind') == 'recommend' else 1)
+            row.setdefault('selected_product_ids', [])
         plan = _restore_plan(state['plan'])
         if revision == state['goal_revision'] and user_message != state['request']:
             raise AgentError('CHECKPOINT_CONFLICT', '恢复请求与已保存目标不一致', retryable=False)
@@ -799,13 +841,14 @@ def _run(context, user_message, history, pending_action):
         context.model_cursor = state['model_cursor']
     else:
         plan = TaskPlan([], [])
-        state = dict(schema_version=6, version=1, replans=0, goal_revision=revision, request=user_message,
+        state = dict(schema_version=7, version=1, replans=0, goal_revision=revision, request=user_message,
                      goal=None, next_steps=None, working_memory=None, journal=[], pending=None,
                      objective_ledger=[], feedback=None, repair_count=0, request_audit=None,
                      completion_audit=None, constraint_bindings={}, binding_revision=0, binding_audit=None,
                      binding_evidence_access={}, binding_sources={}, binding_tx=None,
                      binding_resolution=None, decision_surface=None,
                      dialogue_commands=[],
+                     selection_failures={},
                      native_queue=[], active_native_submission=None,
                      liveplan=None,
                      model_cursor=context.model_cursor)
@@ -855,7 +898,9 @@ def _run(context, user_message, history, pending_action):
                                       'INVALID_CONSTRAINT_BINDING', 'UNREAD_BINDING_EVIDENCE', 'UNOBSERVED_BINDING_FIELD', 'BINDING_AUDIT_REJECTED'}:
                         _repair(context, recorder, state, plan, error)
                         continue
-                    if error.code not in {'UNREAD_RECOMMENDATION_EVIDENCE', 'INVALID_RECOMMENDATION_OBJECTIVE', 'BINDING_ALREADY_CURRENT'}:
+                    if error.code not in {'UNREAD_RECOMMENDATION_EVIDENCE', 'INVALID_RECOMMENDATION_OBJECTIVE',
+                                          'BINDING_ALREADY_CURRENT', 'DUPLICATE_RECOMMENDATION',
+                                          'RECOMMENDATION_QUANTITY_SATISFIED'}:
                         raise
                     # An index is not sufficient evidence. Let the model choose
                     # which original records to inspect, within its remaining budget.
@@ -897,7 +942,9 @@ def _run(context, user_message, history, pending_action):
                 message = _verify_recommendation(context, recorder, state, plan, decision, step)
                 record_outcome(state, decision.objective_id, step)
                 _record_context_outcome(context, state, plan, pending, decision, step)
-                if message is not None and len(state['objective_ledger']) == 1:
+                ledger_complete = bool(state['objective_ledger']) and all(
+                    row['status'] == 'VERIFIED' for row in state['objective_ledger'])
+                if message is not None and len(state['objective_ledger']) == 1 and ledger_complete:
                     # Keep the pending proposal through terminal persistence. If
                     # the process dies before commit, resume must refresh again.
                     apply_controls(context)
@@ -907,9 +954,9 @@ def _run(context, user_message, history, pending_action):
                     if _review_completion(context, recorder, state, plan, history):
                         apply_controls(context)
                         return _present(context, recorder, intake, state, plan, reason='COMPLETED', message=message, success=True)
-                if message is not None and len(state['objective_ledger']) > 1:
+                if message is not None and not ledger_complete:
                     state['feedback'] = dict(code='OBJECTIVES_REQUIRE_COMPLETION',
-                        message='此选购项已核验，请继续处理剩余目标，再逐项提交 complete 证据。')
+                        message='此选购项已核验，请继续满足目标数量或处理剩余目标，再提交完整证据。')
             elif decision.action == 'complete':
                 message = _complete(context, recorder, state, plan, decision)
                 _record_context_outcome(context, state, plan, pending, decision, step)

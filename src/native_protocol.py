@@ -85,13 +85,20 @@ def decision_action_surface(state, plan, *, remaining_model_calls):
 
     access = state.get('evidence_access', {})
     candidates = {}
+    selected_products = {
+        product_id
+        for row in state.get('objective_ledger', [])
+        if row.get('objective_id') == objective['id']
+        for product_id in row.get('selected_product_ids', [])
+    }
     for step in plan.steps:
         if (step.tool not in {'search_products', 'discover_products', 'compare_products'}
                 or step.status not in {'SUCCEEDED', 'REUSED'} or not isinstance(step.result, dict)):
             continue
         readable = set(access.get(step.step_id, []))
         for product in step.result.get('products', []):
-            if (product.get('product_id') not in readable or type(product.get('stock')) is not int
+            if (product.get('product_id') in selected_products or product.get('product_id') not in readable
+                    or type(product.get('stock')) is not int
                     or product['stock'] <= 0 or not all(predicate_holds(product, item) for item in applicable)):
                 continue
             candidates.setdefault(product['product_id'], []).append(step.step_id)
@@ -197,7 +204,7 @@ def decision_functions(state, plan, history=None, *, surface=None):
             permitted_refs = sorted({ref for row in surface['candidates'] for ref in row['evidence_refs']})
         refs['items']['enum'] = permitted_refs
         if objective['enum'] and (allowed_actions is None or 'recommend' in allowed_actions):
-            control('recommend', '选择一个已读商品并解释适合用户的依据；运行时重新核验。多个目标继续决策。',
+            control('recommend', '为目标选择一个尚未选过的已读商品并解释依据；运行时重新核验。达到目标quantity前继续选择。',
                     {'product_id': product, 'objective_id': objective, 'evidence_refs': refs, 'reason': prop('reason')})
         conditions = constraint_refs(state['goal'])
         if conditions and (allowed_actions is None or 'refine_constraints' in allowed_actions):
@@ -251,9 +258,18 @@ def decode_decisions(response, state):
     if state['goal'] is None or any(c.get('name') not in set(_READ_ONLY_TOOLS) | {'recommend'} for c in calls):
         raise ValueError('Batch only independent readonly queries/recommendations; submit other controls individually')
     batch = [decode_decision(SimpleNamespace(tool_calls=[call]), state) for call in calls]
-    selected = [d.objective_id for d, _ in batch if d.action == 'recommend']
-    if len(selected) != len(set(selected)):
-        raise ValueError('A batch cannot select two products for the same objective')
+    recommendations = [d for d, _ in batch if d.action == 'recommend']
+    objectives = {row['id']: row for row in (state.get('goal') or {}).get('objectives', [])}
+    ledger = {row['objective_id']: row for row in state.get('objective_ledger', [])}
+    for objective_id in {decision.objective_id for decision in recommendations}:
+        decisions = [decision for decision in recommendations if decision.objective_id == objective_id]
+        product_ids = [decision.product_id for decision in decisions]
+        existing = set((ledger.get(objective_id) or {}).get('selected_product_ids', []))
+        quantity = int((objectives.get(objective_id) or {}).get('quantity', 1))
+        if len(product_ids) != len(set(product_ids)) or existing.intersection(product_ids):
+            raise ValueError('Recommendations for one objective must select distinct products')
+        if len(product_ids) > quantity - len(existing):
+            raise ValueError('Recommendation batch exceeds the objective quantity')
     return batch
 
 

@@ -187,16 +187,18 @@ def test_strict_wire_schema_has_no_unsupported_length_keywords():
 def test_multiple_recommendations_in_native_batch_continue_to_completion(monkeypatch):
     request = '推荐两款预算500元以内的耳机'
     goal = intent(quote=request, order=False)
-    goal['goal']['objectives'].append({**goal['goal']['objectives'][0], 'id': 'second'})
+    goal['goal']['objectives'][0]['quantity'] = 2
     def choices(payload):
         name, first = recommend(payload)
         product = payload['observations'][-1]['result']['products'][0]
-        return [(name, first), (name, {**first, 'objective_id': 'second', 'product_id': product['product_id']})]
-    actor, _ = models(monkeypatch, [('declare_intent', goal), search(), choices,
-        ('complete', {'evidence': {'shopping': ['step-2'], 'second': ['step-3']}})])
+        return [(name, first), (name, {**first, 'product_id': product['product_id']})]
+    actor, _ = models(monkeypatch, [('declare_intent', goal), search(), choices])
     result = run_conversation(request, 'native-two', runner=run_adaptive)
     assert result['status'] == 'SUCCEEDED', result
-    assert len(actor.requests) == 4
+    assert len(actor.requests) == 3
+    assert result['plan']['objective_ledger'][0]['target_count'] == 2
+    assert len(result['plan']['objective_ledger'][0]['selected_product_ids']) == 2
+    assert len(set(result['plan']['objective_ledger'][0]['selected_product_ids'])) == 2
     assert not any(e['type'] == 'native_batch_cancelled' for e in result['events'])
 
 

@@ -48,6 +48,9 @@ Write interpretations/issues in Chinese, protocol identifiers in English. Never 
 _GOAL_AUDIT_PROMPT = '''PHASE: GOAL INTERPRETATION, BEFORE EXECUTION.
 Start from the ORIGINAL human request/history and enumerate all outcomes and hard conditions, then compare goal.
 Check omissions, added demands, negation scope/polarity, bounds, quantities, exclusions and changed instructions.
+A recommendation count must be represented by objective.quantity, not duplicated objectives. Product hard constraints
+may encode only properties checkable on one catalog item. Process, evidence, truthfulness, no-substitution and fallback
+instructions must guide execution but MUST NOT become product predicates; mark that interpretation MISINTERPRETED.
 A quote's presence alone does not prove correct interpretation. COVERED means the requirement is faithfully modeled.
 Unspecified optional preferences do not require clarification. Unknown catalog encodings/field=null are discoverable
 through tools, not missing human intent. Do not require search results, selections, completion or final delivery here.
