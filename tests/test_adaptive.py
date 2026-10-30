@@ -164,6 +164,34 @@ def test_missing_explanatory_reason_does_not_block_a_valid_read(monkeypatch):
     assert result['status'] == 'SUCCEEDED', result
 
 
+def test_adaptive_faq_question_is_bound_to_its_grounded_source_quote(monkeypatch):
+    from src.adaptive_decision import ShoppingGoal, validate_goal
+
+    request = '最后说明标准配送时效和 30 天退货限制'
+    declared = ShoppingGoal.model_validate({
+        'summary': '回答配送与退货政策',
+        'objectives': [{
+            'id': 'policy',
+            'description': '回答配送与退货政策',
+            'source_quote': request,
+            'kind': 'answer_faq',
+            'question': '标准配送通常多久，退货有哪些条件？',
+        }],
+    })
+
+    normalized = validate_goal(declared, request, None)
+
+    assert declared.objectives[0].question == request
+    assert normalized == [{
+        'objective_id': 'policy',
+        'field': 'question',
+        'raw_value': '标准配送通常多久，退货有哪些条件？',
+        'normalized_value': request,
+        'resolver': 'exact_source_quote_binding',
+        'resolver_version': '1',
+    }]
+
+
 def test_adaptive_search_normalizes_grounded_catalog_alias_with_provenance(monkeypatch):
     keyboard_goal = goal(
         summary='选购键盘',

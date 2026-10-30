@@ -471,7 +471,9 @@ def _accept(context, recorder, state, plan, decision, history, *, validated_tool
             from src.dialogue_understanding import validate_command_grounding
             validate_command_grounding(decision.commands, state['request'], history)
             state['dialogue_commands'] = [command.model_dump() for command in decision.commands]
-        validate_goal(decision.goal, state['request'], history)
+        goal_bindings = validate_goal(decision.goal, state['request'], history)
+        if goal_bindings:
+            recorder.record('goal_arguments_normalized', provenance=goal_bindings)
         accepted_goal, goal_provenance = _normalize_goal_catalog_aliases(
             decision.goal, state['request'], history)
         if goal_provenance:

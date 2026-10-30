@@ -491,6 +491,7 @@ def decide(context, state, plan, history):
 
 def validate_goal(goal, request, history):
     sources = [request, *(as_text(m.content) for m in history or [] if getattr(m, 'type', None) == 'human')]
+    normalized = []
     quoted = [*goal.hard_constraints, *goal.objectives, *(c for o in goal.objectives for c in o.hard_constraints)]
     if any(not any(c.source_quote in source for source in sources) for c in quoted):
         raise AgentError('UNGROUNDED_GOAL', '目标和硬约束必须引用用户原文', retryable=False)
@@ -498,9 +499,21 @@ def validate_goal(goal, request, history):
         if objective.order_id is not None and not any(re.search(r'(?<!\d)' + str(objective.order_id) + r'(?!\d)', s) for s in sources):
             raise AgentError('UNGROUNDED_GOAL', '目标订单编号必须来自用户', retryable=False)
         if objective.question is not None and not any(objective.question in s for s in sources):
-            raise AgentError('UNGROUNDED_GOAL', '常见问题目标必须引用用户问题', retryable=False)
+            # source_quote has already passed exact human-substring grounding.
+            # Bind question-bearing tools to that span instead of allowing a
+            # model paraphrase to become an executable policy query.
+            normalized.append({
+                'objective_id': objective.id,
+                'field': 'question',
+                'raw_value': objective.question,
+                'normalized_value': objective.source_quote,
+                'resolver': 'exact_source_quote_binding',
+                'resolver_version': '1',
+            })
+            objective.question = objective.source_quote
         if any(not any(re.search(r'(?<![A-Za-z0-9])' + p + r'(?![A-Za-z0-9])', s) for s in sources) for p in objective.product_ids):
             raise AgentError('UNGROUNDED_GOAL', '指定对比商品必须来自用户', retryable=False)
+    return normalized
 
 
 def predicate_holds(product, constraint):
