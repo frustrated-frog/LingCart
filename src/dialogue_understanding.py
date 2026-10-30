@@ -165,17 +165,17 @@ class TurnUnderstanding(StrictModel):
         return self
 
 
-_PROMPT = """Interpret the latest HUMAN turn and return one JSON object matching the schema. Never answer, call tools,
-or invent entities. Declare every independent outcome and preserve negation, correction and scope. source_quote must be
-the smallest exact HUMAN substring; history may ground references but never stale intent.
+_PROMPT = """Return one schema-valid JSON for the latest HUMAN turn; never answer, call tools or invent. Declare each
+independent outcome and preserve negation, correction and scope. source_quote is the smallest exact HUMAN substring;
+history may ground references, never stale intent.
 
 Commands: GREETING, IDENTITY, CAPABILITIES, ACKNOWLEDGEMENT; CLARIFY only for consequential ambiguity; HUMAN_HANDOFF
 only when explicit; CONFIRM_PENDING/CANCEL_PENDING only for the shown action; UNSUPPORTED only for an unregistered,
 inaccessible or unsafe action. Stable text work is GENERAL_ANSWER; current unsupported evidence is REALTIME_EXTERNAL.
 
-Use only runtime objective kinds and accepted fields. Ground every entity in HUMAN text/history and omit unrelated empty
-fields. AFTER_SALES_CASE uses one objective per order item; facts and no-submit boundaries are not extra goals.
-PRODUCT_SEARCH/PRODUCT_DISCOVERY must preserve an explicitly requested result count in quantity; omit it when absent.
+Use registered kinds/fields; ground entities in HUMAN text/history; omit unrelated empty fields. AFTER_SALES_CASE uses
+one objective per order item; facts and no-submit boundaries are not extra goals. For PRODUCT_SEARCH/DISCOVERY, copy an
+explicit requested count to quantity and otherwise omit it.
 CATALOG_QUERY is the complete structured catalog AST. Give every scope/filter/order/partition/selector/metric/
 projection requirement a unique ID and exact quote. PREVIOUS_RESULT_SET is only for an explicit or elliptical prior-set
 reference: POPULATION continues its parent query, DELIVERED means only rows already shown. A newly named category without
@@ -204,15 +204,14 @@ AFTER_SALES_CASE, never a separate goal or authorization. Still CLARIFY when ord
 """
 
 _EVIDENCE_READINESS_LEDGER_PROMPT = """
-Evidence-readiness ledger for this Harness Profile inherits the case-first boundary.
-Known evidence absence is not missing case-intake information. Open a grounded, unambiguous AFTER_SALES_CASE despite it.
-Classify the smallest exact current HUMAN quote once: mere absence/uncertainty without a promise goes in
+Evidence-readiness ledger for this Harness Profile inherits case-first.
+Known evidence absence is not missing case-intake information and does not block a grounded, unambiguous
+AFTER_SALES_CASE. Classify each smallest exact current HUMAN quote once: absence/uncertainty without a promise goes in
 evidence_context_quotes; an explicit promise to supply customer-controlled evidence later goes in
-evidence_readiness_claims as {evidence_type,disposition:"DEFERRED",source_quote}, using the trusted catalog. Readiness is
-timing metadata—not evidence, truth, policy satisfaction, or authorization—and never applies to vague uncertainty,
-business-controlled records, or supplied evidence. The Stable Kernel validates grounding and live-policy applicability.
-For an existing case use AFTER_SALES_CONTINUE without evidence add/revoke fields. Do not CLARIFY solely for absence or
-valid deferral; do clarify ambiguous intake, reason, or evidence subject.
+evidence_readiness_claims as {evidence_type,disposition:"DEFERRED",source_quote}, using the trusted catalog.
+Readiness is timing metadata, never evidence, truth, policy satisfaction or authorization; exclude vague uncertainty,
+business-controlled records and supplied evidence. Existing case: use AFTER_SALES_CONTINUE without add/revoke fields.
+Clarify ambiguous intake, reason or subject, not absence/valid deferral. The Kernel validates grounding/live policy.
 """
 
 _RESULT_SET_REFERENCE = re.compile(
