@@ -2,13 +2,17 @@ import { Component, lazy, Suspense, useEffect, useMemo, useRef, useState, type R
 import { ArrowLeft, ArrowRight, Clock3, GitBranch, ListTree, Pause, Play, Radio, SkipBack, SkipForward } from 'lucide-react'
 import type { PGGraph, RunEvent } from '../types'
 import type { CanvasEdge, CanvasNode } from './GraphCanvas'
-import { eventTone, guidanceMarks, historicalGuidance } from './executionGraph'
+import { asRecord, eventTone, guidanceMarks, historicalGuidance } from './executionGraph'
 import { eventLabel, JsonBlock, TOOL_LABELS } from './SystemUI'
 import '../styles/execution-workbench.css'
 
 const GraphCanvas = lazy(() => import('./GraphCanvas'))
 const actionLabel = (id: string) => TOOL_LABELS[id] ?? ({ Start: '任务起点', End: '任务终点', set_goal: '建立目标', inspect: '检查证据',
   clarify: '澄清需求', revise_plan: '修订计划', recommend: '推荐候选', complete: '完成核验', finish: '结束执行' }[id] ?? id)
+const excerpt = (value: unknown) => {
+  const text = typeof value === 'string' ? value : JSON.stringify(value, null, 2)
+  return text && text.length > 700 ? `${text.slice(0, 700)}\n…展开原文查看完整记录` : text
+}
 class CanvasBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
   state = { failed: false }
   static getDerivedStateFromError() { return { failed: true } }
@@ -22,7 +26,7 @@ function pgNodes(graph: PGGraph, anchor?: string | null): CanvasNode[] {
     badge: n.kind === 'ACTION' ? '行动' : n.kind === 'STATE' ? '状态' : '推理 / 其他', tone: n.id === anchor ? 'cyan' : 'neutral', active: n.id === anchor }))
 }
 function pgEdges(graph: PGGraph, marks = guidanceMarks()): CanvasEdge[] {
-  return graph.edges.map(e => ({ id: e.id, source: e.source, target: e.target, label: e.relation,
+  return graph.edges.map(e => ({ id: e.id, source: e.source, target: e.target, label: ({ LEADS_TO: '引导', REQUIRES: '依赖', ENABLES: '使能', ALTERNATIVE: '备选' }[e.relation] ?? e.relation),
     kind: marks.predicted.includes(e.id) ? 'predicted' : marks.guidance.includes(e.id) ? 'guidance' : undefined }))
 }
 
@@ -52,11 +56,19 @@ export function ExecutionWorkbench({ events, selected, onSelect, running = false
   const [view, setView] = useState<'events' | 'pg'>('events')
   const [object, setObject] = useState<{ kind: 'node' | 'edge'; id: string } | null>(null)
   const [wide, setWide] = useState(false)
+  const [neighborCount, setNeighborCount] = useState(3)
+  const mapRef = useRef<HTMLDivElement>(null)
   const event = events[cursor]
   const selectedTick = useRef<HTMLButtonElement>(null)
   const timeline = useRef<HTMLDivElement>(null)
   const latest = useRef({ cursor, onSelect })
   latest.current = { cursor, onSelect }
+  useEffect(() => {
+    if (!mapRef.current || typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver(entries => setNeighborCount(entries[0].contentRect.width < 720 ? 2 : 3))
+    observer.observe(mapRef.current)
+    return () => observer.disconnect()
+  }, [])
   useEffect(() => { setObject(null) }, [cursor, view])
   useEffect(() => {
     if (!playing) return
@@ -78,8 +90,12 @@ export function ExecutionWorkbench({ events, selected, onSelect, running = false
   const history = useMemo(() => historicalGuidance(events, cursor), [events, cursor])
   const marks = guidanceMarks(history?.event)
   const graph = history?.graph
-  const start = Math.max(0, Math.min(cursor - 1, events.length - 3))
-  const visible = events.slice(start, start + 3)
+  const rawGraph = asRecord(history?.event.subgraph)
+  const partialGraph = graph && (Array.isArray(rawGraph.nodes) && graph.nodes.length !== rawGraph.nodes.length
+    || Array.isArray(rawGraph.edges) && graph.edges.length !== rawGraph.edges.length)
+  const inspectObject = (kind: 'node' | 'edge', id: string) => { setPlaying(false); setFollow(false); setObject({ kind, id }) }
+  const start = Math.max(0, Math.min(cursor - 1, events.length - neighborCount))
+  const visible = events.slice(start, start + neighborCount)
   const nodes = view === 'pg' && graph ? pgNodes(graph, marks.anchor) : view === 'pg' ? [] : visible.map((e, i): CanvasNode => ({
     id: `event-${start + i}`, title: eventLabel(e)[1], subtitle: `${e.type}${e.status ? ` · ${e.status}` : ''}`,
     badge: `${e.sequence == null ? '编号缺失' : `事件 ${e.sequence}`} · ${start + i < cursor ? '先前' : start + i === cursor ? '当前' : '后续'}`,
@@ -102,13 +118,14 @@ export function ExecutionWorkbench({ events, selected, onSelect, running = false
       <button type="button" aria-pressed={view === 'pg'} onClick={() => setView('pg')}><GitBranch size={15} />历史程序图</button>
     </div><button type="button" className="instrument-expand" aria-pressed={wide} onClick={() => setWide(!wide)}>{wide ? '收起画布' : '展开画布'}</button></div>
     {stale && <div className="instrument-notice" role="status">刷新失败，正在展示上次读取的历史记录；自动跟随已暂停。</div>}
+    {view === 'pg' && partialGraph && <div className="instrument-notice" role="status">图快照含重复或缺失引用，仅展示可解析部分；请查看来源事件原文。</div>}
     <div className="instrument-stage">
-      <div className="instrument-map">
+      <div className="instrument-map" ref={mapRef}>
         <div className="instrument-map-caption"><span>{view === 'events' ? '事件邻域 / 连线仅表示记录顺序' : graph ? `${graph.graph_id} · v${history?.event.graph_version ?? '未知'} / 历史局部图` : '此时没有可用的程序图快照'}</span><span>{view === 'events' ? `${events.length ? cursor + 1 : 0} / ${events.length}` : history ? `来源事件 ${history.event.sequence ?? '编号缺失'}` : '尚无记录'}</span></div>
         {view === 'pg' && !graph ? <div className="instrument-empty"><GitBranch size={32} /><b>当前游标之前没有完整程序图</b><p>继续播放到 PG 指导事件，或切回执行事件。</p></div> : <Canvas nodes={nodes} edges={edges} linear={view === 'events'}
           selectedId={object?.id ?? (view === 'events' ? `event-${cursor}` : undefined)}
-          onSelectNode={id => { if (view === 'events') choose(Number(id.replace('event-', ''))); else setObject({ kind: 'node', id }) }}
-          onSelectEdge={id => { if (view === 'pg') setObject({ kind: 'edge', id }) }} />}
+          onSelectNode={id => { if (view === 'events') choose(Number(id.replace('event-', ''))); else inspectObject('node', id) }}
+          onSelectEdge={id => { if (view === 'pg') inspectObject('edge', id) }} />}
         <div className="instrument-legend"><span><i className="cyan" />{view === 'events' ? '当前事件描边' : '指导选中关系'}</span><span><i className="violet" />{view === 'events' ? '模型 / PG' : '预演路径（预测）'}</span><span><i className="amber" />{view === 'events' ? '错误 / 等待 / 阻断' : '不代表已经执行'}</span></div>
       </div>
       <aside className="instrument-probe" aria-label="游标证据">
@@ -123,10 +140,15 @@ export function ExecutionWorkbench({ events, selected, onSelect, running = false
           {selectedNode && <><dt>节点说明</dt><dd>{selectedNode.description || '未记录'}</dd></>}
           {!object && typeof event?.reason === 'string' && <><dt>记录原因</dt><dd>{event.reason}</dd></>}
         </dl>
+        {!object && event && <div className="instrument-event-summary">{([
+          ['decision', '行动决策'], ['guidance', '情境指导'], ['args', '输入参数'], ['result', '工具输出'],
+          ['progress_status', '进展判定'], ['progress_reason', '判定依据'], ['prediction_outcome', '预测核对'],
+        ] as const).filter(([key]) => event[key] !== undefined && event[key] !== null).map(([key, label]) =>
+          <div key={key}><h5>{label}</h5><pre>{excerpt(event[key])}</pre></div>)}</div>}
         {payload && <details key={`${cursor}-${object?.id ?? ''}`} className="instrument-raw"><summary>查看{object ? '对象' : '事件'}原文</summary><JsonBlock value={payload} /></details>}
         {view === 'pg' && graph && <details className="instrument-object-list"><summary>选择节点或关系</summary>
-          {graph.nodes.map(n => <button type="button" key={`n-${n.id}`} onClick={() => setObject({ kind: 'node', id: n.id })}>{actionLabel(n.id)}</button>)}
-          {graph.edges.map(e => <button type="button" key={`e-${e.id}`} onClick={() => setObject({ kind: 'edge', id: e.id })}>{e.id} · {actionLabel(e.source)} → {actionLabel(e.target)}</button>)}
+          {graph.nodes.map(n => <button type="button" key={`n-${n.id}`} onClick={() => inspectObject('node', n.id)}>{actionLabel(n.id)}</button>)}
+          {graph.edges.map(e => <button type="button" key={`e-${e.id}`} onClick={() => inspectObject('edge', e.id)}>{e.id} · {actionLabel(e.source)} → {actionLabel(e.target)}</button>)}
         </details>}
         <p className="instrument-probe-footnote">{view === 'pg' ? '快照只说明当时可见的程序关系；采用与结果以实际事件为准。' : '按存储顺序浏览；播放间隔不代表真实执行耗时。'}</p>
       </aside>
@@ -154,7 +176,7 @@ export function SamplePlayback({ turns }: { turns: { message?: string; result?: 
   const [turn, setTurn] = useState(0)
   const [cursor, setCursor] = useState(0)
   const selected = turns[turn]
-  return <div className="sample-playback"><label>回放轮次<select aria-label="回放轮次" value={turn} onChange={e => { setTurn(Number(e.target.value)); setCursor(0) }}>{turns.map((t, i) => <option key={i} value={i}>第 {i + 1} 轮 · {t.message ?? '任务输入未记录'}</option>)}</select></label>
-    <ExecutionWorkbench key={turn} events={selected?.result?.events ?? []} selected={cursor} onSelect={setCursor} sourceLabel={`实验原始轨迹 · 第 ${turn + 1} 轮`} />
+  return <div className="sample-playback"><label>回放轮次<select aria-label="回放轮次" value={turn} disabled={!turns.length} onChange={e => { setTurn(Number(e.target.value)); setCursor(0) }}>{!turns.length && <option value={0}>无轮次记录</option>}{turns.map((t, i) => <option key={i} value={i}>第 {i + 1} 轮 · {t.message ?? '任务输入未记录'}</option>)}</select></label>
+    <ExecutionWorkbench key={turn} events={selected?.result?.events ?? []} selected={cursor} onSelect={setCursor} sourceLabel={turns.length ? `实验原始轨迹 · 第 ${turn + 1} 轮` : '实验原始轨迹 · 无轮次记录'} />
   </div>
 }
