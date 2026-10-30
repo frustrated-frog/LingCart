@@ -412,6 +412,25 @@ def test_missing_coordinated_goal_gets_one_repair_before_execution(monkeypatch):
     assert any(event["type"] == "dialogue_protocol_retry" for event in result["events"])
 
 
+def test_after_sales_context_sentences_are_not_misclassified_as_independent_goals():
+    message = (
+        "订单 1006 的蓝牙音箱已经签收。我因为改变主意想退货：只开机测试过，"
+        "外观和功能目前正常，但原包装和附件是否齐全我还不能确认。"
+        "请先建立售后案件并按政策推进，不要替我提交案件，也不要执行退款。"
+    )
+    scripted = ScriptedModel(interpretation(objectives=[{
+        "id": "case_1006", "kind": "AFTER_SALES_CASE",
+        "source_quote": "订单 1006 的蓝牙音箱已经签收。我因为改变主意想退货",
+        "desired_outcome": "建立售后案件并按政策推进，不提交案件、不执行退款",
+        "order_id": 1006, "reason_code": "CHANGED_MIND",
+    }]))
+
+    understanding = understand_turn(message, None, None, model=scripted)
+
+    assert [objective.id for objective in understanding.objectives] == ["case_1006"]
+    assert scripted.index == 1
+
+
 def test_missing_required_slot_clarifies_after_semantic_recognition(monkeypatch):
     message = "帮我看一下前几天买的那个包裹走到哪了"
     model = ScriptedModel(interpretation(objectives=[

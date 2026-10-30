@@ -253,7 +253,7 @@ def _coordinated_goal_clauses(user_message: str) -> list[str]:
     """Return clauses that explicitly signal separate requested outcomes."""
 
     marker = re.compile(
-        r"(?:[。！？!?；;\n]+|(?:[，,]\s*)?(?:再|然后|另外|同时|顺便|并且|还要|接着|then|also)\s*)",
+        r"(?:[；;\n]+|(?:[，,]\s*)?(?:再|然后|另外|同时|顺便|并且|还要|接着|then|also)\s*)",
         re.IGNORECASE,
     )
     return [clause.strip(" ，,。.!！?？;；") for clause in marker.split(user_message) if clause.strip(" ，,。.!！?？;；")]
