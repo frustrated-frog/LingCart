@@ -70,6 +70,18 @@ def test_evidence_boundary_profile_adds_case_first_instruction_only_for_candidat
     assert "evidence_readiness_claims" in clarification_prompt
 
 
+def test_dialogue_prompt_carries_direct_followup_constraints_without_requiring_optional_preferences():
+    prompt = _prompt(
+        "两个耳机一个键盘",
+        [HumanMessage(content="400元帮我选几样东西")],
+        None,
+    )
+
+    assert "history grounds direct follow-ups" in prompt
+    assert "with uncorrected constraints" in prompt
+    assert "optional preferences never block" in prompt
+
+
 def test_evidence_protocol_fields_are_rejected_outside_the_bound_profile():
     from src.harness import get_runner
 

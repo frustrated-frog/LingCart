@@ -165,9 +165,9 @@ class TurnUnderstanding(StrictModel):
         return self
 
 
-_PROMPT = """Return one schema-valid JSON for the latest HUMAN turn; never answer, call tools or invent. Declare each
-independent outcome and preserve negation, correction and scope. source_quote is the smallest exact HUMAN substring;
-history may ground references, never stale intent.
+_PROMPT = """Return schema-valid JSON for latest HUMAN; never answer, call tools or invent. Preserve independent outcomes,
+negation, correction and scope. source_quote is the smallest exact HUMAN substring; history grounds direct follow-ups
+with uncorrected constraints; optional preferences never block; never inherit unrelated stale intent.
 
 Commands: GREETING, IDENTITY, CAPABILITIES, ACKNOWLEDGEMENT; CLARIFY only for consequential ambiguity; HUMAN_HANDOFF
 only when explicit; CONFIRM_PENDING/CANCEL_PENDING only for the shown action; UNSUPPORTED only for an unregistered,
@@ -182,8 +182,8 @@ reference: POPULATION continues its parent query, DELIVERED means only rows alre
 such a reference uses CATALOG. ARGMIN/ARGMAX never use ordering, limit or page. PRODUCT_SEARCH is literal lookup;
 PRODUCT_DISCOVERY is under-specified exploration, not a structured view.
 
-CONSTRAINT_PLAN: 2+ finite goals with shared/cross-goal constraints or explicit optimization. If fewer than 2 concrete
-goals or their quantities are known, CLARIFY instead of drafting a partial plan. Declare every goal,
+CONSTRAINT_PLAN: 2+ known finite goals with shared/cross-goal constraints or explicit optimization; otherwise CLARIFY.
+Declare every goal,
 quantity and scope; never preselect. CATALOG domains use query+selector ALL, without metrics/partition. Shared budget =
 one AGGREGATE SUM over affected goals; the solver selects/verifies. Shape: {version,goals:[{requirement_id,source_quote,
 goal_id,quantity,domain:{requirement_id,source_quote,provider,parameters}}],constraints,optimization?}. Kinds:
