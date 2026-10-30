@@ -67,6 +67,30 @@ describe('RunsPage LivePlan evidence', () => {
     expect(screen.getAllByText('改用不同检索条件。').length).toBeGreaterThan(0)
     expect(screen.getByText('候选动作与已确认的无进展动作完全相同，已在执行前阻止。')).toBeInTheDocument()
   })
+
+  it('shows the versioned request semantics and grounded source span', async () => {
+    vi.spyOn(api, 'runs').mockResolvedValue({ runs: [summary] })
+    vi.spyOn(api, 'run').mockResolvedValue({ ...detail, result: {
+      ...detail.result,
+      request_ir: {
+        version: 'request-ir/v1', sha256: 'a'.repeat(64), requirements: [{
+          requirement_id: 'context:0', kind: 'PROHIBITION', description: '禁止支付',
+          objective_ids: [], constraint_refs: [], source: {
+            source: 'CURRENT_TURN', history_index: null, start: 16, end: 22,
+            text: '不要执行支付', source_sha256: 'b'.repeat(64),
+          },
+        }],
+      },
+    } })
+
+    renderPage()
+    fireEvent.click(await screen.findByRole('tab', { name: '上下文与证据' }))
+
+    expect(screen.getByText('统一请求语义')).toBeInTheDocument()
+    expect(screen.getAllByText('1').length).toBeGreaterThan(0)
+    expect(screen.getByText(/PROHIBITION/)).toBeInTheDocument()
+    expect(screen.getByText(/不要执行支付/)).toBeInTheDocument()
+  })
 })
 
 describe('RunsPage policy-aware case execution evidence', () => {

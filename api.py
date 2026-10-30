@@ -144,6 +144,7 @@ class ChatResponse(BaseModel):
     budget: dict = Field(default_factory=dict)
     harness: dict = Field(default_factory=dict)
     plan: dict | None = None
+    request_ir: dict | None = None
     pending_action: dict | None = None
     pending_clarification: dict | None = None
     error: dict | None = None
@@ -280,6 +281,7 @@ def _response(session_id, result):
         budget=result.get("budget") or {},
         harness=result.get("harness") or {},
         plan=result.get("plan"),
+        request_ir=result.get("request_ir"),
         pending_action=result.get("pending_action"),
         pending_clarification=result.get("pending_clarification"),
         error=result.get("error"),

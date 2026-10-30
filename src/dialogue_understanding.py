@@ -626,11 +626,20 @@ def understand_turn(user_message: str, history: list | None, pending_action: dic
             _apply_preference_defaults(understanding, preference_defaults)
             _validate_grounding(understanding, user_message, history)
             if context:
+                from src.request_ir import project_dialogue_request_ir
+                request_ir = project_dialogue_request_ir(user_message, history, understanding)
                 context.record(
                     "dialogue_understood",
                     commands=[command.kind for command in understanding.commands],
                     objectives=[objective.kind for objective in understanding.objectives],
                     attempt=attempt + 1,
+                )
+                context.record(
+                    "request_ir_projected",
+                    semantic_path="dialogue",
+                    version=request_ir.version,
+                    request_ir_sha256=request_ir.sha256,
+                    requirements=request_ir.model_dump()["requirements"],
                 )
             return understanding
         except AgentError as exc:
@@ -664,8 +673,17 @@ def understand_turn(user_message: str, history: list | None, pending_action: dic
                     )
                     _validate_grounding(fallback, user_message, history)
                     if context:
+                        from src.request_ir import project_dialogue_request_ir
+                        request_ir = project_dialogue_request_ir(user_message, history, fallback)
                         context.record("unknown_capability_downgraded",
                                        capabilities=[objective.kind for objective in unknown])
+                        context.record(
+                            "request_ir_projected",
+                            semantic_path="dialogue",
+                            version=request_ir.version,
+                            request_ir_sha256=request_ir.sha256,
+                            requirements=request_ir.model_dump()["requirements"],
+                        )
                     return fallback
             if exc.code not in repairable or attempt > 0:
                 raise
@@ -684,10 +702,17 @@ def understand_turn(user_message: str, history: list | None, pending_action: dic
     raise AgentError("MODEL_FORMAT_ERROR", "对话理解模型连续返回无效协议：" + (error_text or "未知错误"), retryable=False)
 
 
-def to_task_plan(understanding: TurnUnderstanding, request: str) -> tuple[TaskIntake, TaskPlan | None]:
+def to_task_plan(
+    understanding: TurnUnderstanding,
+    request: str,
+    history: list | None = None,
+) -> tuple[TaskIntake, TaskPlan | None]:
     """Compile grounded objectives through the runtime capability registry."""
 
+    from src.request_ir import project_dialogue_request_ir
+
     registry = get_capability_registry()
+    request_ir = project_dialogue_request_ir(request, history, understanding).payload()
     for objective in understanding.objectives:
         registry.validate_arguments(objective.model_dump())
     missing_by_goal = {
@@ -704,6 +729,7 @@ def to_task_plan(understanding: TurnUnderstanding, request: str) -> tuple[TaskIn
             request=request,
             intents=intents,
             entities={"source": "dialogue_understanding", "missing_by_goal": missing_by_goal,
+                      "request_ir": request_ir,
                       "capability_registry_version": registry.version},
             missing_slots=missing,
             execution_mode=CLARIFICATION_REQUIRED,
@@ -743,7 +769,8 @@ def to_task_plan(understanding: TurnUnderstanding, request: str) -> tuple[TaskIn
     intake = TaskIntake(
         request=request,
         intents=intents,
-        entities={"source": "dialogue_understanding", "capability_registry_version": registry.version},
+        entities={"source": "dialogue_understanding", "request_ir": request_ir,
+                  "capability_registry_version": registry.version},
         execution_mode=DIRECT,
         confidence=0.0,
         reason="结构化目标已通过来源与能力注册校验，执行仍由运行时验证",

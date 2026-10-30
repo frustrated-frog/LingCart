@@ -16,7 +16,14 @@ from src.constraint_bindings import constraint_refs, effective_goal, fingerprint
 
 
 class RequirementCoverage(StrictModel):
-    scope: Literal['GOAL_REQUIREMENT', 'EXECUTION_BOUNDARY'] = 'GOAL_REQUIREMENT'
+    scope: Literal[
+        'GOAL_REQUIREMENT',
+        'EXECUTION_BOUNDARY',
+        'PROHIBITION',
+        'USER_FACT',
+        'SOFT_PREFERENCE',
+        'UNKNOWN',
+    ] = 'GOAL_REQUIREMENT'
     source_quote: str = Field(min_length=1, max_length=600)
     interpretation: str = Field(min_length=1, max_length=600)
     objective_ids: list[str] = Field(default_factory=list, max_length=8)
@@ -35,11 +42,11 @@ class RequestAudit(StrictModel):
             invalid = self.issues or any(r.status != 'COVERED' for r in self.requirements)
             invalid = invalid or any(
                 (r.scope == 'GOAL_REQUIREMENT' and not (r.objective_ids or r.constraint_refs))
-                or (r.scope == 'EXECUTION_BOUNDARY' and bool(r.objective_ids or r.constraint_refs))
+                or (r.scope != 'GOAL_REQUIREMENT' and bool(r.objective_ids or r.constraint_refs))
                 for r in self.requirements
             )
             if invalid:
-                raise ValueError('Approval requires covered goal references or reference-free execution boundaries without issues')
+                raise ValueError('Approval requires covered goal references or reference-free context requirements without issues')
         if self.verdict != 'APPROVED' and not self.issues:
             raise ValueError('Rejection must explain what needs correction')
         return self
@@ -50,9 +57,11 @@ Return only JSON conforming to the schema. Use exact HUMAN source_quote substrin
 constraint_refs are global:N or objective:<id>:N, zero-based. Use only supplied objective and predicate IDs.
 Every proposed objective and hard constraint needs a requirement entry; COVERED has the phase-specific meaning below.
 Use scope=GOAL_REQUIREMENT for requested outcomes and hard conditions; it must reference an objective or constraint.
-Use scope=EXECUTION_BOUNDARY only for process, evidence, truthfulness or safety instructions that deliberately do not
-become business objectives/predicates; it must have empty objective_ids and constraint_refs. Do not use this scope
-to excuse an omitted requested outcome or product/service condition.
+Non-executable scopes always have empty objective_ids and constraint_refs: EXECUTION_BOUNDARY is a positive process,
+evidence or truthfulness instruction; PROHIBITION is an explicit do-not boundary; USER_FACT is supplied context that
+must still be independently verified when authority matters; SOFT_PREFERENCE may guide ranking but never completion;
+UNKNOWN preserves a material unresolved condition for clarification. Do not use a non-executable scope to excuse an
+omitted requested outcome or product/service condition.
 APPROVED requires all entries COVERED and issues=[]. Otherwise use REVISE with concrete issues or CLARIFY.
 Write interpretations/issues in Chinese, protocol identifiers in English. Never choose products or relax user conditions.
 '''
@@ -62,8 +71,9 @@ Start from the ORIGINAL human request/history and enumerate all outcomes and har
 Check omissions, added demands, negation scope/polarity, bounds, quantities, exclusions and changed instructions.
 A recommendation count must be represented by objective.quantity, not duplicated objectives. Product hard constraints
 may encode only properties checkable on one catalog item. Process, evidence, truthfulness, no-substitution and fallback
-instructions must guide execution but MUST NOT become product predicates. Represent them as EXECUTION_BOUNDARY when
-preserved without a business goal; mark them MISINTERPRETED only if the proposed goal turns them into predicates.
+instructions must guide execution but MUST NOT become product predicates. Use EXECUTION_BOUNDARY for positive process
+rules and PROHIBITION for explicit forbidden actions; use USER_FACT for contextual claims and SOFT_PREFERENCE for
+non-mandatory ranking guidance. Mark them MISINTERPRETED if the proposed goal turns them into predicates.
 A quote's presence alone does not prove correct interpretation. COVERED means the requirement is faithfully modeled.
 Unspecified optional preferences do not require clarification. Unknown catalog encodings/field=null are discoverable
 through tools, not missing human intent. Do not require search results, selections, completion or final delivery here.

@@ -161,6 +161,7 @@ const EVENT_LABELS: Record<string, [string, string]> = {
   tool_protocol: ['协议', '工具协议'], native_submission: ['提交', '提交原生工具调用'],
   native_batch_cancelled: ['取消', '取消原生工具批次'], verification: ['核验', '完成核验'],
   verification_failed: ['核验', '核验未通过'], request_audited: ['审查', '独立审查'],
+  request_ir_projected: ['语义', '投影统一请求语义'],
   catalog_request_audited: ['审查', '目录原始需求双向审查'],
   audit_protocol_retry: ['审查', '重试审查协议'], audit_invalidated: ['审查', '审查结果失效'],
   control_applied: ['控制', '运行时调整'], plan_replanned: ['重规划', '完成重规划'],

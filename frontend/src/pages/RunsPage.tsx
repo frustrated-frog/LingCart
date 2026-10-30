@@ -372,6 +372,10 @@ function EvidenceTab({ detail }: { detail: RunDetail }) {
   const checkpoint = detail.checkpoint
   const adaptive = (checkpoint.adaptive ?? {}) as Record<string, unknown>
   const bindingTransaction = (adaptive.binding_tx ?? {}) as Record<string, unknown>
+  const requestIr = detail.result.request_ir ?? adaptive.request_ir
+  const requestRequirements = requestIr && typeof requestIr === 'object'
+    ? (requestIr as { requirements?: unknown[] }).requirements ?? []
+    : []
   return <>
     <DefinitionGrid items={[
       ['目标修订版本', String(adaptive.goal_revision ?? 0)],
@@ -379,9 +383,10 @@ function EvidenceTab({ detail }: { detail: RunDetail }) {
       ['映射事务', bindingTransaction.status ? `${String(bindingTransaction.status)} / ${String(bindingTransaction.source ?? '—')}` : '尚无事务'],
       ['模型已读证据', Array.isArray(adaptive.read_evidence_refs) ? adaptive.read_evidence_refs.length : 0],
       ['目标数量', Array.isArray(adaptive.objective_ledger) ? adaptive.objective_ledger.length : 0],
+      ['语义要求', requestRequirements.length],
       ['上下文', checkpoint.context ? '已记录' : '未记录'],
     ]} />
-    <div className="split-json"><div><h3>结构化上下文</h3><JsonBlock value={checkpoint.context ?? {}} /></div><div><h3>目标、映射事务与证据</h3><JsonBlock value={{ goal: adaptive.goal, objective_ledger: adaptive.objective_ledger ?? [], constraint_bindings: adaptive.constraint_bindings ?? {}, binding_transaction: adaptive.binding_tx ?? null, binding_resolution: adaptive.binding_resolution ?? null, binding_evidence_access: adaptive.binding_evidence_access ?? {}, working_memory: adaptive.working_memory, read_evidence_refs: adaptive.read_evidence_refs ?? [] }} /></div></div>
+    <div className="split-json"><div><h3>统一请求语义</h3><JsonBlock value={requestIr ?? { status: '尚未生成 RequestIR' }} /></div><div><h3>目标、映射事务与证据</h3><JsonBlock value={{ goal: adaptive.goal, objective_ledger: adaptive.objective_ledger ?? [], constraint_bindings: adaptive.constraint_bindings ?? {}, binding_transaction: adaptive.binding_tx ?? null, binding_resolution: adaptive.binding_resolution ?? null, binding_evidence_access: adaptive.binding_evidence_access ?? {}, working_memory: adaptive.working_memory, read_evidence_refs: adaptive.read_evidence_refs ?? [] }} /></div></div>
   </>
 }
 

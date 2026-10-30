@@ -116,6 +116,9 @@ def test_native_batch_and_completion_execute_real_tools_without_json_action_wrap
     assert [s['tool'] for s in result['plan']['steps']] == ['search_products', 'get_order_status', 'select_product', 'select_product']
     assert result['plan']['steps'][-1]['depends_on'] == ['step-1']
     assert sum(e['type'] == 'native_submission' for e in result['events']) == 7
+    assert result['request_ir']['version'] == 'request-ir/v1'
+    assert len(result['request_ir']['sha256']) == 64
+    assert any(e['type'] == 'request_ir_projected' for e in result['events'])
     assert project_trace(result['events'])['integrity']['complete']
 
 

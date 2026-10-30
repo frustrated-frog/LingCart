@@ -339,6 +339,7 @@ def _present(context, recorder, intake, state, plan, *, reason, message, error=N
                           binding_revision=state.get('binding_revision', 0),
                           binding_transaction=deepcopy(state.get('binding_tx')))
     result['request_audit'] = deepcopy(state.get('request_audit'))
+    result['request_ir'] = deepcopy(state.get('request_ir'))
     result['binding_audit'] = deepcopy(state.get('binding_audit'))
     result['completion_audit'] = deepcopy(state.get('completion_audit'))
     result['liveplan'] = deepcopy(state.get('liveplan'))
@@ -480,6 +481,7 @@ def _accept(context, recorder, state, plan, decision, history, *, validated_tool
             recorder.record('goal_arguments_normalized', provenance=deepcopy(goal_provenance))
         if decision.action != 'clarify':
             from src.request_audit import review_request
+            from src.request_ir import project_adaptive_request_ir
             proposed = {**state, 'goal': accepted_goal}
             audit = review_request(context, proposed, plan, history, phase='goal')
             state['audit_attempts'] = [*state.get('audit_attempts', []), audit]
@@ -487,7 +489,17 @@ def _accept(context, recorder, state, plan, decision, history, *, validated_tool
                 state['feedback'] = dict(code='REQUEST_AUDIT_REJECTED', audit=audit,
                     message='对照用户原文修复全部目标和约束；不确定则澄清。')
                 raise AgentError('REQUEST_AUDIT_REJECTED', '独立审查未确认需求覆盖与语义，不能执行当前目标', retryable=False)
+            request_ir = project_adaptive_request_ir(
+                state['request'], history, accepted_goal, audit
+            )
             state['request_audit'] = audit
+            state['request_ir'] = request_ir.payload()
+            recorder.record(
+                'request_ir_projected',
+                version=request_ir.version,
+                request_ir_sha256=request_ir.sha256,
+                requirements=request_ir.model_dump()['requirements'],
+            )
             state.pop('audit_format_feedback', None)
         state['goal'] = accepted_goal
         state['objective_ledger'] = new_ledger(state['goal'])
@@ -811,6 +823,7 @@ def _run(context, user_message, history, pending_action):
         state.setdefault('native_queue', [])
         state.setdefault('dialogue_commands', [])
         state.setdefault('selection_failures', {})
+        state.setdefault('request_ir', None)
         objectives_by_id = {objective['id']: objective for objective in (state.get('goal') or {}).get('objectives', [])}
         for row in state.get('objective_ledger', []):
             objective = objectives_by_id.get(row['objective_id'], {})
@@ -828,7 +841,7 @@ def _run(context, user_message, history, pending_action):
                                          previous_goal=state['goal']))
             state.update(goal_revision=revision, goal=None, request=user_message, pending=None,
                          model_cursor=0, feedback=None, working_memory=None, objective_ledger=[],
-                         next_steps=None, request_audit=None, completion_audit=None,
+                         next_steps=None, request_audit=None, request_ir=None, completion_audit=None,
                          constraint_bindings={}, binding_revision=0, binding_audit=None,
                          binding_evidence_access={}, binding_sources={}, binding_tx=None,
                          binding_resolution=None, decision_surface=None,
@@ -846,6 +859,7 @@ def _run(context, user_message, history, pending_action):
         state = dict(schema_version=7, version=1, replans=0, goal_revision=revision, request=user_message,
                      goal=None, next_steps=None, working_memory=None, journal=[], pending=None,
                      objective_ledger=[], feedback=None, repair_count=0, request_audit=None,
+                     request_ir=None,
                      completion_audit=None, constraint_bindings={}, binding_revision=0, binding_audit=None,
                      binding_evidence_access={}, binding_sources={}, binding_tx=None,
                      binding_resolution=None, decision_surface=None,

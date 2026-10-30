@@ -48,6 +48,18 @@ def test_chat_response_contract_preserves_structured_artifacts():
     assert response.artifacts == [artifact]
 
 
+def test_chat_response_preserves_versioned_request_ir():
+    request_ir = {
+        "version": "request-ir/v1",
+        "requirements": [],
+        "sha256": "a" * 64,
+    }
+
+    response = api._response("request-ir-session", {**FAKE_RESULT, "request_ir": request_ir})
+
+    assert response.request_ir == request_ir
+
+
 def test_production_build_and_client_routes_are_served_when_available():
     if not (Path(api.__file__).parent / 'frontend' / 'dist').is_dir():
         pytest.skip('React production build is not present')

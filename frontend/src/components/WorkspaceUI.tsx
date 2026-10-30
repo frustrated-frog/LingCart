@@ -18,7 +18,7 @@ const phases = [
     note: '目标与约束',
     icon: Sparkles,
     events: new Set([
-      'intake', 'dialogue_protocol_retry', 'route_decision', 'request_audited',
+      'intake', 'dialogue_protocol_retry', 'route_decision', 'request_audited', 'request_ir_projected',
       'catalog_request_audited', 'constraint_binding_proposed', 'constraint_binding_unresolved',
       'constraint_binding_rejected', 'constraint_bindings_refined',
     ]),

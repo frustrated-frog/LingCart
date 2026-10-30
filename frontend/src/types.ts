@@ -157,6 +157,31 @@ export interface RunFailure {
   retryable: boolean
 }
 
+export interface RequestSourceSpan {
+  source: 'CURRENT_TURN' | 'HISTORY'
+  history_index: number | null
+  start: number
+  end: number
+  text: string
+  source_sha256: string
+}
+
+export interface RequestSemanticRequirement {
+  requirement_id: string
+  kind: 'BUSINESS_OUTCOME' | 'USER_FACT' | 'PRODUCT_PREDICATE' | 'CROSS_GOAL_CONSTRAINT'
+    | 'SOFT_PREFERENCE' | 'PROCESS_INSTRUCTION' | 'EXECUTION_BOUNDARY' | 'PROHIBITION' | 'UNKNOWN'
+  description: string
+  source: RequestSourceSpan
+  objective_ids: string[]
+  constraint_refs: string[]
+}
+
+export interface UserRequestIR {
+  version: 'request-ir/v1'
+  requirements: RequestSemanticRequirement[]
+  sha256: string
+}
+
 export interface RunResult {
   run_id?: string
   reply?: string
@@ -167,6 +192,7 @@ export interface RunResult {
   events?: RunEvent[]
   trace?: Array<{ agent?: string; tool?: string; args?: Record<string, unknown>; result?: unknown }>
   plan?: { steps?: Array<Record<string, unknown>>; verification?: Record<string, unknown> }
+  request_ir?: UserRequestIR | null
   budget?: Record<string, unknown>
   usage?: Record<string, number | null>
   pending_action?: PendingAction | null

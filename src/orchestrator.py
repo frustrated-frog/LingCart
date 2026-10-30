@@ -177,6 +177,8 @@ def _execute_understanding(
         audit = None
     kinds = command_kinds(understanding)
     payload = understanding.model_dump()
+    from src.request_ir import project_dialogue_request_ir
+    request_ir = project_dialogue_request_ir(user_message, history, understanding).payload()
 
     # The semantic layer may recognize an implicit answer, but mutating actions
     # retain the stricter explicit authorization parser above this function.
@@ -215,7 +217,7 @@ def _execute_understanding(
             terminal_reason="MODEL_CLARIFICATION",
         )
     elif understanding.objectives:
-        planned_intake, plan = to_task_plan(understanding, user_message)
+        planned_intake, plan = to_task_plan(understanding, user_message, history)
         if planned_intake.execution_mode == CLARIFICATION_REQUIRED:
             missing_order = planned_intake.missing_slots == ("order_id",)
             result = _simple_result(
@@ -265,6 +267,7 @@ def _execute_understanding(
             terminal_reason="COMPLETED",
         )
     result["understanding"] = payload
+    result["request_ir"] = request_ir
     if audit:
         result["catalog_request_audit"] = audit
     return result
