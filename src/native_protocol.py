@@ -54,6 +54,43 @@ def size(declarations):
     return len(json.dumps(declarations, ensure_ascii=False, separators=(',', ':')))
 
 
+def normalize_intent_protocol(payload):
+    """Canonicalize semantically fixed nullable fields from strict tool transports.
+
+    OpenAI-compatible strict schemas require every property, so providers may
+    emit JSON null for fields that are inapplicable.  Only values whose meaning
+    is fully determined by another discriminator are normalized here.  User
+    quantities for recommendation objectives and clarification messages remain
+    model-owned and are never inferred.
+    """
+    data = deepcopy(payload)
+    normalizations = []
+    goal = data.get('goal') if isinstance(data, dict) else None
+    objectives = goal.get('objectives') if isinstance(goal, dict) else None
+    if isinstance(objectives, list):
+        for index, objective in enumerate(objectives):
+            if (isinstance(objective, dict) and objective.get('kind') != 'recommend'
+                    and objective.get('quantity') is None):
+                objective['quantity'] = 1
+                normalizations.append({
+                    'path': f'goal.objectives.{index}.quantity',
+                    'rule': 'non_recommend_quantity_is_one',
+                })
+    commands = data.get('commands') if isinstance(data, dict) else None
+    if isinstance(commands, list):
+        for index, command in enumerate(commands):
+            if (isinstance(command, dict) and command.get('kind') in {
+                    'GREETING', 'IDENTITY', 'CAPABILITIES', 'ACKNOWLEDGEMENT',
+                    'HUMAN_HANDOFF', 'UNSUPPORTED',
+                    'CONFIRM_PENDING', 'CANCEL_PENDING'} and command.get('message') is not None):
+                command['message'] = None
+                normalizations.append({
+                    'path': f'commands.{index}.message',
+                    'rule': 'message_only_applies_to_clarify',
+                })
+    return data, normalizations
+
+
 def decision_action_surface(state, plan, *, remaining_model_calls):
     """Reserve the terminal audit when a single recommendation can now commit.
 
@@ -226,15 +263,18 @@ def decode_decision(response, state):
     from src.direct_executor import _READ_ONLY_TOOLS
     if state['goal'] is None and not getattr(response, 'tool_calls', []):
         from src.agents.base import as_text
-        intent = IntentDeclaration.model_validate(json.loads(as_text(response.content)))
+        data, normalizations = normalize_intent_protocol(json.loads(as_text(response.content)))
+        intent = IntentDeclaration.model_validate(data)
         decision = decision_from_intent(intent)
-        return decision, dict(function='declare_intent', submission_id=None, transport='validated_json_fallback')
+        return decision, dict(function='declare_intent', submission_id=None, transport='validated_json_fallback',
+                              protocol_normalizations=normalizations)
     allowed = set(_READ_ONLY_TOOLS) | {'declare_intent', 'clarify', 'finish', 'revise_plan', 'inspect', 'complete', 'recommend', 'refine_constraints'}
     name, args, call_id = one_call(response, allowed)
     data = deepcopy(args)
     if name == 'declare_intent':
         if state['goal'] is not None:
             raise ValueError('The goal is already declared')
+        data, normalizations = normalize_intent_protocol(data)
         intent = IntentDeclaration.model_validate(data)
         decision = decision_from_intent(intent)
     elif name in _READ_ONLY_TOOLS:
@@ -245,7 +285,8 @@ def decode_decision(response, state):
         decision = Decision(action='complete', claims=[{'objective_id': k, 'evidence_refs': v} for k, v in evidence.items()])
     else:
         decision = Decision.model_validate({'action': name, **data})
-    return decision, dict(function=name, submission_id=call_id, transport='native_function')
+    return decision, dict(function=name, submission_id=call_id, transport='native_function',
+                          protocol_normalizations=normalizations if name == 'declare_intent' else [])
 
 
 def decode_decisions(response, state):

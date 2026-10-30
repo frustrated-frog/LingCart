@@ -1537,6 +1537,27 @@ def test_malformed_auditor_response_never_falls_back_to_approval(monkeypatch):
     assert result.get('request_audit') is None
 
 
+def test_approved_audit_distinguishes_goal_requirements_from_execution_boundaries():
+    from pydantic import ValidationError
+    from src.request_audit import RequestAudit
+    base = dict(source_quote='耳机', interpretation='推荐耳机', status='COVERED')
+    audit = RequestAudit.model_validate(dict(verdict='APPROVED', issues=[], requirements=[
+        {**base, 'scope': 'GOAL_REQUIREMENT', 'objective_ids': ['shopping'], 'constraint_refs': []},
+        {**base, 'source_quote': '不要执行支付', 'interpretation': '禁止支付',
+         'scope': 'EXECUTION_BOUNDARY', 'objective_ids': [], 'constraint_refs': []},
+    ]))
+    assert audit.verdict == 'APPROVED'
+
+    with pytest.raises(ValidationError):
+        RequestAudit.model_validate(dict(verdict='APPROVED', issues=[], requirements=[
+            {**base, 'scope': 'GOAL_REQUIREMENT', 'objective_ids': [], 'constraint_refs': []},
+        ]))
+    with pytest.raises(ValidationError):
+        RequestAudit.model_validate(dict(verdict='APPROVED', issues=[], requirements=[
+            {**base, 'scope': 'EXECUTION_BOUNDARY', 'objective_ids': ['shopping'], 'constraint_refs': []},
+        ]))
+
+
 def test_final_semantic_rejection_returns_feedback_instead_of_success(monkeypatch):
     def ask(payload):
         assert payload['feedback']['code'] == 'COMPLETION_SEMANTIC_REJECTED'

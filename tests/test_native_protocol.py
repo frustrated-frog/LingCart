@@ -56,7 +56,8 @@ def approve(payload):
     from src.constraint_bindings import constraint_refs
     goal = payload['goal']
     rows = [dict(source_quote=o['source_quote'], interpretation=o['description'], status='COVERED',
-                 objective_ids=[o['id']], constraint_refs=[]) for o in goal['objectives']]
+                 scope='GOAL_REQUIREMENT', objective_ids=[o['id']], constraint_refs=[])
+            for o in goal['objectives']]
     rows[0]['constraint_refs'] = list(constraint_refs(goal))
     return ('submit_audit', dict(verdict='APPROVED', issues=[], requirements=rows))
 
@@ -216,6 +217,37 @@ def test_native_business_decision_does_not_accept_text_json():
     with pytest.raises(ValueError, match='declared function'):
         decode_decisions(AIMessage(content='{"action":"tool","tool":"get_order_status","args":{"order_id":1001}}'),
                          {'goal': intent()['goal']})
+
+
+def test_native_intent_canonicalizes_only_discriminator_fixed_nullable_fields():
+    from src.native_protocol import decode_decision
+    payload = intent()
+    payload['goal']['objectives'][1]['quantity'] = None
+    payload['commands'] = [dict(kind='ACKNOWLEDGEMENT', source_quote=REQUEST,
+                                message='这段文本对非澄清命令没有协议含义')]
+    response = AIMessage(content='', tool_calls=[
+        dict(name='declare_intent', args=payload, id='intent-1', type='tool_call')])
+
+    decision, metadata = decode_decision(response, {'goal': None})
+
+    assert decision.goal.objectives[1].quantity == 1
+    assert decision.commands[0].message is None
+    assert metadata['protocol_normalizations'] == [
+        {'path': 'goal.objectives.1.quantity', 'rule': 'non_recommend_quantity_is_one'},
+        {'path': 'commands.0.message', 'rule': 'message_only_applies_to_clarify'},
+    ]
+
+
+@pytest.mark.parametrize('quantity', [None, 1.0, '1', True])
+def test_native_intent_never_infers_a_recommendation_quantity(quantity):
+    from src.native_protocol import decode_decision
+    payload = intent(order=False)
+    payload['goal']['objectives'][0]['quantity'] = quantity
+    response = AIMessage(content='', tool_calls=[
+        dict(name='declare_intent', args=payload, id='intent-1', type='tool_call')])
+
+    with pytest.raises(ValueError):
+        decode_decision(response, {'goal': None})
 
 
 def test_discoverable_uncertainty_does_not_force_human_clarification(monkeypatch):

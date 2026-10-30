@@ -470,11 +470,20 @@ def decide(context, state, plan, history):
             state['active_native_submission'] = submission
             for index, (_, meta) in enumerate(batch):
                 context.record('native_submission', phase='intent' if initial else 'decision', batch_index=index, **meta)
+                if meta.get('protocol_normalizations'):
+                    context.record('model_protocol_normalized', phase='intent' if initial else 'decision',
+                                   function=meta['function'], batch_index=index,
+                                   normalizations=deepcopy(meta['protocol_normalizations']))
             return decision
         if getattr(response, 'tool_calls', []):
             raise ValueError('Decision protocol does not accept model tool calls')
         payload = json.loads(as_text(response.content))
         if initial and isinstance(payload, dict) and 'action' not in payload:
+            from src.native_protocol import normalize_intent_protocol
+            payload, normalizations = normalize_intent_protocol(payload)
+            if normalizations:
+                context.record('model_protocol_normalized', phase='intent', function='declare_intent',
+                               batch_index=0, normalizations=deepcopy(normalizations))
             intent = IntentDeclaration.model_validate(payload)
             validate_command_grounding(intent.commands, state['request'], history)
             return decision_from_intent(intent)
