@@ -230,6 +230,25 @@ def _product_dict(product: Product) -> dict:
                 stock=product.stock, data_source="DEMO_CATALOG")
 
 
+def _catalog_query_terms(query: str, category: str | None) -> list[str]:
+    """Split a compact query only at its already-declared catalog category.
+
+    Chinese users commonly write ``降噪耳机`` without whitespace.  The
+    category argument is an independently validated structured field, so using
+    that exact value as a delimiter does not invent a tokenizer or new search
+    intent.  All remaining text stays literal.
+    """
+    category_term = (category or "").strip().casefold()
+    terms = []
+    for term in query.strip().casefold().split():
+        if category_term and category_term != term and category_term in term:
+            before, _, after = term.partition(category_term)
+            terms.extend(value for value in (before, category_term, after) if value)
+        else:
+            terms.append(term)
+    return list(dict.fromkeys(terms))
+
+
 def search_products(query: str = "", category: str | None = None, max_price: float | None = None,
                     available_only: bool = True, limit: int = 12,
                     excluded_terms: list[str] | None = None) -> dict:
@@ -247,10 +266,10 @@ def search_products(query: str = "", category: str | None = None, max_price: flo
         if available_only:
             statement = statement.where(Product.stock > 0)
         products = session.scalars(statement).all()
-        terms = query.strip().casefold().split()
+        terms = _catalog_query_terms(query, category)
         exclusions = [term.strip().casefold() for term in (excluded_terms or []) if term.strip()]
         documents = {
-            product.product_id: (f"{product.product_id} {product.name} {product.summary} "
+            product.product_id: (f"{product.product_id} {product.name} {product.category} {product.summary} "
                                  + json.dumps(product.specs, ensure_ascii=False)).casefold()
             for product in products
         }
@@ -258,7 +277,7 @@ def search_products(query: str = "", category: str | None = None, max_price: flo
                    if all(term in documents[product.product_id] for term in terms)
                    and not any(term in documents[product.product_id] for term in exclusions)]
         filters = {"query": query, "category": category, "max_price": max_price,
-                   "available_only": available_only}
+                   "available_only": available_only, "query_terms": terms}
         if excluded_terms:
             filters["excluded_terms"] = excluded_terms
         return {"products": [_product_dict(product) for product in matched[:limit]], "total": len(matched),

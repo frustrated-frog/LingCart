@@ -101,6 +101,10 @@ def test_search_enforces_budget_category_features_and_availability(seeded_worksp
     assert "P1102" not in [p["product_id"] for p in result["products"]]
     assert tools.search_products(category="耳机", max_price=1)["products"] == []
 
+    compact = tools.search_products(query="降噪耳机", category="耳机", max_price=500)
+    assert compact["products"]
+    assert compact["filters"]["query_terms"] == ["降噪", "耳机"]
+
 
 def test_invalid_budget_and_comparison_are_explicit():
     assert "error" in tools.search_products(max_price=-1)
