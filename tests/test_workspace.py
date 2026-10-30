@@ -104,6 +104,7 @@ def test_search_enforces_budget_category_features_and_availability(seeded_worksp
     compact = tools.search_products(query="降噪耳机", category="耳机", max_price=500)
     assert compact["products"]
     assert compact["filters"]["query_terms"] == ["降噪", "耳机"]
+    assert all(product["specs"]["降噪"] != "无" for product in compact["products"])
 
 
 def test_invalid_budget_and_comparison_are_explicit():

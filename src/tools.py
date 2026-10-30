@@ -230,6 +230,19 @@ def _product_dict(product: Product) -> dict:
                 stock=product.stock, data_source="DEMO_CATALOG")
 
 
+def _catalog_value_text(value) -> str:
+    if isinstance(value, dict):
+        return " ".join(_catalog_value_text(item) for item in value.values())
+    if isinstance(value, (list, tuple, set)):
+        return " ".join(_catalog_value_text(item) for item in value)
+    return "" if value is None or isinstance(value, bool) else str(value)
+
+
+def _product_search_document(product: Product) -> str:
+    return (f"{product.product_id} {product.name} {product.category} {product.summary} "
+            + _catalog_value_text(product.specs or {})).casefold()
+
+
 def _catalog_query_terms(query: str, category: str | None) -> list[str]:
     """Split a compact query only at its already-declared catalog category.
 
@@ -269,8 +282,7 @@ def search_products(query: str = "", category: str | None = None, max_price: flo
         terms = _catalog_query_terms(query, category)
         exclusions = [term.strip().casefold() for term in (excluded_terms or []) if term.strip()]
         documents = {
-            product.product_id: (f"{product.product_id} {product.name} {product.category} {product.summary} "
-                                 + json.dumps(product.specs, ensure_ascii=False)).casefold()
+            product.product_id: _product_search_document(product)
             for product in products
         }
         matched = [product for product in products
@@ -351,17 +363,14 @@ def discover_products(query: str = "", category: str | None = None, max_price: f
         exclusions = [term.strip().casefold() for term in (excluded_terms or []) if term.strip()]
         if exclusions:
             products = [product for product in products if not any(
-                term in (f"{product.product_id} {product.name} {product.category} {product.summary} "
-                         + json.dumps(product.specs, ensure_ascii=False)).casefold()
+                term in _product_search_document(product)
                 for term in exclusions
             )]
         terms = query.strip().casefold().split()
         unresolved_query = None
         if terms:
             documents = {
-                product.product_id: (
-                f"{product.product_id} {product.name} {product.category} {product.summary} "
-                + json.dumps(product.specs, ensure_ascii=False)).casefold()
+                product.product_id: _product_search_document(product)
                 for product in products
             }
             matched = [product for product in products
