@@ -182,7 +182,8 @@ reference: POPULATION continues its parent query, DELIVERED means only rows alre
 such a reference uses CATALOG. ARGMIN/ARGMAX never use ordering, limit or page. PRODUCT_SEARCH is literal lookup;
 PRODUCT_DISCOVERY is under-specified exploration, not a structured view.
 
-CONSTRAINT_PLAN: 2+ finite goals with shared/cross-goal constraints or explicit optimization. Declare every goal,
+CONSTRAINT_PLAN: 2+ finite goals with shared/cross-goal constraints or explicit optimization. If fewer than 2 concrete
+goals or their quantities are known, CLARIFY instead of drafting a partial plan. Declare every goal,
 quantity and scope; never preselect. CATALOG domains use query+selector ALL, without metrics/partition. Shared budget =
 one AGGREGATE SUM over affected goals; the solver selects/verifies. Shape: {version,goals:[{requirement_id,source_quote,
 goal_id,quantity,domain:{requirement_id,source_quote,provider,parameters}}],constraints,optimization?}. Kinds:
@@ -347,6 +348,47 @@ def _apply_preference_defaults(understanding: TurnUnderstanding, defaults: dict 
     context = current_runtime()
     if context and applied:
         context.record("preference_default_applied", field="max_price", objective_ids=applied)
+
+
+def _clarify_invalid_constraint_plan(
+    payload: object,
+    error: ValidationError,
+    user_message: str,
+) -> TurnUnderstanding | None:
+    """Fail closed when the model repeatedly drafts an incomplete constraint plan.
+
+    A partial solver graph must never execute, but asking for the missing goals is
+    safer and more useful than exposing a model-shape failure to the user. Keep
+    this fallback deliberately narrow: one grounded CONSTRAINT_PLAN objective,
+    no sibling commands/outcomes, and validation failures confined to its plan.
+    """
+
+    if not isinstance(payload, dict) or payload.get("commands"):
+        return None
+    objectives = payload.get("objectives")
+    if not isinstance(objectives, list) or len(objectives) != 1:
+        return None
+    objective = objectives[0]
+    if not isinstance(objective, dict) or objective.get("kind") != "CONSTRAINT_PLAN":
+        return None
+    quote = objective.get("source_quote")
+    if not isinstance(quote, str) or not quote or quote not in user_message:
+        return None
+    issues = error.errors(include_input=False, include_url=False)
+    if not issues or any(
+        tuple(issue.get("loc", ()))[:3] != ("objectives", 0, "constraint_plan")
+        for issue in issues
+    ):
+        return None
+    return TurnUnderstanding(
+        reason="约束方案缺少可安全执行的完整目标，转为补充信息",
+        commands=[DialogueCommand(
+            kind="CLARIFY",
+            source_quote=quote,
+            message="请告诉我需要哪些品类，以及每个品类各要几件。",
+        )],
+        objectives=[],
+    )
 
 
 def _evidence_intake_mode() -> str:
@@ -709,6 +751,29 @@ def understand_turn(user_message: str, history: list | None, pending_action: dic
             if context:
                 context.record("dialogue_protocol_retry", attempt=attempt + 1, error=error_text)
         except (ValueError, TypeError, ValidationError) as exc:
+            if isinstance(exc, ValidationError) and attempt > 0:
+                fallback = _clarify_invalid_constraint_plan(canonical_payload, exc, user_message)
+                if fallback is not None:
+                    _validate_grounding(fallback, user_message, history)
+                    if context:
+                        from src.request_ir import project_dialogue_request_ir
+                        request_ir = project_dialogue_request_ir(user_message, history, fallback)
+                        context.record(
+                            "invalid_constraint_plan_clarified",
+                            phase="dialogue_understanding",
+                            validation_paths=[
+                                ".".join(map(str, issue["loc"]))
+                                for issue in exc.errors(include_input=False, include_url=False)[:8]
+                            ],
+                        )
+                        context.record(
+                            "request_ir_projected",
+                            semantic_path="dialogue",
+                            version=request_ir.version,
+                            request_ir_sha256=request_ir.sha256,
+                            requirements=request_ir.model_dump()["requirements"],
+                        )
+                    return fallback
             details = (
                 [{"path": ".".join(map(str, issue["loc"])), "message": issue["msg"]}
                  for issue in exc.errors(include_input=False, include_url=False)[:8]]

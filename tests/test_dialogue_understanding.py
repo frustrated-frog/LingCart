@@ -460,6 +460,28 @@ def test_model_protocol_gets_one_bounded_repair(monkeypatch):
     assert any(event["type"] == "dialogue_protocol_retry" for event in result["events"])
 
 
+def test_repeated_incomplete_constraint_plan_fails_closed_to_clarification():
+    message = "400元帮我选几样东西"
+    incomplete = interpretation(objectives=[{
+        "id": "bundle",
+        "kind": "CONSTRAINT_PLAN",
+        "source_quote": message,
+        "constraint_plan": {
+            "version": "constraint-plan/v1",
+            "goals": [],
+            "constraints": [],
+            "optimization": None,
+        },
+    }])
+
+    result = understand_turn(message, None, None, model=ScriptedModel(incomplete, incomplete))
+
+    assert result.objectives == []
+    assert [command.kind for command in result.commands] == ["CLARIFY"]
+    assert result.commands[0].source_quote == message
+    assert result.commands[0].message == "请告诉我需要哪些品类，以及每个品类各要几件。"
+
+
 def test_paraphrased_source_quote_gets_one_bounded_grounding_repair():
     message = "订单 1001 的退货政策是什么"
     model = ScriptedModel(
