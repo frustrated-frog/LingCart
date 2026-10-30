@@ -2,13 +2,12 @@ import { useQuery } from '@tanstack/react-query'
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { api } from '../api/client'
+import { ExecutionWorkbench } from '../components/ExecutionWorkbench'
 import { ResultArtifactViews } from '../components/CatalogResultView'
 import type { RunDetail } from '../types'
 import {
   DefinitionGrid,
   ErrorState,
-  eventLabel,
-  ExecutionSpine,
   formatTime,
   JsonBlock,
   LoadingState,
@@ -58,7 +57,6 @@ export function RunsPage({ businessMode = false }: { businessMode?: boolean }) {
   const profiles = [...new Set(runs.map((run) => run.profile.profile_id))].sort()
   const detail = detailQuery.data
   const events = detail?.result.events ?? []
-  const event = events[selectedEvent]
 
   return (
     <>
@@ -84,17 +82,8 @@ export function RunsPage({ businessMode = false }: { businessMode?: boolean }) {
           ]} />
           <SectionHeading index="01" title="执行主脊" note={`${detail.run_id.slice(0, 12)} / ${formatTime(detail.created_at)}`} />
           <div className="run-prompt">{detail.request}</div>
-          <ExecutionSpine events={events} selected={selectedEvent} onSelect={setSelectedEvent} />
-          {event && <ViewTransition viewKey={String(event.sequence ?? selectedEvent)}>
-            <section className="event-probe">
-              <div className="probe-title"><span>事件探针</span><b>{String(event.sequence ?? selectedEvent + 1).padStart(2, '0')} · {eventLabel(event).join(' / ')}</b></div>
-              <DefinitionGrid items={[
-                ['事件类型', eventLabel(event)[1]], ['事件语义', eventLabel(event).join(' / ')],
-                ['发生时间', event.timestamp ?? '—'], ['事件序号', event.sequence ?? selectedEvent + 1],
-              ]} />
-              <details><summary>查看原始事件数据</summary><JsonBlock value={event} /></details>
-            </section>
-          </ViewTransition>}
+          <ExecutionWorkbench key={detail.run_id} events={events} selected={selectedEvent} onSelect={setSelectedEvent}
+            running={detail.status === 'RUNNING'} stale={detailQuery.isError} />
           <SegmentedTabs value={tab} onChange={(value) => setTab(value as Tab)} layoutId="run-detail-tab"
             items={
               [['result', '结果与计划'], ['evidence', '上下文与证据'], ['steering', '在线监控与纠偏'], ['pg', '程序图指导'], ['tools', '工具账本'], ['raw', '原始记录']]

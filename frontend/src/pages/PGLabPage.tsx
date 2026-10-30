@@ -4,6 +4,7 @@ import { Link, useSearchParams } from 'react-router-dom'
 import { ArrowRight, GitBranch, Play, Square, RefreshCw, Check, X } from 'lucide-react'
 import { api } from '../api/client'
 import { ErrorState, JsonBlock, LoadingState, PageHeader, SectionHeading, TOOL_LABELS } from '../components/SystemUI'
+import { PGGraphExplorer, SamplePlayback } from '../components/ExecutionWorkbench'
 import { EdgeCreditPanel, HypothesisPanel } from '../components/PGCreditPanel'
 import type { PGArm, PGGraph, PGJob, PGPreset, PGSample, PGSelection } from '../types'
 import '../styles/pg-lab.css'
@@ -58,7 +59,7 @@ const conditionText = (edge: PGGraph['edges'][number]) => {
 function GraphInspector({ graph, selection, onEvidence }: { graph: PGGraph; selection?: PGSelection; onEvidence: (caseId: string, repetition: number) => void }) {
   const [selectedId, setSelectedId] = useState('')
   const edge = graph.edges.find(item => item.id === selectedId) ?? graph.edges[0]
-  return <div className="pg-graph">
+  return <><PGGraphExplorer graph={graph} selectedEdge={edge?.id} onSelectEdge={setSelectedId} /><div className="pg-graph">
     <div className="pg-edge-list" role="list" aria-label="程序图关系">
       {graph.edges.map(item => <button key={item.id} type="button" aria-pressed={item.id === edge?.id} onClick={() => setSelectedId(item.id)}>
         <span>{node(item.source)} <ArrowRight size={12} /> {node(item.target)}</span><small>{item.relation} · {item.id}</small>
@@ -72,7 +73,7 @@ function GraphInspector({ graph, selection, onEvidence }: { graph: PGGraph; sele
       <small className="pg-muted">局部关系来自冻结图；是否实际指导过行动，请查看样本中的暴露事件。</small>
       <EdgeCreditPanel credit={selection?.edge_credit?.edges.find(item => item.edge_id === edge.id)} iteration={selection?.iteration} onEvidence={onEvidence} />
     </div> : <p>这张图尚无关系。</p>}
-  </div>
+  </div></>
 }
 
 function SelectionDetail({ selection }: { selection: PGSelection }) {
@@ -98,8 +99,9 @@ function SampleEvidence({ jobId, sample }: { jobId: string; sample: PGSample }) 
   if (query.isPending) return <LoadingState label="正在读取原始执行证据" />
   if (query.isError) return <ErrorState error={query.error} retry={() => { void query.refetch() }} />
   const evidence = query.data?.pg_evidence
+  const playback = <SamplePlayback key={`${jobId}/${sample.stage}/${sample.case_id}/${sample.repetition}`} turns={query.data?.turns ?? []} />
   if (!evidence) return <div className="pg-sample-evidence"><b>{sample.case_id} · 第 {sample.repetition} 次 · {phase(sample.stage)}</b>
-    <p className="pg-muted">该历史样本尚未生成结构化 PG 干预投影，以下保留原始证据。</p><JsonBlock value={query.data} /></div>
+    {playback}<p className="pg-muted">该历史样本尚未生成结构化 PG 干预投影，以下保留原始证据。</p><JsonBlock value={query.data} /></div>
   return <div className="pg-sample-evidence"><div className="pg-evidence-heading"><div><b>{sample.case_id} · 第 {sample.repetition} 次 · {phase(sample.stage)}</b>
     <p>{evidence.summary.failure_stage ? `失败阶段：${evidence.summary.failure_stage}` : evidence.summary.recovered ? '扰动后已恢复' : '样本未记录失败阶段'}</p></div>
     <dl><div><dt>干预</dt><dd>{evidence.summary.interventions}</dd></div><div><dt>已暴露</dt><dd>{evidence.summary.exposed}</dd></div>
@@ -113,6 +115,7 @@ function SampleEvidence({ jobId, sample }: { jobId: string; sample: PGSample }) 
       <div><dt>程序预演</dt><dd>{evidence.summary.preplay_interventions ?? 0}</dd></div>
       <div><dt>预测反例</dt><dd>{evidence.summary.prediction_countered ?? 0}</dd></div>
       <div><dt>影子差异</dt><dd>{evidence.summary.shadow_differences ?? 0}</dd></div></dl></div>
+    {playback}
     {evidence.turns.flatMap(turn => turn.interventions.map((item, index) => {
       const decision = item.decision?.payload ?? {}
       const action = String(decision.tool ?? decision.action ?? item.action_alignment.actual_action ?? '没有后续决策')

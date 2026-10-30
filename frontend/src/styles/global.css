@@ -476,8 +476,8 @@ button.danger { border-color: #e4b5b0 !important; color: var(--red) !important; 
 .order-main h3 { margin: 6px 0 4px; font-size: 13px; }
 .order-main p { margin: 0; color: var(--muted); font-size: 9px; }
 .order-actions { display: flex; gap: 7px; }
-button:not(.pg-lab button):not(.nav-link):not(.run-row):not(.spine-node):not(.case-list button):not(.after-sales-case-row):not(.product-visual):not(.composer button):not(.feature-options button) { min-height: 34px; display: inline-flex; align-items: center; justify-content: center; gap: 7px; padding: 0 11px; border: 1px solid var(--line-strong); border-radius: 3px; background: var(--surface); font-size: 10px; font-weight: 550; cursor: pointer; }
-button:not(.pg-lab button):not(.nav-link):hover { border-color: var(--blue); color: var(--blue); }
+button:not(.execution-workbench button):not(.pg-lab button):not(.nav-link):not(.run-row):not(.spine-node):not(.case-list button):not(.after-sales-case-row):not(.product-visual):not(.composer button):not(.feature-options button) { min-height: 34px; display: inline-flex; align-items: center; justify-content: center; gap: 7px; padding: 0 11px; border: 1px solid var(--line-strong); border-radius: 3px; background: var(--surface); font-size: 10px; font-weight: 550; cursor: pointer; }
+button:not(.execution-workbench button):not(.pg-lab button):not(.nav-link):hover { border-color: var(--blue); color: var(--blue); }
 button.primary { border-color: var(--blue) !important; background: var(--blue) !important; color: #fff !important; }
 button:disabled { opacity: .5; cursor: not-allowed !important; }
 

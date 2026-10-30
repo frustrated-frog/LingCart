@@ -691,6 +691,7 @@ export interface PGIntervention {
   verification: Record<string, unknown> | null
 }
 export interface PGSampleDetail {
+  turns?: { message?: string; result?: { events?: RunEvent[] } }[]
   case_id: string; repetition: number; passed: boolean; [key: string]: unknown
   pg_evidence?: { schema_version: number; summary: { interventions: number; exposed: number; aligned: number; diverged: number
     unknown_alignment: number; blocked_repeats?: number; deterministic_contracts?: number; guidance_model_calls?: number
