@@ -304,6 +304,14 @@ def analyze_request(user_message: str, *, _check_clause_coverage: bool = True) -
             budget_match = re.search(r"(-?\d+(?:\.\d+)?)\s*(?:元|块)?\s*(?:的)?预算", shopping_text)
         if not budget_match:
             budget_match = re.search(r"(?:under|budget|max(?:imum)?)\s*(?:cny|rmb|[¥￥])?\s*(-?\d+(?:\.\d+)?)", shopping_text)
+        if not budget_match:
+            # “400元帮我选……” is a high-confidence budget grammar even
+            # without the literal word “预算”. Category scope may arrive in
+            # the direct clarification answer appended by the caller.
+            budget_match = re.search(
+                r"(?<!\d)(-?\d+(?:\.\d+)?)\s*(?:元|块)\s*(?=.{0,16}(?:帮我)?(?:选|买|购|搭配|推荐))",
+                shopping_text,
+            )
         shopping_entities = {"query": ""}
         if category is not None:
             shopping_entities["category"] = category

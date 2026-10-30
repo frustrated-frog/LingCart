@@ -100,6 +100,50 @@ def _explicit_escalation(intake: TaskIntake, run_id: str, user_message: str) -> 
     return result
 
 
+def _shared_constraint_followup_feedback(user_message: str, understanding) -> dict | None:
+    """Detect a dropped shared budget on an explicit clarification continuation.
+
+    The persisted clarification contract establishes that the immediately prior
+    HUMAN request is still active. Deterministic intake only identifies the
+    high-confidence multi-category/shared-budget shape; the model still owns the
+    semantic repair and the independent catalog auditor verifies its plan.
+    """
+
+    context = current_runtime()
+    conversation = (context.snapshot.get("conversation") or {}) if context else {}
+    pending = conversation.get("pending_dialogue_clarification")
+    if not isinstance(pending, dict):
+        return None
+    source_request = pending.get("source_request")
+    if not isinstance(source_request, str) or not source_request:
+        return None
+    current = analyze_request(user_message)
+    if set(current.semantic_hazards) & {"NEGATION_SCOPE", "CORRECTION_SCOPE", "EXCEPTION_SCOPE"}:
+        return None
+    combined = analyze_request(source_request + "；" + user_message)
+    if "MULTI_ITEM_SHARED_CONSTRAINT" not in combined.semantic_hazards:
+        return None
+    if any(objective.constraint_plan is not None for objective in understanding.objectives):
+        return None
+    product_kinds = {"PRODUCT_SEARCH", "PRODUCT_DISCOVERY", "PRODUCT_COMPARE", "CATALOG_QUERY"}
+    product_objectives = [
+        objective for objective in understanding.objectives if objective.kind in product_kinds
+    ]
+    if not product_objectives:
+        return None
+    budget = combined.entities.get("shared_budget")
+    categories = combined.entities.get("categories") or []
+    return {
+        "issues": ["上一轮适用的共享总预算没有进入本轮多个商品目标的同一个约束计划"],
+        "requirements": [{
+            "source_quote": source_request,
+            "source_turn": "HISTORY",
+            "interpretation": f"{budget:g} 元是 {'、'.join(categories)} 的共享总预算",
+            "status": "MISSING",
+        }],
+    }
+
+
 def _execute_understanding(
     user_message,
     history,
@@ -123,6 +167,38 @@ def _execute_understanding(
             model=understanding_model,
             preference_defaults=preference_defaults,
         )
+        followup_feedback = _shared_constraint_followup_feedback(user_message, understanding)
+        if followup_feedback is not None:
+            context = current_runtime()
+            if context:
+                context.record(
+                    "shared_constraint_followup_guarded",
+                    source_run_id=(context.snapshot.get("conversation") or {})
+                    .get("pending_dialogue_clarification", {})
+                    .get("source_run_id"),
+                    issues=followup_feedback["issues"],
+                )
+            understanding = understand_turn(
+                user_message,
+                history,
+                pending_action,
+                model=understanding_model,
+                review_feedback=followup_feedback,
+                preference_defaults=preference_defaults,
+            )
+            if _shared_constraint_followup_feedback(user_message, understanding) is not None:
+                result = _simple_result(
+                    intake,
+                    run_id,
+                    reply="上一轮金额可能是本轮多个品类的共享总预算。请确认它是总预算，还是每个品类各自预算。",
+                    agent="intake",
+                    route="CLARIFY",
+                    status="WAITING_CLARIFICATION",
+                    terminal_reason="SHARED_CONSTRAINT_SCOPE_AMBIGUOUS",
+                )
+                result["understanding"] = understanding.model_dump()
+                result["followup_constraint_guard"] = followup_feedback
+                return result
         if any(
             objective.catalog_query is not None or objective.constraint_plan is not None
             for objective in understanding.objectives

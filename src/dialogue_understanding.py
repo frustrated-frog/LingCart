@@ -628,7 +628,7 @@ def _prompt(user_message: str, history: list | None, pending_action: dict | None
         if readiness_ledger else ""
     )
     audit_repair = (
-        "\nAn independent catalog-request audit rejected the previous interpretation. Correct every issue; "
+        "\nA pre-execution requirement coverage check rejected the previous interpretation. Correct every issue; "
         "do not merely copy its wording:\n"
         + json.dumps(review_feedback, ensure_ascii=False, separators=(",", ":"))
         if review_feedback else ""

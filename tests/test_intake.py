@@ -142,6 +142,15 @@ def test_multi_item_shared_budget_never_enters_the_single_category_fast_path():
     assert result.semantic_hazards == ("MULTI_ITEM_SHARED_CONSTRAINT",)
 
 
+def test_leading_currency_amount_is_a_shared_budget_when_followup_supplies_categories():
+    result = analyze_request("400元帮我选几样东西；两个耳机一个键盘")
+
+    assert result.execution_mode == LLM_REQUIRED
+    assert result.entities["categories"] == ["耳机", "键盘"]
+    assert result.entities["shared_budget"] == 400.0
+    assert result.semantic_hazards == ("MULTI_ITEM_SHARED_CONSTRAINT",)
+
+
 def test_multiple_catalog_targets_without_shared_constraints_require_semantic_understanding():
     result = analyze_request("推荐一个耳机和一个键盘")
 

@@ -160,6 +160,59 @@ def test_chinese_quantity_followup_and_empty_optimization_are_canonicalized():
     validate_constraint_plan_grounding(plan, [current, history[0].content])
 
 
+def test_persisted_clarification_repairs_dropped_shared_budget_before_execution(monkeypatch):
+    first = "400元帮我选几样东西"
+    current = "两个耳机一个键盘"
+    clarification = {
+        "reason": "缺少品类和数量",
+        "commands": [{
+            "kind": "CLARIFY",
+            "source_quote": first,
+            "message": "请告诉我需要哪些品类，以及每个品类各要几件。",
+        }],
+        "objectives": [],
+    }
+    dropped_budget = {
+        "reason": "错误地拆成两个独立探索目标",
+        "commands": [],
+        "objectives": [
+            {"id": "headphones", "kind": "PRODUCT_DISCOVERY", "source_quote": "两个耳机",
+             "category": "耳机", "quantity": 2},
+            {"id": "keyboard", "kind": "PRODUCT_DISCOVERY", "source_quote": "一个键盘",
+             "category": "键盘", "quantity": 1},
+        ],
+    }
+    spec = shared_budget_spec()
+    spec["goals"][0].update(source_quote="两个耳机", quantity=2)
+    spec["goals"][0]["domain"] = catalog_domain("耳机", "耳机", "headphones")
+    spec["goals"][1].update(source_quote="一个键盘", quantity=1)
+    spec["goals"][1]["domain"] = catalog_domain("键盘", "键盘", "keyboard")
+    spec["constraints"][0].update(source_quote="400元", value=400)
+    repaired = {
+        "reason": "保留上一轮共享预算并合并本轮数量",
+        "commands": [],
+        "objectives": [{
+            "id": "bundle", "kind": "CONSTRAINT_PLAN", "source_quote": current,
+            "constraint_plan": spec,
+        }],
+    }
+    model = ScriptedModel(clarification, dropped_budget, repaired, approved_audit(spec, current))
+    monkeypatch.setattr(orchestrator, "get_llm", lambda **_kwargs: model)
+    session_id = f"constraint-followup-{uuid.uuid4().hex}"
+
+    opened = run_conversation(first, session_id, request_id="request-1", store=RunStore())
+    result = run_conversation(current, session_id, request_id="request-2", store=RunStore())
+
+    assert opened["status"] == "WAITING_CLARIFICATION"
+    assert result["status"] == "SUCCEEDED"
+    assert result["trace"][0]["tool"] == "solve_constraint_plan"
+    assert result["trace"][0]["args"]["spec"]["constraints"][0]["value"] == 400
+    assert [goal["quantity"] for goal in result["trace"][0]["args"]["spec"]["goals"]] == [2, 1]
+    assert any(event["type"] == "shared_constraint_followup_guarded" for event in result["events"])
+    assert "pending_dialogue_clarification" not in RunStore().conversation(session_id)["state"]
+    assert model.index == 4
+
+
 def test_infeasible_claim_requires_complete_search():
     arguments = compile_constraint_plan(shared_budget_spec(budget=1))
 

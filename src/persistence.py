@@ -386,6 +386,15 @@ class RunStore:
                 pending_clarification = persisted_clarification
             result["pending_clarification"] = pending_clarification
             state["pending_clarification"] = pending_clarification
+            if result.get("status") == "WAITING_CLARIFICATION" and result.get("route") == "CLARIFY":
+                state["pending_dialogue_clarification"] = {
+                    "source_run_id": run_id,
+                    "source_request": run.request,
+                    "question": result.get("reply", ""),
+                    "terminal_reason": result.get("terminal_reason"),
+                }
+            else:
+                state.pop("pending_dialogue_clarification", None)
             run.result = json_value(result)
             run.status = result["status"]
             run.lease_token, run.lease_until = None, None
