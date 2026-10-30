@@ -106,6 +106,12 @@ def test_search_enforces_budget_category_features_and_availability(seeded_worksp
     assert compact["filters"]["query_terms"] == ["降噪", "耳机"]
     assert all(product["specs"]["降噪"] != "无" for product in compact["products"])
 
+    discovered = tools.discover_products(
+        query="降噪耳机", category="耳机", max_price=500, limit=1, context_seed="test"
+    )
+    assert discovered["products"][0]["specs"]["降噪"] != "无"
+    assert "unbound_catalog_language" not in discovered
+
 
 def test_invalid_budget_and_comparison_are_explicit():
     assert "error" in tools.search_products(max_price=-1)

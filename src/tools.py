@@ -366,7 +366,7 @@ def discover_products(query: str = "", category: str | None = None, max_price: f
                 term in _product_search_document(product)
                 for term in exclusions
             )]
-        terms = query.strip().casefold().split()
+        terms = _catalog_query_terms(query, category)
         unresolved_query = None
         if terms:
             documents = {
