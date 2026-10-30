@@ -3,7 +3,7 @@ import json
 import uuid
 
 import pytest
-from langchain_core.messages import AIMessage
+from langchain_core.messages import AIMessage, HumanMessage
 
 from src import orchestrator, tools
 from src.backend.db import Product, get_engine, get_session_factory
@@ -21,8 +21,10 @@ from src.constraint_planning import (
     solve_constraint_plan,
     solve_finite_domain,
     use_domain_provider_registry,
+    validate_constraint_plan_grounding,
     verify_constraint_plan_result,
 )
+from src.dialogue_understanding import understand_turn
 from src.errors import AgentError
 from src.durable import run_conversation
 from src.persistence import RunStore
@@ -124,6 +126,38 @@ def test_shared_budget_is_solved_and_independently_verified():
         assert len(solution["selections"]) == 2
         assert solution["constraint_checks"][0]["satisfied"] is True
         assert solution["constraint_checks"][0]["observed"] <= 400
+
+
+def test_chinese_quantity_followup_and_empty_optimization_are_canonicalized():
+    current = "两个耳机一个键盘"
+    history = [HumanMessage(content="我有400元预算，想选几样东西")]
+    spec = shared_budget_spec()
+    spec["goals"][0].update(source_quote="两个耳机", quantity=2)
+    spec["goals"][0]["domain"] = catalog_domain("耳机", "耳机", "headphones")
+    spec["optimization"] = []
+    dialogue = {
+        "reason": "按上一轮总预算搭配本轮明确数量",
+        "commands": [],
+        "objectives": [{
+            "id": "bundle",
+            "kind": "CONSTRAINT_PLAN",
+            "source_quote": current,
+            "constraint_plan": spec,
+        }],
+    }
+
+    understanding = understand_turn(
+        current,
+        history,
+        None,
+        model=ScriptedModel(dialogue),
+    )
+
+    plan = understanding.objectives[0].constraint_plan
+    assert plan is not None
+    assert plan.optimization is None
+    assert [goal.quantity for goal in plan.goals] == [2, 1]
+    validate_constraint_plan_grounding(plan, [current, history[0].content])
 
 
 def test_infeasible_claim_requires_complete_search():

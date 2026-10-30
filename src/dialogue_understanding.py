@@ -182,14 +182,13 @@ reference: POPULATION continues its parent query, DELIVERED means only rows alre
 such a reference uses CATALOG. ARGMIN/ARGMAX never use ordering, limit or page. PRODUCT_SEARCH is literal lookup;
 PRODUCT_DISCOVERY is under-specified exploration, not a structured view.
 
-CONSTRAINT_PLAN represents 2+ finite-domain goals with shared/cross-goal hard constraints or explicit optimization.
-Declare every goal, exact quantity and constraint scope; never preselect candidates. A CATALOG domain contains query and
-must use selector ALL without metrics or partition. A shared total budget is one AGGREGATE SUM over all affected goals.
-The deterministic solver, not the model, selects and verifies combinations. SYSTEM_TIME reads the clock; CALCULATE only
-evaluates a literal expression. Constraint shape: {version,constraints,optimization,goals:[{requirement_id,source_quote,
-goal_id,quantity,domain:{requirement_id,source_quote,provider,parameters}}]}. Constraint kinds are AGGREGATE
-{scope_goal_ids,attribute,function,operator,value}, COMPARISON {left,right,operator}, and ALL_DIFFERENT
-{scope_goal_ids,attribute}; every constraint and optimization also has requirement_id/source_quote. Leave missing values empty.
+CONSTRAINT_PLAN: 2+ finite goals with shared/cross-goal constraints or explicit optimization. Declare every goal,
+quantity and scope; never preselect. CATALOG domains use query+selector ALL, without metrics/partition. Shared budget =
+one AGGREGATE SUM over affected goals; the solver selects/verifies. Shape: {version,goals:[{requirement_id,source_quote,
+goal_id,quantity,domain:{requirement_id,source_quote,provider,parameters}}],constraints,optimization?}. Kinds:
+AGGREGATE {scope_goal_ids,attribute,function,operator,value}, COMPARISON {left,right,operator}, ALL_DIFFERENT
+{scope_goal_ids,attribute}. Every requirement has ID/quote. optimization is object or null; without an explicit HUMAN
+preference omit/null, never []/{}. SYSTEM_TIME reads the clock; CALCULATE only evaluates a literal expression.
 """
 
 _CASE_FIRST_EVIDENCE_BOUNDARY_PROMPT = """
@@ -292,7 +291,7 @@ def _parameter_leaves(value: object, path: str = "parameters") -> list[tuple[str
     return [(path, value)]
 
 
-def _canonicalize_protocol(payload: object) -> object:
+def _canonicalize_protocol(payload: object) -> tuple[object, list[dict]]:
     """Normalize schema-level polarity and registry-boundary mistakes.
 
     The model still selects semantics.  This function only prevents a negated
@@ -301,14 +300,25 @@ def _canonicalize_protocol(payload: object) -> object:
     """
 
     if not isinstance(payload, dict):
-        return payload
+        return payload, []
     normalized = dict(payload)
+    normalizations: list[dict] = []
     commands = list(payload.get("commands") or [])
     objectives = []
-    for objective in payload.get("objectives") or []:
+    for index, raw_objective in enumerate(payload.get("objectives") or []):
+        objective = dict(raw_objective) if isinstance(raw_objective, dict) else raw_objective
         if isinstance(objective, dict) and objective.get("kind") == "UNSUPPORTED":
             commands.append({"kind": "UNSUPPORTED", "source_quote": objective.get("source_quote"), "message": None})
         else:
+            plan = objective.get("constraint_plan") if isinstance(objective, dict) else None
+            if isinstance(plan, dict) and plan.get("optimization") in ([], {}):
+                plan = dict(plan)
+                plan["optimization"] = None
+                objective["constraint_plan"] = plan
+                normalizations.append({
+                    "path": f"objectives.{index}.constraint_plan.optimization",
+                    "rule": "empty_optional_optimization_is_null",
+                })
             objectives.append(objective)
     commands = [command for command in commands if not (
         isinstance(command, dict)
@@ -317,7 +327,7 @@ def _canonicalize_protocol(payload: object) -> object:
     )]
     normalized["commands"] = commands
     normalized["objectives"] = objectives
-    return normalized
+    return normalized, normalizations
 
 
 def _apply_preference_defaults(understanding: TurnUnderstanding, defaults: dict | None) -> None:
@@ -622,10 +632,18 @@ def understand_turn(user_message: str, history: list | None, pending_action: dic
             if getattr(response, "tool_calls", []):
                 raise ValueError("Dialogue understanding cannot call tools")
             raw_payload = json.loads(as_text(response.content))
-            understanding = TurnUnderstanding.model_validate(_canonicalize_protocol(raw_payload))
+            canonical_payload, protocol_normalizations = _canonicalize_protocol(raw_payload)
+            understanding = TurnUnderstanding.model_validate(canonical_payload)
             _apply_preference_defaults(understanding, preference_defaults)
             _validate_grounding(understanding, user_message, history)
             if context:
+                if protocol_normalizations:
+                    context.record(
+                        "model_protocol_normalized",
+                        phase="dialogue_understanding",
+                        function="TurnUnderstanding",
+                        normalizations=protocol_normalizations,
+                    )
                 from src.request_ir import project_dialogue_request_ir
                 request_ir = project_dialogue_request_ir(user_message, history, understanding)
                 context.record(

@@ -27,6 +27,7 @@ from src.catalog_query import (
     verify_catalog_result,
 )
 from src.errors import AgentError
+from src.grounding import number_is_grounded
 
 
 CONSTRAINT_PLAN = "CONSTRAINT_PLAN"
@@ -423,14 +424,6 @@ def constraint_provider_prompt_catalog() -> list[dict]:
     return get_domain_provider_registry().prompt_catalog()
 
 
-def _number_in_sources(value: int | float, sources: list[str]) -> bool:
-    variants = {str(value), f"{value:g}"}
-    return any(
-        re.search(r"(?<![\d.])" + re.escape(candidate) + r"(?![\d.])", source)
-        for source in sources for candidate in variants
-    )
-
-
 def validate_constraint_plan_grounding(spec: ConstraintPlanSpec, sources: list[str]) -> None:
     registry = get_domain_provider_registry()
     for goal in spec.goals:
@@ -438,14 +431,14 @@ def validate_constraint_plan_grounding(spec: ConstraintPlanSpec, sources: list[s
             raise AgentError("UNGROUNDED_CONSTRAINT_REQUIREMENT", f"目标 {goal.requirement_id} 必须引用用户原文", retryable=False)
         if not any(goal.domain.source_quote in source for source in sources):
             raise AgentError("UNGROUNDED_CONSTRAINT_REQUIREMENT", f"数据域 {goal.domain.requirement_id} 必须引用用户原文", retryable=False)
-        if goal.quantity != 1 and not _number_in_sources(goal.quantity, sources):
+        if goal.quantity != 1 and not number_is_grounded(goal.quantity, sources):
             raise AgentError("UNGROUNDED_CONSTRAINT_VALUE", "目标数量必须来自用户原文", retryable=False)
         registry.registration(goal.domain.provider).validate_grounding(goal.domain.parameters, sources)
     for constraint in spec.constraints:
         if not any(constraint.source_quote in source for source in sources):
             raise AgentError("UNGROUNDED_CONSTRAINT_REQUIREMENT", f"约束 {constraint.requirement_id} 必须引用用户原文", retryable=False)
         if isinstance(constraint, AggregateConstraint) and isinstance(constraint.value, (int, float)):
-            if not _number_in_sources(constraint.value, sources):
+            if not number_is_grounded(constraint.value, sources):
                 raise AgentError("UNGROUNDED_CONSTRAINT_VALUE", "约束值必须来自用户原文", retryable=False)
     if spec.optimization and not any(spec.optimization.source_quote in source for source in sources):
         raise AgentError("UNGROUNDED_CONSTRAINT_REQUIREMENT", "优化目标必须引用用户原文", retryable=False)
