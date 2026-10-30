@@ -90,6 +90,7 @@ class BusinessObjective(StrictModel):
     query: str = Field("", max_length=300)
     category: str | None = Field(None, min_length=1, max_length=80)
     max_price: float | None = Field(None, ge=0)
+    quantity: int | None = Field(None, ge=1, le=12)
     product_ids: list[str] = Field(default_factory=list, max_length=4)
     soft_preferences: list[str] = Field(default_factory=list, max_length=12)
     excluded_terms: list[str] = Field(default_factory=list, max_length=12)
@@ -174,6 +175,7 @@ inaccessible or unsafe action. Stable text work is GENERAL_ANSWER; current unsup
 
 Use only runtime objective kinds and accepted fields. Ground every entity in HUMAN text/history and omit unrelated empty
 fields. AFTER_SALES_CASE uses one objective per order item; facts and no-submit boundaries are not extra goals.
+PRODUCT_SEARCH/PRODUCT_DISCOVERY must preserve an explicitly requested result count in quantity; omit it when absent.
 CATALOG_QUERY is the complete structured catalog AST. Give every scope/filter/order/partition/selector/metric/
 projection requirement a unique ID and exact quote. PREVIOUS_RESULT_SET is only for an explicit or elliptical prior-set
 reference: POPULATION continues its parent query, DELIVERED means only rows already shown. A newly named category without

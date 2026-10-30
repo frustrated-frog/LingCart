@@ -761,12 +761,16 @@ def _faq(objective: Mapping[str, object], _request: str) -> tuple[CompiledOperat
 
 
 def _search(objective: Mapping[str, object], _request: str) -> tuple[CompiledOperation, ...]:
-    return (CompiledOperation("catalog", "shopping", "search_products",
-                              _args(objective, ("query", "category", "max_price", "excluded_terms"))),)
+    arguments = _args(objective, ("query", "category", "max_price", "excluded_terms"))
+    if objective.get("quantity") is not None:
+        arguments["limit"] = objective["quantity"]
+    return (CompiledOperation("catalog", "shopping", "search_products", arguments),)
 
 
 def _discover(objective: Mapping[str, object], request: str) -> tuple[CompiledOperation, ...]:
     arguments = _args(objective, ("query", "category", "max_price", "soft_preferences", "excluded_terms"))
+    if objective.get("quantity") is not None:
+        arguments["limit"] = objective["quantity"]
     arguments["context_seed"] = request
     return (CompiledOperation("candidate-set", "shopping", "discover_products", arguments),)
 
@@ -980,13 +984,13 @@ def _builtin_registrations() -> tuple[CapabilityRegistration, ...]:
               missing_question="请说明你想了解哪项服务规则。",
               handlers={"answer_faq": tools.answer_faq}),
         _spec(PRODUCT_SEARCH, "catalog.search", "按用户明确条件搜索真实商品目录", "product",
-              "CATALOG", _search, accepted=("query", "category", "max_price", "excluded_terms"),
+              "CATALOG", _search, accepted=("query", "category", "max_price", "quantity", "excluded_terms"),
               under_specified=True, metadata_dependencies=(CATALOG_FACETS_DEPENDENCY,),
               normalizer=normalize_catalog_objective, normalizer_version="catalog_metadata_alias/v1",
               handlers={"search_products": tools.search_products}),
         _spec(PRODUCT_DISCOVERY, "catalog.discover", "在偏好不完整时生成真实、差异化的探索候选并继续偏好获取",
               "product", "CATALOG", _discover,
-              accepted=("query", "category", "max_price", "soft_preferences", "excluded_terms"),
+              accepted=("query", "category", "max_price", "quantity", "soft_preferences", "excluded_terms"),
               ungrounded_optional_defaults={
                   "query": "", "category": None, "max_price": None,
                   "soft_preferences": [], "excluded_terms": [],

@@ -173,11 +173,18 @@ def _facts(step):
             return "当前本地演示目录中没有可验证的候选商品。可以调整预算或条件后继续。"
         if name == "discover_products":
             prefix = "我先根据当前真实库存给你一组方向不同的探索推荐："
+        elif name == "search_products" and step.args.get("limit") == 1:
+            prefix = "按符合条件商品的价格从低到高，推荐："
         else:
             prefix = f"在本地演示目录中找到 {result['total']} 款符合条件的商品：" if name == "search_products" else "所选商品的实际参数："
-        reply = prefix + "\n" + "\n".join(
-            f"- {p['name']}（{p['product_id']}）：¥{p['price']:.2f}，{p['summary']}" for p in products[:4]
-        )
+        rows = []
+        for product in products[:4]:
+            specs = "；".join(f"{key}：{value}" for key, value in product["specs"].items())
+            rows.append(
+                f"- {product['name']}（{product['product_id']}）：¥{product['price']:.2f}，"
+                f"库存 {product['stock']}；{specs or product['summary']}"
+            )
+        reply = prefix + "\n" + "\n".join(rows)
         if name == "discover_products":
             reply += "\n\n这些是探索候选，不代表我已经知道你的个人偏好。"
             if result.get("unbound_catalog_language"):
@@ -235,7 +242,12 @@ def verify_observation(step):
                  and result.get("expression") == step.args.get("expression")
                  and type(result.get("result")) in {int, float} and math.isfinite(result["result"]))
     if valid and name in {"search_products", "discover_products", "compare_products"}:
-        valid = isinstance(result["products"], list) and all(isinstance(p, dict) and {"product_id", "name", "price", "summary"} <= p.keys() for p in result["products"])
+        valid = isinstance(result["products"], list) and all(
+            isinstance(p, dict)
+            and {"product_id", "name", "price", "summary", "stock", "specs"} <= p.keys()
+            and type(p["stock"]) is int and p["stock"] >= 0 and isinstance(p["specs"], dict)
+            for p in result["products"]
+        )
     if valid and name == "discover_products":
         candidate_set = result["candidate_set"]
         valid = (isinstance(candidate_set, dict)

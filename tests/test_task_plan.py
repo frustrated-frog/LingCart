@@ -90,6 +90,41 @@ def test_compound_goals_and_missing_slot_survive_new_service_instance(monkeypatc
     assert compound["plan"]["verification"]["all_goals_satisfied"]
 
 
+def test_explicit_recommendation_quantity_and_comparison_fields_survive_delivery(monkeypatch):
+    class Model:
+        def json_mode(self):
+            return self
+
+        def invoke(self, _messages):
+            return AIMessage(content=json.dumps({
+                "commands": [],
+                "objectives": [
+                    {
+                        "id": "headphones", "kind": "PRODUCT_SEARCH",
+                        "source_quote": "推荐一款 500 元以内的降噪耳机",
+                        "query": "降噪耳机", "category": "耳机", "max_price": 500,
+                        "quantity": 1,
+                    },
+                    {
+                        "id": "comparison", "kind": "PRODUCT_COMPARE",
+                        "source_quote": "比较 P1102 和 P1103 的库存和规格",
+                        "product_ids": ["P1102", "P1103"],
+                    },
+                ],
+            }, ensure_ascii=False))
+
+    monkeypatch.setattr("src.orchestrator.get_llm", lambda **_kwargs: Model())
+    result = run_orchestrator(
+        "推荐一款 500 元以内的降噪耳机，同时比较 P1102 和 P1103 的库存和规格"
+    )
+
+    search = next(item for item in result["trace"] if item["tool"] == "search_products")
+    assert search["args"]["limit"] == 1 and len(search["result"]["products"]) == 1
+    assert "按符合条件商品的价格从低到高，推荐" in result["reply"]
+    assert "库存 9" in result["reply"] and "库存 10" in result["reply"]
+    assert "佩戴方式：入耳式" in result["reply"] and "佩戴方式：头戴式" in result["reply"]
+
+
 def test_ambiguous_multi_order_goals_and_batch_writes_clarify():
     ambiguous = run_orchestrator("查询订单 1001 物流，订单 1002 是否能退款")
     assert ambiguous["status"] == "WAITING_CLARIFICATION"
