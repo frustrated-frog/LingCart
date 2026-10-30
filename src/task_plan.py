@@ -158,7 +158,13 @@ def _facts(step):
     if name == "get_order_status":
         return f"订单 {order_id} 当前{_STATUS_ZH.get(result['status'], result['status'])}。"
     if name == "track_shipment":
-        return f"订单 {order_id} 的物流进度：{_TRACKING_ZH.get(result['tracking_message'], result['tracking_message'])}。"
+        timeline = "\n".join(
+            f"- {event['timestamp']}：{event['description']}" for event in result["events"]
+        )
+        return (
+            f"订单 {order_id} 的物流进度：{_TRACKING_ZH.get(result['tracking_message'], result['tracking_message'])}。"
+            + (f"\n完整物流轨迹：\n{timeline}" if timeline else "")
+        )
     if name == "check_refund_eligibility":
         return f"订单 {order_id} 目前符合退款条件；尚未发起退款。" if result['eligible'] else f"订单 {order_id} 目前不符合退款条件：{result['reason']}"
     if name == "get_payment_status":
@@ -207,7 +213,7 @@ def verify_observation(step):
         "calculate": {"expression", "result", "data_source"},
         "get_order_status": {"order_id", "status"},
         "get_order_details": {"order_id", "status", "item", "amount"},
-        "track_shipment": {"order_id", "status", "tracking_message"},
+        "track_shipment": {"order_id", "status", "tracking_message", "events"},
         "check_refund_eligibility": {"order_id", "eligible", "reason"},
         "get_payment_status": {"order_id", "status", "amount", "method"},
         "search_products": {"products", "total"},
@@ -233,7 +239,16 @@ def verify_observation(step):
     if valid and name == "check_refund_eligibility":
         valid = isinstance(result["eligible"], bool) and isinstance(result["reason"], str)
     if valid and name == "track_shipment":
-        valid = isinstance(result["tracking_message"], str)
+        valid = (
+            isinstance(result["tracking_message"], str)
+            and isinstance(result["events"], list)
+            and all(
+                isinstance(event, dict)
+                and isinstance(event.get("timestamp"), str)
+                and isinstance(event.get("description"), str)
+                for event in result["events"]
+            )
+        )
     if valid and name == "read_clock":
         valid = (result.get("data_source") == "RUNTIME_CLOCK" and result.get("weekday") in range(1, 8)
                  and isinstance(result.get("observed_at"), str))

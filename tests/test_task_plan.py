@@ -30,6 +30,15 @@ def test_independent_results_survive_one_failed_order():
     assert len(result["plan"]["verification"]["incomplete_steps"]) == 1
 
 
+def test_shipment_delivery_renders_the_verified_event_timeline():
+    result = run_orchestrator("查询订单 1001 的完整物流轨迹")
+
+    assert result["status"] == "SUCCEEDED"
+    assert "完整物流轨迹" in result["reply"]
+    assert "2026-06-01T10:30:00：订单已创建" in result["reply"]
+    assert "2026-06-06T10:30:00：包裹已签收" in result["reply"]
+
+
 def test_missing_dependency_blocks_only_dependent_steps():
     result = run_orchestrator("查询订单 9999 能不能退款，同时告诉我退货政策")
     steps = result["plan"]["steps"]
