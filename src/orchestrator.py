@@ -129,7 +129,11 @@ def _shared_constraint_followup_feedback(user_message: str, understanding) -> di
     product_objectives = [
         objective for objective in understanding.objectives if objective.kind in product_kinds
     ]
-    if not product_objectives:
+    clarification_only = (
+        not understanding.objectives
+        and any(command.kind == "CLARIFY" for command in understanding.commands)
+    )
+    if not product_objectives and not clarification_only:
         return None
     budget = combined.entities.get("shared_budget")
     categories = combined.entities.get("categories") or []

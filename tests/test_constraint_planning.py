@@ -24,7 +24,7 @@ from src.constraint_planning import (
     validate_constraint_plan_grounding,
     verify_constraint_plan_result,
 )
-from src.dialogue_understanding import understand_turn
+from src.dialogue_understanding import TurnUnderstanding, understand_turn
 from src.errors import AgentError
 from src.durable import run_conversation
 from src.persistence import RunStore
@@ -211,6 +211,35 @@ def test_persisted_clarification_repairs_dropped_shared_budget_before_execution(
     assert any(event["type"] == "shared_constraint_followup_guarded" for event in result["events"])
     assert "pending_dialogue_clarification" not in RunStore().conversation(session_id)["state"]
     assert model.index == 4
+
+
+def test_persisted_shared_budget_guard_repairs_redundant_model_clarification(monkeypatch):
+    first = "400元帮我选几样东西"
+    current = "两个耳机一个键盘"
+    runtime = type("Runtime", (), {
+        "snapshot": {"conversation": {"pending_dialogue_clarification": {
+            "source_run_id": "run-1",
+            "source_request": first,
+            "question": "请告诉我品类和数量。",
+            "terminal_reason": "MODEL_CLARIFICATION",
+        }}},
+    })()
+    monkeypatch.setattr(orchestrator, "current_runtime", lambda: runtime)
+    understanding = TurnUnderstanding.model_validate({
+        "reason": "重复追问可选偏好",
+        "commands": [{
+            "kind": "CLARIFY",
+            "source_quote": current,
+            "message": "请补充耳机和键盘偏好。",
+        }],
+        "objectives": [],
+    })
+
+    feedback = orchestrator._shared_constraint_followup_feedback(current, understanding)
+
+    assert feedback is not None
+    assert feedback["requirements"][0]["source_turn"] == "HISTORY"
+    assert "400 元" in feedback["requirements"][0]["interpretation"]
 
 
 def test_infeasible_claim_requires_complete_search():
