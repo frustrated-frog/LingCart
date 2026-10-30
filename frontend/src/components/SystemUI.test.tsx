@@ -52,7 +52,21 @@ describe('ExecutionSpine', () => {
     ]} selected={0} onSelect={select} />)
     expect(screen.getByText('查询订单状态')).toBeInTheDocument()
     fireEvent.click(screen.getByText('已完成'))
-    expect(select).toHaveBeenCalledWith(2)
+    expect(select).toHaveBeenCalledWith(2, 'pointer')
+  })
+
+  it('supports directional keyboard browsing without hiding event identity', () => {
+    const select = vi.fn()
+    render(<ExecutionSpine events={[
+      { type: 'intake', sequence: 1 },
+      { type: 'tool_call', sequence: 2, tool: 'get_order_status' },
+      { type: 'terminal', sequence: 3, status: 'SUCCEEDED' },
+    ]} selected={1} onSelect={select} />)
+    const current = screen.getByRole('button', { name: '第 2 个事件，工具，查询订单状态' })
+    expect(current).toHaveAttribute('aria-current', 'step')
+    fireEvent.keyDown(current, { key: 'ArrowRight' })
+    expect(select).toHaveBeenCalledWith(2, 'keyboard')
+    expect(screen.getByText('tool_call')).toBeInTheDocument()
   })
 
   it('keeps an explicit empty evidence state', () => {

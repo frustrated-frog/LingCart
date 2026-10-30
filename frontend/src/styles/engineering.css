@@ -414,49 +414,103 @@
 .engineering-mode .comparison-label { padding: 6px 8px; border-radius: 8px; }
 
 .engineering-mode .run-prompt {
-  padding: 16px 18px;
   border-color: var(--eng-line);
   border-left: 0;
   border-radius: 15px 15px 0 0;
   background: rgba(252,253,251,.88);
   box-shadow: inset 3px 0 0 var(--eng-ink), inset 0 1px 0 rgba(255,255,255,.9);
 }
+.engineering-mode .run-prompt-meta { padding: 13px 18px 0; }
+.engineering-mode .run-prompt-meta span { color: var(--eng-blue); }
+.engineering-mode .run-prompt p { padding: 12px 18px 18px; color: var(--eng-ink); font-size: 13px; letter-spacing: -.008em; }
+.engineering-mode .run-prompt > i { border-color: rgba(82,102,232,.09); }
+.engineering-mode .execution-spine-shell {
+  position: relative;
+  border: 1px solid rgba(145, 184, 169, .17);
+  border-top: 0;
+  border-radius: 0 0 19px 19px;
+  background:
+    radial-gradient(circle at 78% 10%, rgba(82,102,232,.19), transparent 22rem),
+    linear-gradient(125deg, #0a1613, #0d1917 58%, #101925);
+  box-shadow: 0 24px 64px rgba(7, 21, 17, .14), inset 0 1px 0 rgba(208,255,237,.055);
+}
+.engineering-mode .execution-spine-shell::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image: linear-gradient(rgba(174,222,205,.035) 1px, transparent 1px), linear-gradient(90deg,rgba(174,222,205,.035) 1px,transparent 1px);
+  background-size: 24px 24px;
+  mask-image: linear-gradient(90deg, transparent, #000 20%, #000 86%, transparent);
+}
+.engineering-mode .spine-chrome {
+  position: relative;
+  z-index: 2;
+  padding: 14px 17px 12px;
+  border-color: rgba(174,222,205,.08);
+  background: rgba(255,255,255,.018);
+}
+.engineering-mode .spine-chrome span,
+.engineering-mode .spine-chrome small { color: #728b81; }
+.engineering-mode .spine-chrome > div:first-child > span { color: #79dfbf; }
+.engineering-mode .spine-position b { color: #eef8f3; }
+.engineering-mode .spine-position-track { background: rgba(197,232,218,.1); }
+.engineering-mode .spine-position-track > i { background: linear-gradient(90deg, #45d0aa, #7182ff); box-shadow: 0 0 12px rgba(92,116,255,.45); }
 .engineering-mode .execution-spine {
   position: relative;
-  gap: 4px;
-  padding: 26px 13px 20px;
+  z-index: 2;
+  gap: 6px;
+  padding: 23px 14px 18px;
   overflow-x: auto;
-  border-color: var(--eng-line);
-  border-radius: 0 0 17px 17px;
-  background: rgba(249,251,248,.72);
-  box-shadow: 0 16px 44px rgba(27,47,39,.055), inset 0 1px 0 rgba(255,255,255,.82);
-  backdrop-filter: blur(16px);
+  scrollbar-color: rgba(143, 180, 166, .3) transparent;
 }
-.engineering-mode .spine-node { z-index: 1; min-width: 128px; padding: 20px 9px 9px; border-radius: 10px; }
-.engineering-mode .spine-node::before { top: 6px; background: rgba(69,92,82,.22); }
-.engineering-mode .spine-node i { top: 1px; border-radius: 50%; border-color: #e3e8ff; box-shadow: 0 0 12px rgba(82,102,232,.2); }
-.spine-selection {
-  position: absolute;
-  z-index: -1;
-  inset: 0;
-  border: 1px solid rgba(82,102,232,.2);
-  border-radius: 10px;
-  background: linear-gradient(155deg, rgba(239,242,255,.94), rgba(255,255,255,.72));
-  box-shadow: inset 0 1px 0 rgba(255,255,255,.85);
+.engineering-mode .spine-node {
+  min-width: 152px;
+  min-height: 112px;
+  flex-basis: 152px;
+  padding: 31px 12px 12px;
+  border-radius: 13px;
+  color: #dce9e3;
 }
-.engineering-mode .spine-node.selected i { outline-color: var(--eng-blue); }
+.engineering-mode .spine-node::before { top: 13px; background: rgba(151,183,171,.2); }
+.engineering-mode .spine-beacon { top: 8px; border-color: #203b35; background: #5870ff; box-shadow: 0 0 0 3px rgba(88,112,255,.1), 0 0 16px rgba(88,112,255,.42); }
+.engineering-mode .spine-node.terminal .spine-beacon,
+.engineering-mode .spine-node.tool .spine-beacon { border-color: #18392f; background: #3ac49d; box-shadow: 0 0 0 3px rgba(58,196,157,.1), 0 0 16px rgba(58,196,157,.4); }
+.engineering-mode .spine-node.error .spine-beacon { border-color: #3d211f; background: #e86b62; box-shadow: 0 0 0 3px rgba(232,107,98,.1), 0 0 16px rgba(232,107,98,.35); }
+.engineering-mode .spine-node.model .spine-beacon { border-color: #2d2340; background: #9a73ee; box-shadow: 0 0 0 3px rgba(154,115,238,.1), 0 0 16px rgba(154,115,238,.38); }
+.engineering-mode .spine-node.evidence .spine-beacon { border-color: #173440; background: #4fa7d7; }
+.engineering-mode .spine-sequence { color: #82988f; }
+.engineering-mode .spine-node strong { color: #e6f0eb; font-size: 10px; }
+.engineering-mode .spine-node > small { color: #60756c; }
+.engineering-mode .spine-selection {
+  border: 1px solid rgba(119,139,255,.36);
+  border-radius: 13px;
+  background: linear-gradient(145deg, rgba(74,90,174,.27), rgba(255,255,255,.035));
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.08), 0 14px 30px rgba(0,0,0,.14);
+}
+.engineering-mode .spine-activation { left: 9px; top: 8px; border-color: #8da0ff; }
+.engineering-mode .spine-scan { background: linear-gradient(90deg, transparent, rgba(129,146,255,.2), transparent); }
+.engineering-mode .spine-node.selected .spine-beacon { outline-color: #9cafff; }
+.engineering-mode .spine-node:focus-visible { outline: 2px solid #9cafff; outline-offset: -2px; }
 
 .engineering-mode .event-probe {
   position: relative;
-  margin-top: 12px;
-  padding: 17px;
+  margin-top: 14px;
+  padding: 19px;
   overflow: hidden;
   border-color: rgba(82,102,232,.2);
-  border-radius: 17px;
-  background: linear-gradient(145deg, rgba(237,240,255,.94), rgba(246,250,248,.88));
-  box-shadow: 0 14px 40px rgba(47,62,119,.07), inset 0 1px 0 rgba(255,255,255,.9);
+  border-radius: 19px;
+  background: linear-gradient(145deg, rgba(238,241,255,.95), rgba(248,251,249,.88) 58%, rgba(236,248,244,.88));
+  box-shadow: 0 18px 48px rgba(47,62,119,.08), inset 0 1px 0 rgba(255,255,255,.95);
 }
-.engineering-mode .event-probe::after { content: ""; position: absolute; right: -45px; top: -55px; width: 150px; height: 150px; border: 1px solid rgba(82,102,232,.13); border-radius: 50%; }
+.engineering-mode .event-probe::after { content: ""; position: absolute; right: -54px; top: -68px; width: 180px; height: 180px; border: 1px solid rgba(82,102,232,.13); border-radius: 50%; box-shadow: 0 0 0 24px rgba(82,102,232,.025); }
+.engineering-mode .probe-title { position: relative; z-index: 1; }
+.engineering-mode .probe-title span { color: var(--eng-blue); }
+.engineering-mode .probe-title b { color: var(--eng-ink); }
+.engineering-mode .probe-signals { position: relative; z-index: 1; }
+.engineering-mode .probe-signals span { border-color: rgba(82,102,232,.13); border-radius: 999px; background: rgba(255,255,255,.58); }
+.engineering-mode .probe-signals i { background: var(--eng-blue); }
+.engineering-mode .probe-signals .recorded i { background: var(--eng-mint); }
 .engineering-mode .definition-grid {
   gap: 1px;
   overflow: hidden;
@@ -521,6 +575,23 @@
   border-left-width: 1px;
   box-shadow: inset 3px 0 0 currentColor, inset 0 1px 0 rgba(255,255,255,.6);
 }
+.engineering-mode .result-copy {
+  position: relative;
+  overflow: hidden;
+  padding: 21px 23px 22px;
+  border: 1px solid rgba(33,168,132,.18);
+  background:
+    radial-gradient(circle at 94% 0, rgba(33,168,132,.12), transparent 15rem),
+    linear-gradient(145deg, rgba(231,247,240,.95), rgba(247,251,248,.88));
+  color: #234c42;
+  box-shadow: inset 3px 0 0 var(--eng-mint), 0 18px 48px rgba(31,92,74,.07), inset 0 1px 0 rgba(255,255,255,.8);
+}
+.engineering-mode .result-copy::after { content: ""; position: absolute; right: -48px; bottom: -80px; width: 180px; height: 180px; border: 1px solid rgba(33,168,132,.12); border-radius: 50%; }
+.engineering-mode .result-copy-meta,
+.engineering-mode .result-copy p { position: relative; z-index: 1; }
+.engineering-mode .result-copy-meta span,
+.engineering-mode .result-copy-meta small { color: #178066; }
+.engineering-mode .result-copy p { font-size: 13px; line-height: 1.85; }
 
 .engineering-mode .experiment-pipeline {
   gap: 7px;

@@ -1,7 +1,8 @@
 import NumberFlow from '@number-flow/react'
 import { AnimatePresence, useReducedMotion } from 'motion/react'
 import * as m from 'motion/react-m'
-import type { ReactNode } from 'react'
+import { useEffect, useRef } from 'react'
+import type { KeyboardEvent, ReactNode } from 'react'
 import type { HarnessProfile, RunEvent } from '../types'
 
 const SOFT_SPRING = { type: 'spring' as const, stiffness: 420, damping: 38, mass: 0.82 }
@@ -244,16 +245,16 @@ export function TelemetryStrip({ items }: { items: Array<{ label: string; value:
   ))}</m.div>
 }
 
-export function ViewTransition({ viewKey, children, className = '' }: {
-  viewKey: string; children: ReactNode; className?: string
+export function ViewTransition({ viewKey, children, className = '', instant = false }: {
+  viewKey: string; children: ReactNode; className?: string; instant?: boolean
 }) {
   return (
     <AnimatePresence mode="popLayout" initial={false}>
       <m.div className={className} key={viewKey}
-        initial={{ opacity: 0, scale: 0.997, filter: 'blur(4px)' }}
+        initial={instant ? false : { opacity: 0, scale: 0.997, filter: 'blur(4px)' }}
         animate={{ opacity: 1, scale: 1, filter: 'blur(0px)' }}
-        exit={{ opacity: 0, scale: 0.997, filter: 'blur(4px)' }}
-        transition={SOFT_SPRING}>
+        exit={instant ? undefined : { opacity: 0, scale: 0.997, filter: 'blur(4px)' }}
+        transition={instant ? { duration: 0 } : SOFT_SPRING}>
         {children}
       </m.div>
     </AnimatePresence>
@@ -322,21 +323,83 @@ export function eventLabel(event: RunEvent): [string, string] {
 }
 
 export function ExecutionSpine({ events, selected, onSelect }: {
-  events: RunEvent[]; selected?: number; onSelect?: (index: number) => void
+  events: RunEvent[]; selected?: number; onSelect?: (index: number, origin?: 'pointer' | 'keyboard') => void
 }) {
+  const reduceMotion = useReducedMotion()
+  const nodes = useRef(new Map<number, HTMLButtonElement>())
+  const viewport = useRef<HTMLDivElement>(null)
+  const selectionOrigin = useRef<'pointer' | 'keyboard'>('pointer')
+  const activeIndex = events.length > 0 ? Math.max(0, Math.min(events.length - 1, selected ?? 0)) : 0
+  const position = events.length <= 1 ? 100 : (activeIndex / (events.length - 1)) * 100
+
+  useEffect(() => {
+    const node = nodes.current.get(activeIndex)
+    const container = viewport.current
+    if (node && container && typeof container.scrollTo === 'function') {
+      const left = node.offsetLeft - (container.clientWidth - node.offsetWidth) / 2
+      const behavior = reduceMotion || selectionOrigin.current === 'keyboard' ? 'auto' : 'smooth'
+      container.scrollTo({ left: Math.max(0, left), behavior })
+    }
+  }, [activeIndex, reduceMotion])
+
+  const moveSelection = (event: KeyboardEvent<HTMLButtonElement>, index: number) => {
+    if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
+    event.preventDefault()
+    const next = event.key === 'Home' ? 0
+      : event.key === 'End' ? events.length - 1
+        : event.key === 'ArrowRight' ? Math.min(events.length - 1, index + 1)
+          : Math.max(0, index - 1)
+    selectionOrigin.current = 'keyboard'
+    onSelect?.(next, 'keyboard')
+    nodes.current.get(next)?.focus()
+  }
+
   if (events.length === 0) return <div className="empty-inline">暂未记录执行事件</div>
-  return <m.div className="execution-spine" variants={STAGGER} initial="hidden" animate="visible">{events.map((event, index) => {
-    const [code, label] = eventLabel(event)
-    const tone = event.type === 'terminal' ? 'terminal' : ['error', 'verification_failed', 'hook_failed'].includes(event.type) ? 'error' : ''
-    return (
-      <m.button type="button" className={`spine-node ${tone}${selected === index ? ' selected' : ''}`}
-        key={`${event.sequence ?? index}-${event.type}`} onClick={() => onSelect?.(index)} variants={RISE}
-        whileHover={{ y: -2 }} whileTap={{ scale: 0.985 }} transition={QUICK_SPRING}>
-        {selected === index && <m.span className="spine-selection" layoutId="execution-spine-selection" transition={SOFT_SPRING} />}
-        <i /><span>{String(event.sequence ?? index + 1).padStart(2, '0')} / {code}</span><strong>{label}</strong>
-      </m.button>
-    )
-  })}</m.div>
+
+  return <section className="execution-spine-shell" aria-label="执行事件流">
+    <div className="spine-chrome">
+      <div><span>EVENT STREAM</span><small>持久事件序列</small></div>
+      <div className="spine-position">
+        <span>浏览定位</span>
+        <b>{String(activeIndex + 1).padStart(2, '0')}<i>/</i>{String(events.length).padStart(2, '0')}</b>
+        <div className="spine-position-track" aria-hidden="true"><m.i animate={{ scaleX: position / 100 }}
+          transition={selectionOrigin.current === 'keyboard' ? { duration: 0 } : SOFT_SPRING} /></div>
+      </div>
+    </div>
+    <m.div className="execution-spine" ref={viewport} variants={STAGGER} initial="hidden" animate="visible">{events.map((event, index) => {
+      const [code, label] = eventLabel(event)
+      const tone = event.type === 'terminal' ? 'terminal'
+        : ['error', 'verification_failed', 'hook_failed'].includes(event.type) ? 'error'
+          : event.type.startsWith('tool_') ? 'tool'
+            : event.type.startsWith('model_') ? 'model'
+              : event.type.includes('evidence') || event.type.includes('verification') ? 'evidence' : ''
+      const isSelected = activeIndex === index
+      return (
+        <m.button type="button" className={`spine-node ${tone}${isSelected ? ' selected' : ''}`}
+          key={`${event.sequence ?? index}-${event.type}`} onClick={() => { selectionOrigin.current = 'pointer'; onSelect?.(index, 'pointer') }}
+          onKeyDown={(keyEvent) => moveSelection(keyEvent, index)} variants={RISE}
+          ref={(node) => { if (node) nodes.current.set(index, node); else nodes.current.delete(index) }}
+          aria-current={isSelected ? 'step' : undefined}
+          aria-label={`第 ${index + 1} 个事件，${code}，${label}`}
+          whileHover={{ y: -2 }} whileTap={{ scale: 0.985 }} transition={QUICK_SPRING}>
+          {isSelected && <>
+            <m.span className="spine-selection" layoutId="execution-spine-selection"
+              transition={selectionOrigin.current === 'keyboard' ? { duration: 0 } : SOFT_SPRING} />
+            {!reduceMotion && selectionOrigin.current !== 'keyboard' && <m.span className="spine-activation" aria-hidden="true"
+              key={`activation-${activeIndex}`} initial={{ opacity: .7, scale: .5 }} animate={{ opacity: 0, scale: 2.4 }}
+              transition={{ duration: .24, ease: [0.23, 1, 0.32, 1] }} />}
+            {!reduceMotion && selectionOrigin.current !== 'keyboard' && <m.span className="spine-scan" aria-hidden="true"
+              key={`scan-${activeIndex}`} initial={{ x: -38, opacity: 0 }} animate={{ x: 150, opacity: [0, .75, 0] }}
+              transition={{ duration: .24, ease: [0.23, 1, 0.32, 1] }} />}
+          </>}
+          <span className="spine-beacon" aria-hidden="true" />
+          <span className="spine-sequence">{String(event.sequence ?? index + 1).padStart(2, '0')} / {code}</span>
+          <strong>{label}</strong>
+          <small>{event.type}</small>
+        </m.button>
+      )
+    })}</m.div>
+  </section>
 }
 
 export function DefinitionGrid({ items }: { items: Array<[string, string | number]> }) {

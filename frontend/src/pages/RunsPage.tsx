@@ -32,6 +32,7 @@ export function RunsPage({ businessMode = false }: { businessMode?: boolean }) {
   const [profile, setProfile] = useState('ALL')
   const [tab, setTab] = useState<Tab>('result')
   const [selectedEvent, setSelectedEvent] = useState(0)
+  const [eventSelectionOrigin, setEventSelectionOrigin] = useState<'pointer' | 'keyboard'>('pointer')
   const runsQuery = useQuery({ queryKey: ['runs'], queryFn: () => api.runs({ limit: 100 }), refetchInterval: 5_000 })
   const filtered = useMemo(() => (runsQuery.data?.runs ?? []).filter((run) =>
     (status === 'ALL' || run.status === status) && (profile === 'ALL' || run.profile.profile_id === profile),
@@ -42,7 +43,7 @@ export function RunsPage({ businessMode = false }: { businessMode?: boolean }) {
       navigate(`${businessMode ? '/sandbox/tasks' : '/runs'}/${filtered[0].run_id}`, { replace: true })
     }
   }, [businessMode, filtered, navigate, runId])
-  useEffect(() => setSelectedEvent(0), [runId])
+  useEffect(() => { setSelectedEvent(0); setEventSelectionOrigin('pointer') }, [runId])
 
   const detailQuery = useQuery({
     queryKey: ['run-detail', runId],
@@ -83,11 +84,21 @@ export function RunsPage({ businessMode = false }: { businessMode?: boolean }) {
             { label: '令牌用量', value: detail.tokens ?? '未报告', note: '模型服务商未报告时不伪造', tone: 'ink' },
           ]} />
           <SectionHeading index="01" title="执行主脊" note={`${detail.run_id.slice(0, 12)} / ${formatTime(detail.created_at)}`} />
-          <div className="run-prompt">{detail.request}</div>
-          <ExecutionSpine events={events} selected={selectedEvent} onSelect={setSelectedEvent} />
-          {event && <ViewTransition viewKey={String(event.sequence ?? selectedEvent)}>
+          <div className="run-prompt">
+            <div className="run-prompt-meta"><span>RUN REQUEST</span><small>原始任务输入</small></div>
+            <p>{detail.request}</p><i aria-hidden="true" />
+          </div>
+          <ExecutionSpine events={events} selected={selectedEvent} onSelect={(index, origin = 'pointer') => {
+            setEventSelectionOrigin(origin); setSelectedEvent(index)
+          }} />
+          {event && <ViewTransition viewKey={String(event.sequence ?? selectedEvent)} instant={eventSelectionOrigin === 'keyboard'}>
             <section className="event-probe">
-              <div className="probe-title"><span>事件探针</span><b>{String(event.sequence ?? selectedEvent + 1).padStart(2, '0')} · {eventLabel(event).join(' / ')}</b></div>
+              <div className="probe-title"><div><span>EVENT PROBE</span><small>选中事件</small></div><b>{String(event.sequence ?? selectedEvent + 1).padStart(2, '0')} · {eventLabel(event).join(' / ')}</b></div>
+              <div className="probe-signals" aria-label="事件记录摘要">
+                <span><i />序列 {String(event.sequence ?? selectedEvent + 1).padStart(2, '0')}</span>
+                <span className={event.timestamp ? 'recorded' : 'missing'}><i />时间戳 {event.timestamp ? '已记录' : '未记录'}</span>
+                <span><i />载荷字段 {Object.keys(event).length}</span>
+              </div>
               <DefinitionGrid items={[
                 ['事件类型', eventLabel(event)[1]], ['事件语义', eventLabel(event).join(' / ')],
                 ['发生时间', event.timestamp ?? '—'], ['事件序号', event.sequence ?? selectedEvent + 1],
@@ -292,7 +303,10 @@ function ResultTab({ detail }: { detail: RunDetail }) {
   const steps = detail.result.plan?.steps ?? []
   return <>
     <SectionHeading index="A" title="最终结果" />
-    <div className="result-copy">{detail.result.reply ?? '该运行尚未生成最终回复。'}</div>
+    <div className="result-copy">
+      <div className="result-copy-meta"><span>RUN OUTPUT</span><small>{STATUS_LABELS[detail.status] ?? detail.status}</small></div>
+      <p>{detail.result.reply ?? '该运行尚未生成最终回复。'}</p>
+    </div>
     <ResultArtifactViews artifacts={detail.result.artifacts} />
     <PolicyAwareCaseExecution detail={detail} />
     {steps.length > 0 ? <div className="table-wrap"><table><thead><tr><th>步骤</th><th>执行角色</th><th>操作</th><th>状态</th></tr></thead><tbody>
