@@ -103,6 +103,7 @@ class QuantityCodec:
     unit: str
     stored_pattern: str
     allow_stored_number: bool = False
+    zero_labels: tuple[str, ...] = ()
 
     def accepts(self, canonical_value: Scalar) -> bool:
         return (type(canonical_value) in {int, float} and math.isfinite(canonical_value)
@@ -118,12 +119,16 @@ class QuantityCodec:
             raise CatalogConceptError(f"codec {self.codec_id} 缺少已观察目录值")
         pattern = re.compile(self.stored_pattern)
         for value in values:
+            if isinstance(value, str) and value in self.zero_labels:
+                continue
             if self.allow_stored_number and type(value) in {int, float} and math.isfinite(value):
                 continue
             if not isinstance(value, str) or pattern.fullmatch(value) is None:
                 raise CatalogConceptError(f"codec {self.codec_id} 无法无损解释已观察目录值 {value!r}")
 
     def decode(self, value: Scalar) -> Scalar:
+        if isinstance(value, str) and value in self.zero_labels:
+            return 0
         if self.allow_stored_number and type(value) in {int, float} and math.isfinite(value):
             return value
         if not isinstance(value, str) or re.fullmatch(self.stored_pattern, value) is None:
@@ -136,7 +141,8 @@ class QuantityCodec:
 
     def manifest(self) -> dict:
         return {"codec_id": self.codec_id, "kind": "quantity", "unit": self.unit,
-                "stored_pattern": self.stored_pattern, "allow_stored_number": self.allow_stored_number}
+                "stored_pattern": self.stored_pattern, "allow_stored_number": self.allow_stored_number,
+                **({"zero_labels": list(self.zero_labels)} if self.zero_labels else {})}
 
 
 @dataclass(frozen=True)
@@ -261,6 +267,8 @@ _REGISTRY = CatalogConceptRegistry((
     ConceptDefinition("audio.wearing_style", "耳机佩戴方式", "specs.佩戴方式",
         ("eq", "ne", "contains", "not_contains"), EnumCodec("audio-wearing-style/v1", (
             ("in_ear", "入耳式"), ("over_ear", "头戴式"), ("open_ear", "开放式")))),
+    ConceptDefinition("hub.pd_power_watts", "扩展坞PD供电功率瓦数", "specs.PD 供电", ("gte", "lte", "eq"),
+        QuantityCodec("watts-string/v1", "watt", r"\s*\d+(?:\.\d+)?\s*W\s*", zero_labels=("不支持",))),
     ConceptDefinition("hub.port_count", "扩展坞接口数量", "specs.接口数量", ("gte", "lte", "eq"),
         QuantityCodec("integer-scalar/v1", "count", r"\d+", allow_stored_number=True)),
     ConceptDefinition("hub.video_output", "扩展坞视频输出规格", "specs.视频输出",

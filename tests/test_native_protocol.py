@@ -38,8 +38,11 @@ def intent(quote=REQUEST, price=500, order=True):
     if order:
         objectives.append(dict(id='order', kind='get_order_status', order_id=1001,
                                description='查询订单状态', source_quote=quote))
-    return IntentDeclaration.model_validate(dict(goal=dict(summary='消费任务', objectives=objectives,
+    result = IntentDeclaration.model_validate(dict(goal=dict(summary='消费任务', objectives=objectives,
         hard_constraints=[dict(description='预算', source_quote=quote, field='price', op='lte', value=price)]))).model_dump()
+    for condition in result['goal']['hard_constraints']:
+        condition.pop('catalog_concept', None)
+    return result
 
 
 def search(price=500):

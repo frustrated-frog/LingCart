@@ -26,7 +26,8 @@ Outcome cardinality belongs in outcome.quantity. CONDITIONS target explicit OUTC
 per-item condition lists every applicable outcome. An aggregate total budget cannot be encoded as each item's price:
 use UNKNOWN when the provided predicate protocol cannot faithfully represent it. Never silently weaken or split it.
 Product conditions describe catalog items only, not process rules or user facts. Use frozen catalog concepts when
-applicable. Use UNKNOWN for material ambiguity or unsupported semantics, rather than guessing a target/quantity.
+applicable. A concept predicate contains only description, source_quote and catalog_concept; the host compiles
+field/op/value. Without a concept, use description, source_quote, field/op/value. Never mix these forms. Use UNKNOWN for material ambiguity or unsupported semantics, rather than guessing a target/quantity.
 Restrictions: READ_ONLY forbids business writes; NO_PAYMENT forbids payment; NO_REFUND forbids refund;
 NO_SUBMISSION forbids final submission/payment/refund, but permits preparing local draft cases. Record explicit
 no-buy/no-pay/no-submit instructions as boundaries, never product conditions. No restriction grants authorization.
@@ -68,7 +69,8 @@ def extract_contract(context, request, history, *, previous=None, change_text=No
         return deepcopy(cached['contract'])
     model = get_llm(purpose='goal')
     native = getattr(model, 'native_protocol', False)
-    schema = _compact(IntentExtraction.model_json_schema())
+    from src.semantic_wire import condition_schema, decode_conditions
+    schema = _compact(condition_schema(IntentExtraction.model_json_schema()))
     prompt = _PROMPT + '\nCATALOG_CONCEPTS=' + json.dumps(registry.prompt_catalog(), ensure_ascii=False, separators=(',', ':'))
     declarations = None
     if native:
@@ -94,7 +96,7 @@ def extract_contract(context, request, history, *, previous=None, change_text=No
                 if getattr(response, 'tool_calls', []):
                     raise ValueError('Semantic extraction cannot request business tools')
                 extracted = json.loads(as_text(response.content))
-            contract = apply_extraction(extracted, request, history, previous=previous, change_text=change_text)
+            contract = apply_extraction(decode_conditions(extracted), request, history, previous=previous, change_text=change_text)
         except (ValueError, TypeError, AgentError) as error:
             violations = (error.errors(include_input=False, include_url=False, include_context=False)
                           if isinstance(error, ValidationError) else [{'type': getattr(error, 'code', type(error).__name__)}])

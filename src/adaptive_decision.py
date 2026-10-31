@@ -319,7 +319,9 @@ no-substitution, fallback and delivery instructions are execution guidance, not 
 Constraint={description,source_quote,field,op,value,catalog_concept?}. field=price|stock|category|product_id|name|summary|
 specs.<exact key>|null; op=eq|ne|contains|not_contains|lte|gte|in|not_in; value=string/number, string[] for in/not_in,
 or null when unbound. For listed CATALOG_CONCEPTS use field/value=null and exact
-catalog_concept={schema_revision,concept_id,operator,canonical_value}; operator=op. Never invent concepts/codecs.
+For a concept predicate emit only description, source_quote and
+catalog_concept={schema_revision,concept_id,operator,canonical_value}; omit field/op/value (host compiled).
+For a raw predicate emit description, source_quote,field,op,value and omit catalog_concept. Never invent concepts/codecs.
 Unknown catalog encodings are discoverable: keep field null, search, then refine_constraints.
 hard_constraints contains objects, soft_preferences/uncertainties contain strings; empty=[]. Omit unavailable fields.
 Soft preferences guide choice, never hard conditions/bindings. uncertainties are advisory, not automatic stops.
@@ -404,15 +406,16 @@ def decide(context, state, plan, history):
     concept_catalog = json.dumps(registry.prompt_catalog(), ensure_ascii=False, separators=(',', ':'))
     prompt = (_GOAL_PROMPT + '\nCATALOG_CONCEPTS=' + concept_catalog if initial else
               _PROMPT + '\nGoal already accepted: OMIT goal; use current effective predicates.')
+    from src.semantic_wire import condition_schema, decode_conditions
     def compact(value):
         if isinstance(value, dict):
-            return {k: compact(v) for k, v in value.items() if k not in {'title', 'description', 'default', 'maxLength', 'minLength', 'maxItems', 'minItems'}}
+            return {k: ({name: compact(item) for name, item in v.items()} if k == 'properties' else compact(v)) for k, v in value.items() if k not in {'title', 'description', 'default', 'maxLength', 'minLength', 'maxItems', 'minItems'}}
         return [compact(v) for v in value] if isinstance(value, list) else value
-    schema = compact(IntentDeclaration.model_json_schema()) if initial else None
+    schema = compact(condition_schema(IntentDeclaration.model_json_schema())) if initial else None
     if schema is not None:
         registry.constrain_schema(schema)
     if not initial and (state.get('feedback') or {}).get('code') in {'MODEL_FORMAT_ERROR', 'INVALID_TOOL_ARGUMENTS', 'INVALID_CONSTRAINT_BINDING', 'UNKNOWN_TOOL'}:
-        schema = compact(Decision.model_json_schema())
+        schema = compact(condition_schema(Decision.model_json_schema()))
         from src.direct_executor import _READ_ONLY_TOOLS
         schema['properties']['tool'] = {'anyOf': [{'type': 'string', 'enum': sorted(_READ_ONLY_TOOLS)}, {'type': 'null'}]}
     if schema:
@@ -475,7 +478,7 @@ def decide(context, state, plan, history):
             return decision
         if getattr(response, 'tool_calls', []):
             raise ValueError('Decision protocol does not accept model tool calls')
-        payload = json.loads(as_text(response.content))
+        payload = decode_conditions(json.loads(as_text(response.content)))
         if initial and isinstance(payload, dict) and 'action' not in payload:
             from src.native_protocol import normalize_intent_protocol
             payload, normalizations = normalize_intent_protocol(payload)

@@ -31,6 +31,9 @@ def strict_schema(schema):
             return visit(definitions[value['$ref'].rsplit('/', 1)[-1]])
         result = {k: visit(v) for k, v in value.items()
                   if k not in {'$defs', 'title', 'default', 'minLength', 'maxLength', 'minItems', 'maxItems'}}
+        if 'anyOf' in result:
+            result['anyOf'] = [branch for item in result['anyOf']
+                               for branch in (item['anyOf'] if set(item) == {'anyOf'} else [item])]
         if result.get('type') == 'object':
             result['additionalProperties'] = False
             result['required'] = list(result.get('properties', {}))
@@ -156,7 +159,8 @@ def decision_functions(state, plan, history=None, *, surface=None):
     from src.runtime import tool_spec
     from src.constraint_bindings import constraint_refs
     if state['goal'] is None:
-        schema = strict_schema(IntentDeclaration.model_json_schema())
+        from src.semantic_wire import condition_schema
+        schema = strict_schema(condition_schema(IntentDeclaration.model_json_schema()))
         from src.catalog_concepts import get_catalog_concept_registry
         get_catalog_concept_registry().constrain_schema(schema)
         quotes = human_quotes(state['request'], history, 300)
@@ -270,7 +274,8 @@ def decode_decision(response, state):
                               protocol_normalizations=normalizations)
     allowed = set(_READ_ONLY_TOOLS) | {'declare_intent', 'clarify', 'finish', 'revise_plan', 'inspect', 'complete', 'recommend', 'refine_constraints'}
     name, args, call_id = one_call(response, allowed)
-    data = deepcopy(args)
+    from src.semantic_wire import decode_conditions
+    data = decode_conditions(deepcopy(args))
     if name == 'declare_intent':
         if state['goal'] is not None:
             raise ValueError('The goal is already declared')
