@@ -1,4 +1,5 @@
 """已见任务诊断回归：每题一次，保存全部结果，不做机制收益比较。"""
+import argparse
 import json
 from pathlib import Path
 
@@ -6,13 +7,19 @@ from eval.run_live_eval import ROOT, evaluate, load_dataset, _report_json_dumps
 
 
 def main():
-    destination = Path(__file__).resolve().parent / 'run-01'
-    destination.mkdir(exist_ok=False)
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--only', choices=('hub', 'case', 'unknown'))
+    parser.add_argument('--output-dir', type=Path, default=Path(__file__).resolve().parent / 'run-01')
+    args = parser.parse_args()
+    destination = args.output_dir
+    destination.mkdir(parents=True, exist_ok=False)
     selections = (
         ('hub', 'eval/pg_effectiveness_20261031_tasks.json', 'PGE-T01', 'test', 'adaptive-v1', 'adaptive'),
         ('case', 'eval/after_sales_autonomy_tasks.json', 'ASA-D01', 'dev', 'after-sales-policy-execution-v1', 'auto'),
         ('unknown', 'eval/after_sales_evidence_boundary_tasks.json', 'ASE-D01', 'dev', 'after-sales-evidence-boundary-v2', 'auto'),
     )
+    if args.only:
+        selections = tuple(item for item in selections if item[0] == args.only)
     limits = dict(max_model_calls_per_run=16, max_prompt_tokens_per_run=256000,
                   max_completion_tokens_per_run=12000, max_seconds_per_run=90,
                   max_provider_attempts_per_call=1)

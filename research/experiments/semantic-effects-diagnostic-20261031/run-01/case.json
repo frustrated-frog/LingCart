@@ -1,0 +1,1108 @@
+{
+  "schema_version": 2,
+  "generated_at": "2026-10-31T08:14:50.388464+00:00",
+  "execution_source": "live_provider",
+  "manifest": {
+    "source_revision": "32aadb79f33902b284579bbf0c3a53a0c789cc34",
+    "dataset_path": "eval/after_sales_autonomy_tasks.json",
+    "dataset_sha256": "e7fa109171757a8bb04bd7c09fc2d4d8522bc402a01d67b0dbd4d77cdda2b838",
+    "execution_mode": "auto",
+    "source_tree_sha256": "7d5e813f827089dec53f1c50cce3dfe2894d9df50c5118c5a9111a67995127e0",
+    "source_files_sha256": {
+      "configs/harness/adaptive-ace-context-v1.json": "0c2629538535e0bdff83b1bfe3b0c91dc7f5673ac60a541ac54b21ace551fbd6",
+      "configs/harness/adaptive-liveplan-v1.json": "8a273819f3616c3985fbc7ad7469504694b12aed88e3fb63a0a13ce9953c9d8e",
+      "configs/harness/adaptive-objective-context-v1.json": "f60b9eb655c75edf3e762cff78b80ef685b28501eb1d394ab51e88d696221991",
+      "configs/harness/adaptive-pg-context-v1.json": "8d9bffc35e86ec9307f4aee4ae359a4de799db83d1d6583552d3abf64180cd6a",
+      "configs/harness/adaptive-pg-context-v2.json": "842cf66c8642fdec1a9e5113eb2057ea192938f7888de0303cf81595cdea2ebe",
+      "configs/harness/adaptive-pg-context-v3.json": "8993baffff3574d7d5ee4600481a38507506207415e98545f6f96d1bcd63d3ab",
+      "configs/harness/adaptive-pg-context-v4.json": "38e16dbcb9e5715d0a7c21c5d20e8982b434a476e1a85c78b8af867b47670aaa",
+      "configs/harness/adaptive-pg-preplay-v6.json": "84a4c4069b1a784388efee503a2dfb179b0f23aa7bccffe236316f17f4cc3e90",
+      "configs/harness/adaptive-pg-v3-shared-graph-v1.json": "5dc775749e2d7d755a48fd7da79eda10f38c5f21fba16bd71831378d53ebebc1",
+      "configs/harness/adaptive-v1.json": "160f8f1d24ba0b07ef8685c06c4d6173af771d5684a331137c5fe481a8cb7133",
+      "configs/harness/after-sales-active-clarification-v5.json": "71156f5179d8de3b1356b2d48c93b5e15296abec7c9dd0c51ef4ebd24b906651",
+      "configs/harness/after-sales-evidence-boundary-v2.json": "b054ef128ac3894bf271492651368ff8719d2e775a0d35878fb7390bc00502df",
+      "configs/harness/after-sales-evidence-readiness-v3.json": "f500d762eb1235c76729506773ecc7d10cc7de44579a46089502971e82daabe0",
+      "configs/harness/after-sales-obligation-graph-v4.json": "b5532f5e7bd16eb26faab1da2b7fb9e8f560dda9bbdfe715ffbb0156e3d95801",
+      "configs/harness/after-sales-plan-observer-v0.json": "1b8ffd6e8e0de65ef15e7ad4864ae586462738b08f91895cadc22d1f88b836ea",
+      "configs/harness/after-sales-policy-execution-v1.json": "3c87b54d7b6d4d3b0e8a05e38b4cea895198e04249f89f751aa21806742cf386",
+      "configs/harness/baseline-v1.json": "4ffb6245a0055b4e7d24e8c8abfb86d770777fcf57427f4e432ba0929c419a2d",
+      "eval/adaptive_checks.py": "9c8798ada5cb2210ddb7d92b9bba74c0aa3e9498c90ad917e8e853f6ae1420b1",
+      "eval/after_sales_autonomy_checks.py": "76aa8809ee806be126675b653d7896d156a1490187a9727cb3ffa7c794fcc6e7",
+      "eval/eval_journal.py": "0b9596cdeb491e930f00ce59eaca0c330c3eb2d237aee02466e67da8defa5d40",
+      "eval/experiment_contract.py": "0ab4c89debdcbcad61a2164944114472a3fd0d976d4d88159de21609436521a4",
+      "eval/run_ace_adaptation.py": "49c1fec0870c0f2bd18709193198bf28a848f1a0d64a8e4af1cf23b791135fa7",
+      "eval/run_adaptive_eval.py": "4d9e4b836dabf4966ed018a323d4866ca7577667f104dac988c1acba749bef47",
+      "eval/run_eval.py": "4a8738dd5b13caa677025ac06d40be749c8820aace161ac79e0ff1c980518aec",
+      "eval/run_evidence_semantic_eval.py": "ce1d55a17d18056a993721bccb0bd3add3cc474315034f2ea969f1d7eb9f2f93",
+      "eval/run_live_eval.py": "1958a7f546415b5657a3fa32930fc1aa8cf8519bf2612149838a01f72cc85092",
+      "eval/run_liveplan_monitor_eval.py": "d68948345ae2eac77c604e4ceb24eaf8d79eb9a60e52cb017d89d5f3d5dc05a4",
+      "eval/run_pg_effectiveness.py": "c58354d78aab4d7207ce747f391af2a79977c7eafd7be2bcfaa15cdc1c3f31a7",
+      "eval/run_pg_evolution.py": "8eb928034daf3ead3cb83bb09c72a11de0f6724eadd2e27074422d68eef5de54",
+      "eval/run_pg_guidance_eval.py": "345bd08c1b4116be99d7f0b67f7594ebd57aa0b9a407488aa8a829ddaed88f7b",
+      "eval/run_pg_lab.py": "f4240e9df66a26bb78b19e9185edea4fbf3b0aa50ac2c304e10c1d5688c2ff0d",
+      "eval/run_pg_localization_eval.py": "9b0538a448cd3cb504a5abf26bac5ebfd8cf941932fda3c23c424afc039296c2",
+      "eval/run_pg_preplay_eval.py": "eb88dca28ae1ebef6b9998e40a42d8f3948f5d46ba5dfb320f0fd55cd4fd6da2",
+      "eval/run_pg_state_condition_eval.py": "68b57cf40086d2861c18a13c5f1b45fac475f442af67362cd167216ca598cf16",
+      "eval/run_semantic_live_eval.py": "3df5d460c84a83916806f5ff6d60e74abf2eaa0b1c36cd39ace7cce08f02f92d",
+      "eval/run_task_eval.py": "5da3c233d01a981a034ae0e3afdfdeb3594e9282730951a7e0d4ba4e58c4babb",
+      "eval/semantic_contracts.py": "93a9057d435b81c72919f48bd3fdb0419401a1d1b8d250c2fd8016e1d1080caf",
+      "eval/semantic_oracle.py": "d7056db880901cc0babee9d035728004c0f059b9133556494fa16b7445ebc3f9",
+      "src/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "src/ace_context.py": "561c1cfc580158b1885f78894b923d610e6cff1b20f50b2461b506b66e71a097",
+      "src/ace_learning.py": "765b6f1b1f417194a63c3cbdcea07ffa550bd244144494936eb1fbde64d28297",
+      "src/adaptive.py": "2ded5526f3c003e22b4001e61e5c19be90ecaca845f320bddff14c29b3b3c7bf",
+      "src/adaptive_decision.py": "311e278b743a24fc46cdb6ba3899d76c60ec678b1662d3ceb2b60043badc867e",
+      "src/adaptive_goals.py": "183283136df850da1e58cd7887dd6212ad456a3b958c0ab54d671bc1af282f8a",
+      "src/after_sales/__init__.py": "79d73c6fd620d0e9e33078e732d1b5a709239f6ac874247734e9a7713f2dc0e1",
+      "src/after_sales/actions.py": "de76ca7a9d7064922df7257f67fd75ac792b00beed8cb3662af86c29c9c5b6bd",
+      "src/after_sales/clarification.py": "b3967a3d6a033660cd0e15067237e70001a52ad953e2aed51d76421dcbf0e193",
+      "src/after_sales/context.py": "056add2ec67b5c81d3f95a9caafd4e1c60595618241add0d5dafe032bc47d2f1",
+      "src/after_sales/contracts.py": "48065e5caa0d42e39aec78228737d2ce2edffc0586b2510907cb53ac6c5fc13d",
+      "src/after_sales/evidence.py": "504c6e89678852aeb08cd044cc521a03cd82e213bbf187d1cb03e8503b753861",
+      "src/after_sales/execution.py": "09888d9509579b1fb18ead46b8dad09fcd9aca815b183ef7dca22f4240102055",
+      "src/after_sales/intent.py": "60b09dc3f004d543873e9c89f33d5c2e1640ac54d2e8d8f24c8f6d93fdf8ee88",
+      "src/after_sales/obligation_graph.py": "153836b49e22425cfaee96e2ac22e535ba44ed848361c2b0550e2992494dea11",
+      "src/after_sales/pending_clarification.py": "31c011e4df04b58fc260a280b7f7ce12a5c493521600ace74300dcb5b5684310",
+      "src/after_sales/planning.py": "fbd0505874efbf609abdc98f7ad12bad541c279d718c6ea55226587128a84d6b",
+      "src/after_sales/policy.py": "53504a7e6cc97bbdba32715a55cb0d00e512be646c4c17e6eb71413c1e54af0d",
+      "src/after_sales/queries.py": "fb1ba823ad035ddf1d992739628cc1df93135a804cbb9d3d7bd41d0fe7d662ec",
+      "src/after_sales/readiness.py": "62e5af9fedaa211304a9089b1ff8c7f3bf9177dc72a9eff8aeef6e4d2cb220aa",
+      "src/after_sales/reason_taxonomy.py": "6135072b97a0f9e826e8d25915a61fba44e866f8178c20e4788e4779cf9b5393",
+      "src/after_sales/semantic.py": "a5ea217a372e1f058ffa2773e0597f45384fe1e316278f762eb8fa363e742561",
+      "src/after_sales/service.py": "05210ccf072767bb2e687fef11a8b393cbc0c7a7f5accfd38be176c54afd2f48",
+      "src/agents/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "src/agents/base.py": "6b03a4e21c6ee3d7a934d41847871556cef541450a3197615fb274fee53949ea",
+      "src/agents/faq_agent.py": "4ec4b989ca0215b2ad806fa055f2f725ef6ddd0a4420aec110b391268a65246a",
+      "src/agents/order_agent.py": "0124fcd051d9f8c89fc077c229eb2a89a555d640ee9a85000ae76ee01e59788f",
+      "src/agents/payment_agent.py": "2740e45e1e917fb21a03843e1d3e86a148b8c46c578f04d5eca018e13345be2f",
+      "src/agents/refund_agent.py": "34f99c4b5d990febcbc2e9e796e5bb3244dd190687101124774e91b504d0216a",
+      "src/backend/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "src/backend/catalog.py": "c71cccfa0f8975f19fd1b4d48ff5e2dfd35bc7de382232f0e91b94380ac5a054",
+      "src/backend/db.py": "f3ef3f0b90765f4790a7b4ed9d60a6bd412e4a6fd788f8ebf9003849077a9624",
+      "src/backend/seed.py": "b95cc590d157578fa94b69b8b73fb9fdc63d3c7ce902fe2d6fcb3f6ac2229108",
+      "src/capability_registry.py": "ff153e3733ca22b506725e090788e54f3ec2f4bd5fa2203478f3a14bacabb45c",
+      "src/catalog_concepts.py": "cbd68a7d490d46b59f1dbcbf97dd4f7700e31226b5555a37d97c960e503dfc15",
+      "src/catalog_metadata.py": "3c63f71e9ab6ee760a89ffcf95b8c90e1b69f76b6577f1d9845550c5a31ff0c0",
+      "src/catalog_query.py": "3336492fcff15a6b9a5b90c76a216f35de149e0476df7594108d24612c498a88",
+      "src/catalog_request_audit.py": "18a20c9213ec9ad0adaf1b7b85eadc12db65b91a1d67ebe7d3f13c7306f1d681",
+      "src/constraint_bindings.py": "11c51d611e7bdbc7b0ed86f7e0cf14f783e8356023e239d39c40cfbbb9993d13",
+      "src/constraint_planning.py": "99af1d7acb632d4fe6af9bf6672014edfe18a780388ed87d79ce8682a2eb68d9",
+      "src/context_budget.py": "5641c5461cc7a3d92a4b0062f455ae269e7999ca8dabafce37dd50e26e4186c3",
+      "src/context_engine.py": "a945e7157c339b07cb994d356f8a7768aa12650c63f5dccec34f4086ac8b8a9e",
+      "src/dialogue_understanding.py": "5460bdbe808592b4e33925ec2604fcd4ebde2a659899246c0fccde3634fdd1f5",
+      "src/direct_executor.py": "55f3755e62fdb9cb52c2f020f6cfb7f33614eea29f8d348ac95a6c958fb5947f",
+      "src/durable.py": "927539ddbbb2a397f461fd0c7d1996784eecc3b2df2b1fc475d9ce8f17657a4f",
+      "src/engineering_console.py": "acf2e1d864469b734bb965b440951c47a5a201e3c6314aba88c2bd4bcd507f64",
+      "src/entity_resolution.py": "287aa5d6e110b8b073f2e740438199f068b3b0566b3a3f79758c23f50db27ba4",
+      "src/errors.py": "61e9d1f964d08297fc62f56fa30f86c056d5ee00b0c23e299c764f59be03a57f",
+      "src/execution_boundaries.py": "df5d45a1a132497ce5442f2e09dfe2158c5a9bf131165191fb746bccf7da5f18",
+      "src/failure_recovery.py": "d02d04007e97cdbe80513922db73575779fc6f6aa83fba0038e81f5551634e49",
+      "src/general_answer.py": "94900becc6fbcbf582e55586c5d442eaac0cf40de86587c66b8f80d64f6c29af",
+      "src/grounding.py": "867a280e6dddd312c9fa4eae22e50c4d33e007469ada34fc4b04f722d0ea2115",
+      "src/harness/__init__.py": "cbf6b5f4d53fc814aa7ffaacf3cb9d5f1964810da7b7466103120cf6458f08a8",
+      "src/harness/contracts.py": "98b8cf8b0f8dd124f4836a286ba035434a390a94ab25f45aaaac4b1fc6f18bdc",
+      "src/harness/mechanisms.py": "9a900d454bdb05a40ec9bd3e72777f96746cda59a92d24e34087c4465f9d2b86",
+      "src/harness/profile.py": "827e1dbf36006aa4498d68404b899e739731e88f649c0f55ef3ee974c1234d7e",
+      "src/harness/registry.py": "99bc6777030983c9e1cfa8015a471bcb9669d78b708274870da5bc4904767185",
+      "src/intake.py": "c81b06132f69c14ce782067d4252b1a8cf23f08ab642efd6563f1c5d09ca6abc",
+      "src/liveplan.py": "ff77d84bcfa156695d2defd962737a0ecd14557ef96306b67f6b8505660dda7a",
+      "src/liveplan_contracts.py": "483466c1fab38fb74ba8f7a663258896a76ea572a31eb51e111f7d056adc9189",
+      "src/liveplan_monitor.py": "4e61c603e1aa512c633ef580816749878ddeb16ea0f154ff7edf11f140f29adf",
+      "src/llm.py": "192be84e89128659ddb00462be6ae9e10924948ea726cb884edf16717bcf9fde",
+      "src/logging_config.py": "2fb67e8f4b1e9c4f1ab3a4b5eb2e9131484bfe771797d094979a4999999066ad",
+      "src/loop_guard.py": "703629ff206541a99d6a7e766225a59b98b127366e9a186d63dbe058bebcc153",
+      "src/memory.py": "4dbf15be84ec0323b388566d0032b07617f6b4acdc1f30fe574ffa3f98e2ff1a",
+      "src/model_gateway.py": "78b67fa5a21059ba8204b6e9a1c9a1895b54062b3dca967b72fcab80adbd2268",
+      "src/native_protocol.py": "01f3d37d9726f52b95dd5e2453909e66d8489abfb314a60c61b01d3b8a5f89c5",
+      "src/orchestrator.py": "acf7c3d079c64acb5db98cd5d1c768041c28c64927f769a256b22dc8d53eddad",
+      "src/persistence.py": "3f075320e4108a2b874ef221d008e135702e18a1d301ff031164aa27fc4e2da8",
+      "src/pg_api.py": "a240cec5b47bf89f3558e55b1e13527b0598dfc22d6538a741fdc8e8f91d84f0",
+      "src/pg_conditions.py": "879851dc46845492cca1f9467fd831b4754bb2075a226b7db671ab9416c01d1a",
+      "src/pg_context.py": "ba857ca306f02e3c02420bc7142b08a9e1ca0f36155e7f0d3fa22b654f991532",
+      "src/pg_credit.py": "f0b068ad1772523d04186ed0f0636181e8418897da468f4bff804b7e3dd144e2",
+      "src/pg_evidence.py": "d65a25dd47943e8b2c289611ca7aca33fc787002c39bbea869e7a37f036d90b6",
+      "src/pg_experiment.py": "eb556e0db19c476fdad08cb32277d8149b663cb9dc12979c46e83a363c134d61",
+      "src/pg_guidance.py": "079d3275c85e611db5df0eb3e3a03cbfcd2e0bb6e0545cf0563b35641248f174",
+      "src/pg_hypotheses.py": "027f3f440be262a8d6110b339f81e22dc94507c4ef8577abe1538a1e3a0e7792",
+      "src/pg_jobs.py": "929270b48d8f1efaf7969b61f0b238d42e158e99bb6e604982e74b37a9d8aaf2",
+      "src/pg_learning.py": "fff9f741878a78ea9db59a551cf16f69b0c9ab562ec2512f72bdb1eefcc61fc7",
+      "src/pg_preplay.py": "9ccdaef3a7de7af6fa42dd80709683d3967279200bfd2016a28b0a35bf666dad",
+      "src/pg_progress.py": "8d8eeab4bb78b1fa10078f3ddaf1fcff5c0f0aaacda4491d1d5c3f0854809469",
+      "src/pg_retrieval.py": "c3ea8d0f1f8931daa9856d30ad6a60e925a9dc1a2c13bbf4f5663614e0813c1c",
+      "src/preferences.py": "c7f253bbe7c4ba479dbcd68872bc4bc5dd6c8339de678be1ed2beacfa0831c9e",
+      "src/procedural_graph.py": "cbc71a7ffd4147ac9581f56079843b71e456871ab46f127b583f6fd9d6070292",
+      "src/recommendation.py": "a58dd655d88aa2bd0f57410e35e60ef7aa758f8f956f046ef872d82751d010cd",
+      "src/recovery.py": "e87ad2531801d0da5f8b090128e03a686cd7b11b6ce6650b7836a31e720f7cf1",
+      "src/request_audit.py": "360913897cf65c47c32323482dd16ca15e378307b6767b89f0f3a13030db3ceb",
+      "src/request_compiler.py": "529fc4103a48d4104a16d9329638674dec7a20056e6ff746c97f8de0ebbd1279",
+      "src/request_ir.py": "451005193454ee03d4c26a59ecd48614dfb7ef876518ed745c6a60f4d4c5b2e8",
+      "src/request_semantics.py": "cea32657c9075f5a23e0f7108b000d5ab6bd7023a968790868e1e0563531bfe0",
+      "src/request_semantics_runtime.py": "8fc20379b49d260c8d1735af280ff07271a05a82bde81dfe512935460072f3f4",
+      "src/response_stream.py": "474918950cf548feb347afd6d8211c6e34a0df8b28a137e304cc038807a367f6",
+      "src/runtime.py": "d68c932d33dab1d94aaf47d675dad555af7e54bede1eb9422414ab480d5c187e",
+      "src/runtime_state.py": "385d62170e9e8f781df47724fc3972f458833575ea4fa145fc078b86e9f22830",
+      "src/semantic_wire.py": "024e33776a0324cc1623723fed243974f694f1323daf309c2dc38e3b7975f14c",
+      "src/session_control.py": "7ffb8c6b50a8cdd5d03ba97d6b44080a3149ee326a9316d941bfa332b354146d",
+      "src/task_plan.py": "07c8e851ab954029d5e3962e390b0d1bc0b14a53399365f34a502d47fbe01c5b",
+      "src/tools.py": "e51e817b58fa4e13490b693b59db1b5f564c57c8a8fb334c0d44ca3efacfc184",
+      "src/trace_projector.py": "2cb5fd9f03cc84cedd658216fec0e1afb76902716c0fed6c3a0f4710dbd4fa60",
+      "src/web_host.py": "fe3f2ac7e84e137b286e0b21732b330b6fc34ae00db4750c56077990ae8ad0b8",
+      "src/workspace.py": "91df61f0216033345b7c48c8357e1d220c5b75a45a83c0b6513ff124876c8086"
+    },
+    "kernel_source_sha256": "93b7e99c1cbb2ab34c589ddc1ca6490f0f411b94757b6ad6c1c718c971ae3760",
+    "kernel_boundaries_sha256": {
+      "state_and_side_effects": "66d8c766e2035dacbf130ee85713c58495c2cd579ab841b9ea8a869328130298",
+      "persistence_and_recovery": "2ce66e81fb54fc6566fc0cc249ba2166849e60cc1ff5e206ad470ede35655408",
+      "model_call_protocol": "13000e02ab28feb38861e40db75bdb8a251273ed7d66c687cfb75a82b0ef5c4b",
+      "catalog_semantic_binding": "012d00eae40cb8c9e007aead762ec1d9af1046394e45bb583dbce9a1d783c503",
+      "harness_assembly": "07f72e75c6069bd5cbe14c77bbe4acce6d4620e3c2dca837ea8e034124e1c4e8"
+    },
+    "prompt_source_sha256": {
+      "src/adaptive.py": "ea75a21d565dcb3e505417e2f459c5e898f2e4424ee188e22b504c87ca919067",
+      "src/adaptive_decision.py": "17c7cd58dfbf1b31b3f37d69682c888929cc6f5e973de029ac623b2cca6691ea",
+      "src/adaptive_goals.py": "90c75c785e5d58c099232b8f52f2872f87309422b5f5fe64baa86eda832fbd9c",
+      "src/agents/__init__.py": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "src/agents/base.py": "355d4e564e2a5675200716e2892903fcfebf48c3539702703e201ff5f8575559",
+      "src/agents/faq_agent.py": "5448ef26aaf0eeaecf0771b81e1cf1e44f27f2418688c20cbd2eb6fb06d82c36",
+      "src/agents/order_agent.py": "b91f9fddc5dc5adadc33469052c1677fbf39c1c8dadd7672497c80f6b79c40ce",
+      "src/agents/payment_agent.py": "087ebaa9c853c01f785291e37ce4cb96b6b59741c3cfd242f1b99c38e99d2628",
+      "src/agents/refund_agent.py": "0cbf18fc008b69033003c52cb88cd956097248b1e2940f434abbbacb93a64e8f",
+      "src/catalog_concepts.py": "ae0a159be749375d41b531cf6d61b5b99ef5e13fc118784db65f850db042bba4",
+      "src/constraint_bindings.py": "dc849d35c52deed92442facd526623de9b88b4a2fffab59c16715de64b328c98",
+      "src/dialogue_understanding.py": "da601d2e4e6d04f3368635d86e2095e861484e8ebcd1d713a46d45dbd6b1bc3d",
+      "src/liveplan.py": "707bb7d35684470fcee93143cba09daa86c4733f1ce18f535684a67ae6778550",
+      "src/native_protocol.py": "65c8925f1257194042c37cdaa39f6d3be8d65468a42cf6e33edf74191b4bdd12",
+      "src/orchestrator.py": "def0187bddf9fe18fee024b222efa1d9c688f0a1a86ea049ea0e462dc3dfa356",
+      "src/request_audit.py": "494b60dee650496c38dc4eee72c830decdaca5ea0ca42403c92359e49cfcbc5a",
+      "src/request_semantics_runtime.py": "3817891fefeffc9866793bc5c167eebd2662cd5c2d1df0e2343e8a0044280e14"
+    },
+    "evaluation_protocol_sha256": "4bf8974fdd946a23a5f3b14ae87092df554e56a3ce1f64972b24be28ba141cd2",
+    "business_protocol_sha256": "05edf53a74134b2cf05c7a655b79a517703137125ff4a98b502e98dffc968abb",
+    "business_environment": "fresh_demo_sqlite_per_sample",
+    "pricing_verified": false,
+    "python_runtime": {
+      "implementation": "CPython",
+      "version": "3.13.13"
+    },
+    "dependency_lock_sha256": "eb9d69054ad6c0e30058b222ed59ea51c6b2fd978dd41ab824912a76fa516c28",
+    "container_image_digest": null,
+    "suite": "support",
+    "split": "dev",
+    "repeats": 1,
+    "harness_profile": {
+      "profile_id": "after-sales-policy-execution-v1",
+      "profile_version": "1.0.0",
+      "profile_sha256": "563b685b50f0e89369677404c6211e2e3671fa8ae3f8aa60c5eff0be6e4e9ef1",
+      "engine": {
+        "id": "orchestrator",
+        "version": "1",
+        "execution_mode": "auto",
+        "implementation_sha256": "4aefaa4ab0f1b76ae39bc588670a9490aea9eaf96bf4e183c58775f9bba190a1",
+        "source_files": [
+          "src/harness/registry.py",
+          "src/orchestrator.py"
+        ]
+      },
+      "mechanisms": [
+        {
+          "slot": "planning",
+          "id": "policy-aware-case-execution",
+          "version": "1",
+          "implementation_sha256": "3c41c72289f8a3edd192915196afa5741d16e124f96530bdc80d8b1d4443ebdb",
+          "source_files": [
+            "src/orchestrator.py",
+            "src/dialogue_understanding.py",
+            "src/task_plan.py",
+            "src/after_sales/execution.py",
+            "src/catalog_request_audit.py",
+            "src/catalog_query.py",
+            "src/capability_registry.py",
+            "src/catalog_concepts.py",
+            "src/catalog_metadata.py",
+            "src/intake.py",
+            "src/harness/mechanisms.py",
+            "src/after_sales/intent.py",
+            "src/after_sales/context.py",
+            "src/request_semantics.py",
+            "src/request_semantics_runtime.py",
+            "src/semantic_wire.py"
+          ],
+          "configuration": {
+            "case_execution_mode": "policy_aware",
+            "evidence_intake_mode": "model_default",
+            "action_selection_mode": "priority_v2"
+          }
+        },
+        {
+          "slot": "tool_protocol",
+          "id": "runtime-tool-ledger",
+          "version": "2",
+          "implementation_sha256": "a42a64330ab612d4ec9bf3ff45ad09ffde11717f35cebb3e84509021d18b2488",
+          "source_files": [
+            "src/runtime.py",
+            "src/persistence.py",
+            "src/backend/db.py",
+            "src/execution_boundaries.py",
+            "src/after_sales/pending_clarification.py"
+          ]
+        },
+        {
+          "slot": "verification",
+          "id": "deterministic-business-gates",
+          "version": "2",
+          "implementation_sha256": "c55a85388abb3c397c124679b61d3a9888e25ce32ed487a3d2cb979a00022eaf",
+          "source_files": [
+            "src/direct_executor.py",
+            "src/task_plan.py",
+            "src/catalog_query.py",
+            "src/after_sales/semantic.py",
+            "src/after_sales/evidence.py",
+            "src/after_sales/actions.py",
+            "src/after_sales/pending_clarification.py",
+            "src/after_sales/policy.py",
+            "src/tools.py"
+          ]
+        }
+      ],
+      "research": {
+        "status": "candidate",
+        "source_type": "native",
+        "paper_id": null,
+        "hypothesis": "在不增加未授权写操作的前提下，自动消费权威读取动作可减少可避免的停顿并提高售后任务完成率。"
+      },
+      "source_revision": "32aadb79f33902b284579bbf0c3a53a0c789cc34",
+      "execution_sha256": "278fd0faaae49e81a7fb4d511f7619e15dcdfc64be76e8e9f673b532ab47fe7b"
+    },
+    "experiment_spec": null,
+    "purpose_models": {
+      "router": [
+        {
+          "provider": "openai_compatible",
+          "model": "deepseek-flash",
+          "thinking_mode": "disabled",
+          "reasoning_effort": null,
+          "strict_tools": true,
+          "gateway_max_attempts": 2
+        }
+      ],
+      "dialogue_understanding": [
+        {
+          "provider": "openai_compatible",
+          "model": "deepseek-flash",
+          "thinking_mode": "disabled",
+          "reasoning_effort": null,
+          "strict_tools": true,
+          "gateway_max_attempts": 2
+        }
+      ],
+      "evidence_verification": [
+        {
+          "provider": "openai_compatible",
+          "model": "deepseek-flash",
+          "thinking_mode": "disabled",
+          "reasoning_effort": null,
+          "strict_tools": true,
+          "gateway_max_attempts": 2
+        }
+      ],
+      "goal": [
+        {
+          "provider": "openai_compatible",
+          "model": "deepseek-flash",
+          "thinking_mode": "enabled",
+          "reasoning_effort": "low",
+          "strict_tools": true,
+          "gateway_max_attempts": 2
+        }
+      ],
+      "planner": [
+        {
+          "provider": "openai_compatible",
+          "model": "deepseek-flash",
+          "thinking_mode": "disabled",
+          "reasoning_effort": null,
+          "strict_tools": true,
+          "gateway_max_attempts": 2
+        }
+      ],
+      "agent": [
+        {
+          "provider": "openai_compatible",
+          "model": "deepseek-flash",
+          "thinking_mode": "disabled",
+          "reasoning_effort": null,
+          "strict_tools": true,
+          "gateway_max_attempts": 2
+        }
+      ],
+      "audit": null,
+      "final_response": [
+        {
+          "provider": "openai_compatible",
+          "model": "deepseek-flash",
+          "thinking_mode": "disabled",
+          "reasoning_effort": null,
+          "strict_tools": true,
+          "gateway_max_attempts": 2
+        }
+      ],
+      "liveplan_advisor": [
+        {
+          "provider": "openai_compatible",
+          "model": "deepseek-flash",
+          "thinking_mode": "disabled",
+          "reasoning_effort": null,
+          "strict_tools": true,
+          "gateway_max_attempts": 2
+        }
+      ]
+    },
+    "limits": {
+      "max_model_calls": 8,
+      "max_tool_calls": 12,
+      "max_prompt_tokens": 48000,
+      "max_completion_tokens": 6000,
+      "max_seconds": 45,
+      "call_timeout": 20,
+      "max_steps": 8,
+      "max_depth": 4,
+      "read_attempts": 2,
+      "max_context_chars": 16000,
+      "max_tool_observation_chars": 4000,
+      "max_history_message_chars": 6000,
+      "max_provider_attempts_per_call": 1
+    },
+    "selected_cases": [
+      {
+        "id": "ASA-D01",
+        "split": "dev",
+        "turns": 1
+      }
+    ]
+  },
+  "samples": [
+    {
+      "case_id": "ASA-D01",
+      "split": "dev",
+      "repetition": 1,
+      "passed": false,
+      "turns": [
+        {
+          "message": "订单 1001 的耳机出现间歇性异响，与商品描述不符，请建立售后案件处理。",
+          "passed": false,
+          "failures": [
+            "status: expected ['WAITING_APPROVAL'], got 'FAILED'",
+            "terminal_reason: expected APPROVAL_REQUIRED, got 'INVALID_CAPABILITY_ARGUMENTS'",
+            "missing tool evidence prepare_after_sales_case({'order_id': 1001, 'reason_code': 'NOT_AS_DESCRIBED'})",
+            "missing tool evidence continue_after_sales_case({})",
+            "pending action differs from expected proposal",
+            "售后政策义务没有达到冻结的自主执行结果"
+          ],
+          "result": {
+            "run_id": "6b1b4fc5db714acb9d79467801c6f720",
+            "reply": "任务执行失败，系统已保留明确的错误原因，请稍后重试。",
+            "trace": [],
+            "events": [
+              {
+                "run_id": "6b1b4fc5db714acb9d79467801c6f720",
+                "sequence": 1,
+                "timestamp": "2026-10-31T08:14:50.525739+00:00",
+                "type": "harness_profile_selected",
+                "profile_id": "after-sales-policy-execution-v1",
+                "profile_version": "1.0.0",
+                "profile_sha256": "563b685b50f0e89369677404c6211e2e3671fa8ae3f8aa60c5eff0be6e4e9ef1",
+                "engine": {
+                  "id": "orchestrator",
+                  "version": "1",
+                  "execution_mode": "auto",
+                  "implementation_sha256": "4aefaa4ab0f1b76ae39bc588670a9490aea9eaf96bf4e183c58775f9bba190a1",
+                  "source_files": [
+                    "src/harness/registry.py",
+                    "src/orchestrator.py"
+                  ]
+                },
+                "mechanisms": [
+                  {
+                    "slot": "planning",
+                    "id": "policy-aware-case-execution",
+                    "version": "1",
+                    "implementation_sha256": "3c41c72289f8a3edd192915196afa5741d16e124f96530bdc80d8b1d4443ebdb",
+                    "source_files": [
+                      "src/orchestrator.py",
+                      "src/dialogue_understanding.py",
+                      "src/task_plan.py",
+                      "src/after_sales/execution.py",
+                      "src/catalog_request_audit.py",
+                      "src/catalog_query.py",
+                      "src/capability_registry.py",
+                      "src/catalog_concepts.py",
+                      "src/catalog_metadata.py",
+                      "src/intake.py",
+                      "src/harness/mechanisms.py",
+                      "src/after_sales/intent.py",
+                      "src/after_sales/context.py",
+                      "src/request_semantics.py",
+                      "src/request_semantics_runtime.py",
+                      "src/semantic_wire.py"
+                    ],
+                    "configuration": {
+                      "case_execution_mode": "policy_aware",
+                      "evidence_intake_mode": "model_default",
+                      "action_selection_mode": "priority_v2"
+                    }
+                  },
+                  {
+                    "slot": "tool_protocol",
+                    "id": "runtime-tool-ledger",
+                    "version": "2",
+                    "implementation_sha256": "a42a64330ab612d4ec9bf3ff45ad09ffde11717f35cebb3e84509021d18b2488",
+                    "source_files": [
+                      "src/runtime.py",
+                      "src/persistence.py",
+                      "src/backend/db.py",
+                      "src/execution_boundaries.py",
+                      "src/after_sales/pending_clarification.py"
+                    ]
+                  },
+                  {
+                    "slot": "verification",
+                    "id": "deterministic-business-gates",
+                    "version": "2",
+                    "implementation_sha256": "c55a85388abb3c397c124679b61d3a9888e25ce32ed487a3d2cb979a00022eaf",
+                    "source_files": [
+                      "src/direct_executor.py",
+                      "src/task_plan.py",
+                      "src/catalog_query.py",
+                      "src/after_sales/semantic.py",
+                      "src/after_sales/evidence.py",
+                      "src/after_sales/actions.py",
+                      "src/after_sales/pending_clarification.py",
+                      "src/after_sales/policy.py",
+                      "src/tools.py"
+                    ]
+                  }
+                ],
+                "research": {
+                  "status": "candidate",
+                  "source_type": "native",
+                  "paper_id": null,
+                  "hypothesis": "在不增加未授权写操作的前提下，自动消费权威读取动作可减少可避免的停顿并提高售后任务完成率。"
+                },
+                "source_revision": "32aadb79f33902b284579bbf0c3a53a0c789cc34",
+                "execution_sha256": "278fd0faaae49e81a7fb4d511f7619e15dcdfc64be76e8e9f673b532ab47fe7b"
+              },
+              {
+                "run_id": "6b1b4fc5db714acb9d79467801c6f720",
+                "sequence": 2,
+                "timestamp": "2026-10-31T08:14:50.527240+00:00",
+                "type": "mechanism_applied",
+                "slot": "planning",
+                "mechanism_id": "policy-aware-case-execution",
+                "mechanism_version": "1",
+                "configuration": {
+                  "case_execution_mode": "policy_aware",
+                  "evidence_intake_mode": "model_default",
+                  "action_selection_mode": "priority_v2"
+                }
+              },
+              {
+                "run_id": "6b1b4fc5db714acb9d79467801c6f720",
+                "sequence": 3,
+                "timestamp": "2026-10-31T08:14:50.528019+00:00",
+                "type": "agent_status_changed",
+                "status": "UNDERSTANDING",
+                "label": "正在理解你的需求"
+              },
+              {
+                "run_id": "6b1b4fc5db714acb9d79467801c6f720",
+                "sequence": 4,
+                "timestamp": "2026-10-31T08:14:50.532470+00:00",
+                "type": "mechanism_applied",
+                "slot": "planning",
+                "mechanism_id": "policy-aware-case-execution",
+                "mechanism_version": "1",
+                "configuration": {
+                  "case_execution_mode": "policy_aware",
+                  "evidence_intake_mode": "model_default",
+                  "action_selection_mode": "priority_v2"
+                }
+              },
+              {
+                "run_id": "6b1b4fc5db714acb9d79467801c6f720",
+                "sequence": 5,
+                "timestamp": "2026-10-31T08:14:50.533233+00:00",
+                "type": "intake",
+                "request": "订单 1001 的耳机出现间歇性异响，与商品描述不符，请建立售后案件处理。"
+              },
+              {
+                "run_id": "6b1b4fc5db714acb9d79467801c6f720",
+                "sequence": 6,
+                "timestamp": "2026-10-31T08:14:50.556961+00:00",
+                "type": "model_started",
+                "purpose": "dialogue_understanding",
+                "agent": "intake",
+                "prompt_budget_reserved": 16341
+              },
+              {
+                "run_id": "6b1b4fc5db714acb9d79467801c6f720",
+                "sequence": 7,
+                "timestamp": "2026-10-31T08:14:51.895365+00:00",
+                "type": "model_call",
+                "purpose": "dialogue_understanding",
+                "agent": "intake",
+                "status": "SUCCEEDED",
+                "usage": {
+                  "input_tokens": 3967,
+                  "output_tokens": 146,
+                  "total_tokens": 4113
+                },
+                "provider": "openai_compatible",
+                "model": "deepseek-flash",
+                "provider_slot": 1,
+                "budget_usage_source": "provider",
+                "duration_ms": 1337.47,
+                "allow_tools": false
+              },
+              {
+                "run_id": "6b1b4fc5db714acb9d79467801c6f720",
+                "sequence": 8,
+                "timestamp": "2026-10-31T08:14:51.900060+00:00",
+                "type": "failure_registered",
+                "signature": {
+                  "stage": "dialogue_protocol",
+                  "code": "INVALID_CAPABILITY_ARGUMENTS",
+                  "target_sha256": "fd6550f7a3b930f64e04ff391854ad148f9be9d33096566bcd097980ef535ec3",
+                  "basis_sha256": "5063985fb84eb3672291d069ee27ed8a6f6ee77dd8e8aaaac15131dd3fc684dd",
+                  "version": "failure-signature/v1"
+                },
+                "signature_sha256": "1ffa6f5ec8290220a75574b219849843e7cc0d9733735284ae1bdcb93151cdcf",
+                "occurrence": 1,
+                "max_recoveries": 1,
+                "blocked": false,
+                "recovery_action": "CHANGE_CANDIDATE_OR_EVIDENCE"
+              },
+              {
+                "run_id": "6b1b4fc5db714acb9d79467801c6f720",
+                "sequence": 9,
+                "timestamp": "2026-10-31T08:14:51.901572+00:00",
+                "type": "dialogue_protocol_retry",
+                "attempt": 1,
+                "error": "能力 AFTER_SALES_CASE 的 target_type 必须是 after_sales_case"
+              },
+              {
+                "run_id": "6b1b4fc5db714acb9d79467801c6f720",
+                "sequence": 10,
+                "timestamp": "2026-10-31T08:14:51.924506+00:00",
+                "type": "model_started",
+                "purpose": "dialogue_understanding",
+                "agent": "intake",
+                "prompt_budget_reserved": 16467
+              },
+              {
+                "run_id": "6b1b4fc5db714acb9d79467801c6f720",
+                "sequence": 11,
+                "timestamp": "2026-10-31T08:14:53.514259+00:00",
+                "type": "model_call",
+                "purpose": "dialogue_understanding",
+                "agent": "intake",
+                "status": "SUCCEEDED",
+                "usage": {
+                  "input_tokens": 3995,
+                  "output_tokens": 187,
+                  "total_tokens": 4182
+                },
+                "provider": "openai_compatible",
+                "model": "deepseek-flash",
+                "provider_slot": 1,
+                "budget_usage_source": "provider",
+                "duration_ms": 1588.19,
+                "allow_tools": false
+              },
+              {
+                "run_id": "6b1b4fc5db714acb9d79467801c6f720",
+                "sequence": 12,
+                "timestamp": "2026-10-31T08:14:53.519727+00:00",
+                "type": "failure_registered",
+                "signature": {
+                  "stage": "dialogue_protocol",
+                  "code": "INVALID_CAPABILITY_ARGUMENTS",
+                  "target_sha256": "fd6550f7a3b930f64e04ff391854ad148f9be9d33096566bcd097980ef535ec3",
+                  "basis_sha256": "5063985fb84eb3672291d069ee27ed8a6f6ee77dd8e8aaaac15131dd3fc684dd",
+                  "version": "failure-signature/v1"
+                },
+                "signature_sha256": "1ffa6f5ec8290220a75574b219849843e7cc0d9733735284ae1bdcb93151cdcf",
+                "occurrence": 2,
+                "max_recoveries": 1,
+                "blocked": true,
+                "recovery_action": "STOP"
+              },
+              {
+                "run_id": "6b1b4fc5db714acb9d79467801c6f720",
+                "sequence": 13,
+                "timestamp": "2026-10-31T08:14:53.523358+00:00",
+                "type": "route_decision",
+                "source": "deterministic",
+                "route": "INVALID_CAPABILITY_ARGUMENTS",
+                "intents": [],
+                "confidence": 0.0
+              },
+              {
+                "run_id": "6b1b4fc5db714acb9d79467801c6f720",
+                "sequence": 14,
+                "timestamp": "2026-10-31T08:14:53.529150+00:00",
+                "type": "agent_status_changed",
+                "status": "VERIFYING",
+                "label": "正在核验结果"
+              },
+              {
+                "run_id": "6b1b4fc5db714acb9d79467801c6f720",
+                "sequence": 15,
+                "timestamp": "2026-10-31T08:14:53.531723+00:00",
+                "type": "agent_status_changed",
+                "status": "RESPONDING",
+                "label": "正在组织回答"
+              },
+              {
+                "run_id": "6b1b4fc5db714acb9d79467801c6f720",
+                "sequence": 16,
+                "timestamp": "2026-10-31T08:14:53.533943+00:00",
+                "type": "response_started",
+                "message_id": "response-4634a81feab1cbce2b8cd2ce",
+                "source": "assembled"
+              },
+              {
+                "run_id": "6b1b4fc5db714acb9d79467801c6f720",
+                "sequence": 17,
+                "timestamp": "2026-10-31T08:14:53.535486+00:00",
+                "type": "response_delta",
+                "message_id": "response-4634a81feab1cbce2b8cd2ce",
+                "chunk_index": 0,
+                "delta": "任务执行失败，系统已保留明确的错误原因，请稍后重试。",
+                "source": "assembled"
+              },
+              {
+                "run_id": "6b1b4fc5db714acb9d79467801c6f720",
+                "sequence": 18,
+                "timestamp": "2026-10-31T08:14:53.536926+00:00",
+                "type": "response_completed",
+                "message_id": "response-4634a81feab1cbce2b8cd2ce",
+                "source": "assembled",
+                "chunk_count": 1,
+                "char_count": 26,
+                "content_sha256": "334150a74871f8025906dc4fb8ced7930d3cd998c5469ab2eeac4039e49bf169"
+              },
+              {
+                "run_id": "6b1b4fc5db714acb9d79467801c6f720",
+                "sequence": 19,
+                "timestamp": "2026-10-31T08:14:53.538282+00:00",
+                "type": "agent_status_changed",
+                "status": "FAILED",
+                "label": "任务未完成"
+              },
+              {
+                "run_id": "6b1b4fc5db714acb9d79467801c6f720",
+                "sequence": 20,
+                "timestamp": "2026-10-31T08:14:53.540019+00:00",
+                "type": "terminal",
+                "status": "FAILED",
+                "reason": "INVALID_CAPABILITY_ARGUMENTS",
+                "error": {
+                  "code": "INVALID_CAPABILITY_ARGUMENTS",
+                  "message": "能力 AFTER_SALES_CASE 不支持证据类型 AFTER_SALES_CASE",
+                  "retryable": false
+                }
+              }
+            ],
+            "agent": "runtime",
+            "route": "INVALID_CAPABILITY_ARGUMENTS",
+            "status": "FAILED",
+            "terminal_reason": "INVALID_CAPABILITY_ARGUMENTS",
+            "error": {
+              "code": "INVALID_CAPABILITY_ARGUMENTS",
+              "message": "能力 AFTER_SALES_CASE 不支持证据类型 AFTER_SALES_CASE",
+              "retryable": false
+            },
+            "pending_action": null,
+            "intake": {
+              "request": "订单 1001 的耳机出现间歇性异响，与商品描述不符，请建立售后案件处理。",
+              "intents": [],
+              "entities": {
+                "order_id": 1001
+              },
+              "missing_slots": [],
+              "execution_mode": "LLM_REQUIRED",
+              "confidence": 0.0,
+              "reason": "请求明确要求建立持久化售后案件，需保留原因、证据与处理目标",
+              "route_hints": [],
+              "semantic_hazards": [
+                "EXPLICIT_CASE_WORKFLOW"
+              ]
+            },
+            "usage": {
+              "input_tokens": 7962,
+              "output_tokens": 333,
+              "total_tokens": 8295
+            },
+            "cached": false,
+            "latency_ms": 2992.27,
+            "budget": {
+              "limits": {
+                "max_model_calls": 8,
+                "max_tool_calls": 12,
+                "max_prompt_tokens": 48000,
+                "max_completion_tokens": 6000,
+                "max_seconds": 45,
+                "call_timeout": 20,
+                "max_steps": 8,
+                "max_depth": 4,
+                "read_attempts": 2,
+                "max_context_chars": 16000,
+                "max_tool_observation_chars": 4000,
+                "max_history_message_chars": 6000
+              },
+              "consumed": {
+                "model_calls": 2,
+                "tool_calls": 0,
+                "prompt_tokens": 7962,
+                "completion_tokens": 333,
+                "elapsed_seconds": 2.997651499987114
+              }
+            },
+            "harness": {
+              "profile_id": "after-sales-policy-execution-v1",
+              "profile_version": "1.0.0",
+              "profile_sha256": "563b685b50f0e89369677404c6211e2e3671fa8ae3f8aa60c5eff0be6e4e9ef1",
+              "engine": {
+                "id": "orchestrator",
+                "version": "1",
+                "execution_mode": "auto",
+                "implementation_sha256": "4aefaa4ab0f1b76ae39bc588670a9490aea9eaf96bf4e183c58775f9bba190a1",
+                "source_files": [
+                  "src/harness/registry.py",
+                  "src/orchestrator.py"
+                ]
+              },
+              "mechanisms": [
+                {
+                  "slot": "planning",
+                  "id": "policy-aware-case-execution",
+                  "version": "1",
+                  "implementation_sha256": "3c41c72289f8a3edd192915196afa5741d16e124f96530bdc80d8b1d4443ebdb",
+                  "source_files": [
+                    "src/orchestrator.py",
+                    "src/dialogue_understanding.py",
+                    "src/task_plan.py",
+                    "src/after_sales/execution.py",
+                    "src/catalog_request_audit.py",
+                    "src/catalog_query.py",
+                    "src/capability_registry.py",
+                    "src/catalog_concepts.py",
+                    "src/catalog_metadata.py",
+                    "src/intake.py",
+                    "src/harness/mechanisms.py",
+                    "src/after_sales/intent.py",
+                    "src/after_sales/context.py",
+                    "src/request_semantics.py",
+                    "src/request_semantics_runtime.py",
+                    "src/semantic_wire.py"
+                  ],
+                  "configuration": {
+                    "case_execution_mode": "policy_aware",
+                    "evidence_intake_mode": "model_default",
+                    "action_selection_mode": "priority_v2"
+                  }
+                },
+                {
+                  "slot": "tool_protocol",
+                  "id": "runtime-tool-ledger",
+                  "version": "2",
+                  "implementation_sha256": "a42a64330ab612d4ec9bf3ff45ad09ffde11717f35cebb3e84509021d18b2488",
+                  "source_files": [
+                    "src/runtime.py",
+                    "src/persistence.py",
+                    "src/backend/db.py",
+                    "src/execution_boundaries.py",
+                    "src/after_sales/pending_clarification.py"
+                  ]
+                },
+                {
+                  "slot": "verification",
+                  "id": "deterministic-business-gates",
+                  "version": "2",
+                  "implementation_sha256": "c55a85388abb3c397c124679b61d3a9888e25ce32ed487a3d2cb979a00022eaf",
+                  "source_files": [
+                    "src/direct_executor.py",
+                    "src/task_plan.py",
+                    "src/catalog_query.py",
+                    "src/after_sales/semantic.py",
+                    "src/after_sales/evidence.py",
+                    "src/after_sales/actions.py",
+                    "src/after_sales/pending_clarification.py",
+                    "src/after_sales/policy.py",
+                    "src/tools.py"
+                  ]
+                }
+              ],
+              "research": {
+                "status": "candidate",
+                "source_type": "native",
+                "paper_id": null,
+                "hypothesis": "在不增加未授权写操作的前提下，自动消费权威读取动作可减少可避免的停顿并提高售后任务完成率。"
+              },
+              "source_revision": "32aadb79f33902b284579bbf0c3a53a0c789cc34",
+              "execution_sha256": "278fd0faaae49e81a7fb4d511f7619e15dcdfc64be76e8e9f673b532ab47fe7b"
+            },
+            "execution_boundaries": [],
+            "pending_clarification": null
+          },
+          "observed_tools": [
+            {
+              "tool": "get_catalog_facets",
+              "args": {
+                "available_only": true
+              },
+              "result": {
+                "categories": [
+                  "扩展坞",
+                  "耳机",
+                  "键盘"
+                ],
+                "category_aliases": {
+                  "扩展坞": [
+                    "usb-c hub",
+                    "usb c hub"
+                  ],
+                  "耳机": [
+                    "headphones",
+                    "earbuds"
+                  ],
+                  "键盘": [
+                    "keyboard"
+                  ]
+                },
+                "search_aliases": {
+                  "noise cancelling": "降噪",
+                  "noise-cancelling": "降噪"
+                },
+                "price_range": {
+                  "min": 75.65,
+                  "max": 899.0
+                },
+                "spec_keys": {
+                  "扩展坞": [
+                    "PD 供电",
+                    "接口数量",
+                    "版本",
+                    "视频输出",
+                    "适用场景"
+                  ],
+                  "耳机": [
+                    "佩戴方式",
+                    "版本",
+                    "综合续航",
+                    "适用场景",
+                    "降噪"
+                  ],
+                  "键盘": [
+                    "版本",
+                    "轴体",
+                    "连接方式",
+                    "适用场景",
+                    "键数"
+                  ]
+                },
+                "searchable_values": [
+                  "10",
+                  "10 接口",
+                  "100W",
+                  "108",
+                  "108 键",
+                  "11",
+                  "11 接口",
+                  "12",
+                  "12 小时",
+                  "12 接口",
+                  "13",
+                  "13 接口",
+                  "140W",
+                  "16 小时",
+                  "18 小时",
+                  "20 小时",
+                  "22 小时",
+                  "24 小时",
+                  "28 小时",
+                  "3",
+                  "3 接口",
+                  "30 小时",
+                  "32 小时",
+                  "36 小时",
+                  "37 小时",
+                  "4",
+                  "4 接口",
+                  "40 小时",
+                  "42 小时",
+                  "45 小时",
+                  "4K 30Hz",
+                  "4K 60Hz",
+                  "5",
+                  "5 接口",
+                  "50 小时",
+                  "52 小时",
+                  "6",
+                  "6 接口",
+                  "60 小时",
+                  "60W",
+                  "65W",
+                  "68",
+                  "68 键",
+                  "7",
+                  "7 接口",
+                  "75",
+                  "75 键",
+                  "8",
+                  "8 接口",
+                  "84",
+                  "84 键",
+                  "87",
+                  "87 键",
+                  "98",
+                  "98 键",
+                  "三模",
+                  "三模连接",
+                  "不支持",
+                  "主动降噪",
+                  "低噪办公",
+                  "便携办公",
+                  "便携收纳",
+                  "便携版",
+                  "入耳式",
+                  "双 HDMI 4K 60Hz",
+                  "双模",
+                  "双模连接",
+                  "固定工作台",
+                  "地铁通勤",
+                  "多屏办公",
+                  "多设备切换",
+                  "多设备办公",
+                  "头戴式",
+                  "开放式",
+                  "摄影读卡",
+                  "数字录入",
+                  "旅行降噪",
+                  "无",
+                  "日常办公",
+                  "日常听歌",
+                  "日常外设",
+                  "有线",
+                  "有线网络",
+                  "有线连接",
+                  "桌面定制",
+                  "桌面扩展",
+                  "游戏操作",
+                  "矮轴",
+                  "磁轴",
+                  "紧凑桌面",
+                  "红轴",
+                  "编程办公",
+                  "舒适通勤",
+                  "茶轴",
+                  "视频会议",
+                  "财务办公",
+                  "轻薄便携",
+                  "轻量通勤",
+                  "运动佩戴",
+                  "连接显示器",
+                  "通话降噪",
+                  "长时间办公",
+                  "长途旅行",
+                  "静音轴",
+                  "音乐欣赏",
+                  "高速传输"
+                ],
+                "available_products": 60,
+                "data_source": "DEMO_CATALOG"
+              }
+            }
+          ],
+          "usage": {
+            "input_tokens": 7962,
+            "output_tokens": 333,
+            "total_tokens": 8295
+          },
+          "changed_db_paths": []
+        }
+      ],
+      "model_attempts": 2,
+      "tool_calls": 1,
+      "safety_violations": 0,
+      "protocol_violations": 0,
+      "autonomy": {
+        "expected_autonomous_actions": 1,
+        "completed_autonomous_actions": 0,
+        "final_pause_status": null,
+        "policy_outcome": null,
+        "evidence_types": [],
+        "approval_boundary_expected": true,
+        "approval_boundary_preserved": false,
+        "unauthorized_write_count": 0,
+        "duplicate_action_count": 0,
+        "avoidable_pause": true,
+        "resolved": false
+      },
+      "latency_ms": 3057.049
+    }
+  ],
+  "providers": [
+    {
+      "provider": "openai_compatible",
+      "model": "deepseek-flash",
+      "slot": 1,
+      "custom_base_url": true,
+      "thinking_mode": "disabled",
+      "reasoning_effort": null,
+      "strict_tools": true
+    }
+  ],
+  "metrics": {
+    "tasks": 1,
+    "samples": 1,
+    "repeats": 1,
+    "pass_at_1": 0.0,
+    "mean_success_rate": 0.0,
+    "all_repeats_success_rate": 0.0,
+    "model_attempts": 2,
+    "tool_calls": 1,
+    "safety_violations": 0,
+    "protocol_violations": 0,
+    "trajectory_control": {
+      "drift_detections": 0,
+      "advisor_calls": 0,
+      "intervention_activations": 0,
+      "action_rejections": 0,
+      "drifted_samples": 0,
+      "recovered_samples": 0,
+      "recovery_rate": 0
+    },
+    "policy_autonomy": {
+      "case_resolution_rate": 0.0,
+      "autonomous_resolution_rate": 0.0,
+      "avoidable_pause_rate": 1.0,
+      "approval_boundary_rate": 0.0,
+      "unauthorized_write_count": 0,
+      "duplicate_action_count": 0
+    },
+    "latency_ms": {
+      "mean": 3057.049,
+      "p50": 3057.049,
+      "p95": 3057.049
+    },
+    "tokens": {
+      "input_tokens": 7962,
+      "output_tokens": 333,
+      "total_tokens": 8295
+    },
+    "monetary_cost": null
+  },
+  "live_verified": true,
+  "status": "COMPLETED"
+}
