@@ -1,0 +1,109 @@
+.execution-workbench {
+  --instrument-bg: #101c2d; --instrument-panel: #162338; --instrument-node: #1a2a40;
+  --instrument-line: #30425a; --instrument-muted: #a4b5cd; --instrument-text: #e5edf8;
+  --instrument-cyan: #64dfdf; --instrument-violet: #b29cff; --instrument-amber: #f2c078;
+  background: var(--instrument-bg); color: var(--instrument-text); border: 1px solid #30425a;
+  border-radius: 14px; overflow: hidden; margin: 18px 0 26px; box-shadow: 0 16px 36px #101c2d14;
+  font-size: 12px; isolation: isolate;
+}
+.execution-workbench button, .execution-workbench select { color: var(--instrument-text); }
+.execution-workbench button { cursor: pointer; }
+.execution-workbench button:disabled { opacity: .35; cursor: default; }
+.execution-workbench :is(button, select, input, summary):focus-visible { outline: 2px solid var(--instrument-cyan); outline-offset: 3px; }
+.instrument-header { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 25px 26px 21px; border-bottom: 1px solid var(--instrument-line); }
+.instrument-eyebrow { color: var(--instrument-cyan); font: 10px var(--mono); letter-spacing: .16em; }
+.instrument-header h3 { display: flex; align-items: center; gap: 12px; font-size: 21px; letter-spacing: .02em; margin: 8px 0 0; font-weight: 550; }
+.instrument-live-label { color: var(--instrument-muted); border-left: 1px solid #556780; padding-left: 12px; font-size: 11px; font-weight: 400; }
+.instrument-identity { text-align: right; min-width: 0; overflow-wrap: anywhere; }
+.instrument-identity b { display: block; font-size: 11px; font-weight: 500; }
+.instrument-identity span { display: block; color: var(--instrument-muted); margin-top: 7px; font: 10px var(--mono); }
+.instrument-toolbar { display: flex; align-items: center; justify-content: space-between; padding: 12px 20px; border-bottom: 1px solid var(--instrument-line); }
+.instrument-view-tabs { display: flex; gap: 4px; }
+.instrument-view-tabs button, .instrument-expand { display: flex; align-items: center; gap: 7px; background: transparent; border: 1px solid transparent; padding: 8px 11px; border-radius: 5px; font-size: 12px; }
+.instrument-view-tabs button[aria-pressed=true] { color: var(--instrument-cyan); background: #203b4b; border-color: #3b6678; }
+.instrument-expand { color: var(--instrument-muted) !important; }
+.instrument-stage { display: grid; grid-template-columns: minmax(0, 1fr) 280px; }
+.instrument-map { min-width: 0; position: relative; display: flex; flex-direction: column; background: radial-gradient(ellipse at 45% 45%, #1a2e44 0, #101c2d 72%); }
+.instrument-map-caption { display: flex; justify-content: space-between; gap: 16px; padding: 16px 20px 0; color: var(--instrument-muted); font: 10px/1.6 var(--mono); min-height: 40px; overflow-wrap: anywhere; }
+.instrument-map-caption span:last-child { flex-shrink: 0; }
+.instrument-flow { position: relative; height: 400px; width: 100%; min-width: 0; }
+.is-tall .instrument-flow { height: 650px; }
+.instrument-flow .react-flow { background: transparent; --xy-background-color: transparent; --xy-controls-button-background-color: #20334a; --xy-controls-button-background-color-hover: #304863; --xy-controls-button-color: #e5edf8; --xy-controls-button-border-color: #405975; }
+.execution-workbench .instrument-flow .react-flow__controls { left: auto; right: 10px; bottom: 10px; width: max-content; box-shadow: none; border: 1px solid #405975; border-radius: 6px; overflow: hidden; }
+.instrument-flow .react-flow__attribution { background: #101c2dd9; color: #a4b5cd; bottom: 0; left: 12px; right: auto; font-size: 9px; }
+.instrument-flow .react-flow__node-instrument { border-radius: 9px; }
+.instrument-flow .react-flow__node:focus-visible { outline: 2px solid var(--instrument-cyan); outline-offset: 4px; }
+.instrument-node { width: 220px; height: 104px; background: var(--instrument-node); border: 1px solid #4a5e79; border-radius: 9px; padding: 14px 16px; box-shadow: 0 8px 18px #050c182e; transition: border-color 160ms ease, background-color 160ms ease; }
+.instrument-node-meta { display: flex; justify-content: space-between; align-items: center; color: var(--instrument-muted); font: 10px/1.2 var(--mono); }
+.instrument-node strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin: 10px 0 7px; font-size: 14px; font-weight: 550; color: var(--instrument-text); }
+.instrument-node small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--instrument-muted); font: 10px/1.5 var(--mono); }
+.instrument-node.tone-cyan .instrument-node-meta { color: var(--instrument-cyan); }
+.instrument-node.tone-violet .instrument-node-meta { color: var(--instrument-violet); }
+.instrument-node.tone-amber .instrument-node-meta { color: var(--instrument-amber); }
+.instrument-node.tone-green .instrument-node-meta { color: #85d8b0; }
+.instrument-node.is-current { border: 2px solid var(--instrument-cyan); padding: 13px 15px; background: #20384b; box-shadow: 0 0 0 5px #64dfdf0b, 0 9px 25px #06111c77; }
+.react-flow__node.selected .instrument-node { border-color: var(--instrument-cyan); }
+.instrument-flow .react-flow__handle { background: #a4b5cd; border: 2px solid #1a2a40; width: 8px; height: 8px; }
+.instrument-flow .react-flow__edge:focus-visible .react-flow__edge-path { stroke-width: 4; }
+.instrument-legend { display: flex; gap: 18px; padding: 15px 20px; color: var(--instrument-muted); font-size: 10px; border-top: 1px solid #30425a70; }
+.instrument-legend span { display: flex; align-items: center; gap: 6px; }
+.instrument-legend i { width: 14px; height: 2px; background: #a4b5cd; }
+.instrument-legend i.cyan { background: var(--instrument-cyan); }
+.instrument-legend i.violet { background: var(--instrument-violet); }
+.instrument-legend i.amber { background: var(--instrument-amber); }
+.instrument-probe { padding: 20px; border-left: 1px solid var(--instrument-line); background: #162338; min-width: 0; max-height: 490px; overflow: auto; scrollbar-color: #526a88 transparent; }
+.is-tall .instrument-probe { max-height: 740px; }
+.instrument-probe-top { display: flex; justify-content: space-between; color: var(--instrument-muted); font: 9px var(--mono); letter-spacing: .07em; }
+.instrument-probe-sequence { display: flex; align-items: baseline; gap: 12px; margin-top: 22px; color: var(--instrument-cyan); font: 40px/1 var(--mono); letter-spacing: -.06em; }
+.instrument-probe-sequence small { color: var(--instrument-muted); font: 10px/1.4 var(--mono); letter-spacing: 0; }
+.instrument-probe h4 { font-size: 15px; font-weight: 550; line-height: 1.6; margin: 17px 0 6px; overflow-wrap: anywhere; }
+.instrument-probe-kind { color: var(--instrument-muted); font: 10px/1.7 var(--mono); overflow-wrap: anywhere; margin: 0 0 18px; }
+.instrument-probe dl { margin: 0; padding-top: 15px; border-top: 1px solid var(--instrument-line); }
+.instrument-probe dt { display: flex; align-items: center; gap: 5px; color: var(--instrument-muted); font-size: 10px; margin-bottom: 5px; }
+.instrument-probe dd { font-size: 11px; line-height: 1.75; margin: 0 0 14px; overflow-wrap: anywhere; }
+.instrument-fingerprint { font-family: var(--mono); font-size: 9px !important; }
+.instrument-probe-footnote { margin: 18px 0 0; color: var(--instrument-muted); font-size: 10px; line-height: 1.9; }
+.instrument-event-summary h5 { font-size: 10px; color: var(--instrument-cyan); font-weight: 500; margin: 12px 0 6px; }
+.instrument-event-summary pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 160px; overflow: auto; font: 10px/1.8 var(--mono); background: #101c2d; padding: 10px; border-radius: 4px; margin: 0; }
+.instrument-raw, .instrument-object-list { border-top: 1px solid var(--instrument-line); padding: 12px 0 0; margin-top: 14px; }
+.instrument-raw summary, .instrument-object-list summary { cursor: pointer; color: var(--instrument-cyan); font-size: 11px; }
+.instrument-raw pre { max-height: 280px; font-size: 10px; background: #0d1829; color: #cbd9eb; padding: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.instrument-object-list button { display: block; width: 100%; text-align: left; margin-top: 6px; font-size: 10px; padding: 6px; background: #20334a; border: 1px solid #405975; overflow-wrap: anywhere; }
+.instrument-transport { display: flex; align-items: center; gap: 18px; padding: 15px 20px; border-top: 1px solid var(--instrument-line); background: #142135; }
+.instrument-play-controls { display: flex; align-items: center; gap: 5px; }
+.instrument-play-controls button, .instrument-follow { display: flex; align-items: center; justify-content: center; gap: 7px; height: 32px; min-width: 30px; border: 1px solid #40516b; background: #1a2a40; border-radius: 5px; padding: 0 7px; font-size: 11px; }
+.instrument-play-controls .instrument-play { background: #64dfdf; color: #102d36; border-color: #64dfdf; padding: 0 14px; font-weight: 600; }
+.instrument-speed { display: flex; gap: 7px; align-items: center; color: var(--instrument-muted); font-size: 10px; }
+.execution-workbench .instrument-speed select { border: 1px solid #40516b; border-radius: 4px; padding: 6px; background: #1a2a40; box-shadow: none; font-size: 11px; }
+.instrument-follow[aria-pressed=true] { color: var(--instrument-cyan); border-color: var(--instrument-cyan); }
+.instrument-transport output { margin-left: auto; font: 16px var(--mono); color: var(--instrument-cyan); white-space: nowrap; }
+.instrument-transport output span { color: var(--instrument-muted); font-size: 11px; }
+.instrument-timeline { position: relative; display: flex; gap: 5px; padding: 8px 20px 4px; overflow-x: auto; scrollbar-width: thin; scrollbar-color: #405975 transparent; background: #142135; }
+.instrument-tick { flex-shrink: 0; width: 28px; height: 49px; border: 1px solid transparent; border-radius: 4px; background: transparent; padding: 8px 3px 5px; }
+.instrument-tick i { display: block; height: 17px; width: 5px; margin: 0 auto 6px; background: #869bb6; border-radius: 2px; }
+.instrument-tick span { display: block; color: var(--instrument-muted); font: 8px var(--mono); }
+.instrument-tick.tone-cyan i { background: var(--instrument-cyan); }
+.instrument-tick.tone-violet i { background: var(--instrument-violet); }
+.instrument-tick.tone-amber i { background: var(--instrument-amber); }
+.instrument-tick.tone-green i { background: #85d8b0; }
+.instrument-tick.is-selected { background: #274151; border-color: var(--instrument-cyan); }
+.instrument-tick.is-selected span { color: var(--instrument-cyan); }
+.instrument-scrubber { display: flex; align-items: center; gap: 14px; padding: 14px 22px 18px; background: #142135; color: var(--instrument-muted); font: 9px var(--mono); }
+.instrument-scrubber input { min-width: 0; flex: 1; accent-color: var(--instrument-cyan); cursor: pointer; height: 3px; }
+.instrument-empty { min-height: 300px; height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 15px; padding: 40px; text-align: center; color: var(--instrument-muted); }
+.instrument-map > .instrument-empty { flex: 1; min-height: 400px; }
+.instrument-empty b { color: var(--instrument-text); font-weight: 500; }
+.instrument-empty p { margin: 0; font-size: 12px; line-height: 1.8; }
+.instrument-notice, .instrument-layout-warning { padding: 10px 20px; color: var(--instrument-amber); background: #352e24; font-size: 11px; }
+.instrument-layout-warning { position: absolute; z-index: 3; top: 5px; left: 10px; right: 10px; }
+.pg-static-canvas .instrument-flow { height: 640px; }
+.instrument-static-footer { display: flex; justify-content: space-between; align-items: center; padding: 14px 20px; border-top: 1px solid var(--instrument-line); color: var(--instrument-muted); font-size: 10px; }
+.instrument-static-footer span:first-child { display: flex; gap: 6px; align-items: center; }
+.instrument-node-details { padding: 18px 22px; border-top: 1px solid var(--instrument-line); }
+.instrument-node-details code { margin-left: 15px; color: var(--instrument-muted); }
+.instrument-node-details p { line-height: 1.8; }
+.instrument-node-details button { background: #20334a; padding: 7px 12px; margin: 0 8px 8px 0; border: 1px solid #405975; border-radius: 4px; font-size: 11px; }
+.sample-playback { margin-top: 22px; }
+.sample-playback > label { display: flex; gap: 12px; align-items: center; font-size: 12px; }
+.sample-playback > label select { min-width: 250px; max-width: 70%; padding: 8px; background: white; border: 1px solid var(--line); border-radius: 5px; }
+@media (prefers-reduced-motion: reduce) { .execution-workbench *, .execution-workbench *::before, .execution-workbench *::after { transition: none !important; animation: none !important; scroll-behavior: auto !important; } }
