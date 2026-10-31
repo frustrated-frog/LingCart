@@ -1,4 +1,5 @@
 from langchain_core.messages import HumanMessage
+from copy import deepcopy
 import pytest
 
 from src.dialogue_understanding import TurnUnderstanding, to_task_plan
@@ -146,3 +147,75 @@ def test_non_executable_audit_scope_cannot_carry_goal_references():
                 "status": "COVERED",
             }],
         })
+
+
+def compiled_request():
+    request = "推荐两款耳机，预算500；查看订单1001状态；不要支付"
+    goal = dict(summary="消费任务", objectives=[
+        dict(id="shopping", kind="recommend", description="两款耳机", source_quote="推荐两款耳机", quantity=2),
+        dict(id="order", kind="get_order_status", description="订单状态", source_quote="查看订单1001状态", order_id=1001),
+    ], hard_constraints=[dict(description="预算上限", source_quote="预算500", field="price", op="lte", value=500)])
+    audit = dict(verdict="APPROVED", requirements=[
+        dict(scope="GOAL_REQUIREMENT", source_quote="推荐两款耳机", interpretation="推荐两款", objective_ids=["shopping"], constraint_refs=[], status="COVERED"),
+        dict(scope="GOAL_REQUIREMENT", source_quote="查看订单1001状态", interpretation="查订单", objective_ids=["order"], constraint_refs=[], status="COVERED"),
+        dict(scope="GOAL_REQUIREMENT", source_quote="预算500", interpretation="预算", objective_ids=[], constraint_refs=["global:0"], status="COVERED"),
+        dict(scope="PROHIBITION", source_quote="不要支付", interpretation="禁止支付", objective_ids=[], constraint_refs=[], status="COVERED"),
+    ])
+    return request, goal, audit
+
+
+@pytest.mark.parametrize("mutation", ["quantity", "scope", "missing", "extra", "source", "history", "target"])
+def test_compiler_rejects_semantically_rehashed_inconsistent_contract(mutation):
+    from src.request_ir import UserRequestIR
+    from src.request_compiler import validate_adaptive_compilation
+    from src.errors import AgentError
+
+    request, goal, audit = compiled_request()
+    ir = project_adaptive_request_ir(request, None, goal, audit).model_dump()
+    if mutation == "quantity":
+        ir["requirements"][0]["quantity"] = 1
+    elif mutation == "scope":
+        ir["requirements"][2]["objective_ids"] = ["order"]
+    elif mutation == "missing":
+        ir["requirements"].pop(0)
+    elif mutation == "extra":
+        extra = deepcopy(ir["requirements"][0])
+        extra["requirement_id"] = "outcome:extra"
+        ir["requirements"].append(extra)
+    elif mutation == "source":
+        ir["requirements"][0]["source"] = locate_source_span("查看订单1001状态", request).model_dump()
+    elif mutation == "history":
+        ir["requirements"][0]["source"]["source"] = "HISTORY"
+        ir["requirements"][0]["source"]["history_index"] = 0
+    else:
+        goal["objectives"][1]["order_id"] = 1004
+    payload = UserRequestIR.model_validate(ir).payload()
+    with pytest.raises(AgentError, match="请求编译一致性"):
+        validate_adaptive_compilation(payload, goal, request, None)
+
+
+def test_compiler_does_not_allow_review_of_unrelated_text_to_cover_goal():
+    from src.errors import AgentError
+    request, goal, audit = compiled_request()
+    audit["requirements"][0]["source_quote"] = "查看订单1001状态"
+    with pytest.raises(AgentError, match="审查原文"):
+        project_adaptive_request_ir(request, None, goal, audit)
+
+
+def test_compiler_rejects_prohibition_compiled_as_product_predicate():
+    from src.errors import AgentError
+    request, goal, audit = compiled_request()
+    goal["hard_constraints"][0]["source_quote"] = "不要支付"
+    audit["requirements"][2]["source_quote"] = "不要支付"
+    with pytest.raises(AgentError, match="非执行要求"):
+        project_adaptive_request_ir(request, None, goal, audit)
+
+
+def test_compiler_preserves_quantity_and_recommendation_only_scope():
+    from src.request_compiler import validate_adaptive_compilation
+    request, goal, audit = compiled_request()
+    ir = project_adaptive_request_ir(request, None, goal, audit)
+    validate_adaptive_compilation(ir.payload(), goal, request, None)
+    assert ir.requirements[0].quantity == 2
+    assert ir.requirements[2].objective_ids == ["shopping"]
+    assert ir.adaptive_goal_sha256

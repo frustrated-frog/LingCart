@@ -1391,6 +1391,22 @@ def test_multiple_recommendations_need_separate_receipts_and_final_refresh(monke
     assert {row['evidence_refs'][0] for row in result['plan']['objective_ledger']} == {'step-4', 'step-5'}
 
 
+def test_single_objective_quantity_refresh_rejects_changed_earlier_selection(monkeypatch):
+    first = search(first=True)
+    first['goal']['objectives'][0]['quantity'] = 2
+    def second(payload):
+        first_id = payload['objective_ledger'][0]['selected_product_ids'][0]
+        change(first_id, stock=0)
+        return recommendation(payload, 1, 'step-1')
+    script = model(monkeypatch, first, recommendation, second, clarification)
+    result = run_adaptive('推荐两款预算500的耳机')
+    assert result['status'] == 'WAITING_CLARIFICATION', result
+    assert not result['plan']['verification']['all_goals_satisfied']
+    assert 'OUT_OF_STOCK' in script.inputs[-1]['feedback']['failures']
+    assert any(event['type'] == 'completion_requested' and event['source'] == 'runtime'
+               for event in result['events'])
+
+
 def test_one_recommendation_receipt_cannot_complete_two_objectives(monkeypatch):
     first = search(first=True)
     first['goal']['objectives'].append(dict(id='backup', kind='recommend',

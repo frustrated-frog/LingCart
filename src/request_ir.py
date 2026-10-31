@@ -17,7 +17,7 @@ from src.agents.base import as_text
 from src.errors import AgentError
 
 
-REQUEST_IR_VERSION = "request-ir/v1"
+REQUEST_IR_VERSION = "request-ir/v2"
 
 RequirementKind = Literal[
     "BUSINESS_OUTCOME",
@@ -62,6 +62,7 @@ class SemanticRequirement(StrictModel):
     source: SourceSpan
     objective_ids: list[str] = Field(default_factory=list, max_length=8)
     constraint_refs: list[str] = Field(default_factory=list, max_length=32)
+    quantity: int | None = Field(None, ge=1)
 
     @model_validator(mode="after")
     def references_match_kind(self):
@@ -77,12 +78,16 @@ class SemanticRequirement(StrictModel):
             raise ValueError("Execution boundaries cannot become executable goal references")
         if self.kind in {"PRODUCT_PREDICATE", "CROSS_GOAL_CONSTRAINT"} and not self.constraint_refs:
             raise ValueError("Executable constraints require stable constraint references")
+        if self.quantity is not None and self.kind != "BUSINESS_OUTCOME":
+            raise ValueError("Only business outcomes carry quantity")
         return self
 
 
 class UserRequestIR(StrictModel):
-    version: Literal["request-ir/v1"] = REQUEST_IR_VERSION
+    version: Literal["request-ir/v2"] = REQUEST_IR_VERSION
     requirements: list[SemanticRequirement] = Field(default_factory=list, max_length=64)
+    # 仅声明已实现的编译路径；普通对话投影不冒充经过 Adaptive 编译检查。
+    adaptive_goal_sha256: str | None = Field(None, pattern=r"^[0-9a-f]{64}$")
 
     @model_validator(mode="after")
     def unique_requirements(self):
@@ -165,6 +170,8 @@ def project_adaptive_request_ir(
 
     goal_payload = _payload(goal)
     audit_payload = _payload(audit)
+    from src.request_compiler import validate_audit_alignment, goal_fingerprint, validate_adaptive_compilation
+    validate_audit_alignment(request, history, goal_payload, audit_payload)
     requirements: list[SemanticRequirement] = []
     recommendation_ids = [
         row["id"] for row in goal_payload.get("objectives", []) if row.get("kind") == "recommend"
@@ -177,6 +184,7 @@ def project_adaptive_request_ir(
             description=objective["description"],
             source=locate_source_span(objective["source_quote"], request, history),
             objective_ids=[objective["id"]],
+            quantity=objective.get("quantity", 1),
         ))
 
     for index, constraint in enumerate(goal_payload.get("hard_constraints", [])):
@@ -220,7 +228,9 @@ def project_adaptive_request_ir(
             source=locate_source_span(row["source_quote"], request, history),
         ))
         contextual_index += 1
-    return UserRequestIR(requirements=requirements)
+    result = UserRequestIR(requirements=requirements, adaptive_goal_sha256=goal_fingerprint(goal_payload))
+    validate_adaptive_compilation(result.payload(), goal_payload, request, history)
+    return result
 
 
 def project_dialogue_request_ir(

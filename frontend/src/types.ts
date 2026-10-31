@@ -174,11 +174,13 @@ export interface RequestSemanticRequirement {
   source: RequestSourceSpan
   objective_ids: string[]
   constraint_refs: string[]
+  quantity?: number | null
 }
 
 export interface UserRequestIR {
-  version: 'request-ir/v1'
+  version: 'request-ir/v1' | 'request-ir/v2'
   requirements: RequestSemanticRequirement[]
+  adaptive_goal_sha256?: string | null
   sha256: string
 }
 

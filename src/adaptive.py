@@ -910,7 +910,7 @@ def _run(context, user_message, history, pending_action):
                             validated_tool=validated_tool, pg_review=pg_review)
                     apply_controls(context)
                 except AgentError as error:
-                    if error.code in {'MODEL_FORMAT_ERROR', 'UNKNOWN_TOOL', 'INVALID_TOOL_ARGUMENTS', 'REQUEST_AUDIT_REJECTED', 'AUDIT_FORMAT_ERROR',
+                    if error.code in {'MODEL_FORMAT_ERROR', 'UNKNOWN_TOOL', 'INVALID_TOOL_ARGUMENTS', 'REQUEST_AUDIT_REJECTED', 'AUDIT_FORMAT_ERROR', 'REQUEST_IR_COMPILE_ERROR',
                                       'INVALID_CONSTRAINT_BINDING', 'UNREAD_BINDING_EVIDENCE', 'UNOBSERVED_BINDING_FIELD', 'BINDING_AUDIT_REJECTED'}:
                         _repair(context, recorder, state, plan, error)
                         continue
@@ -927,6 +927,9 @@ def _run(context, user_message, history, pending_action):
                     recorder.record('decision_rejected', code=error.code, action=decision.action)
                     continue
             pending = state['pending']
+            if state.get('goal') and (state.get('request_ir') or {}).get('version') == 'request-ir/v2':
+                from src.request_compiler import validate_adaptive_compilation
+                validate_adaptive_compilation(state['request_ir'], state['goal'], state['request'], history)
             decision = Decision.model_validate(pending['decision'])
             step = next((s for s in plan.steps if s.step_id == pending['step_id']), None)
             if decision.action in {'respond', 'unsupported'}:
@@ -961,6 +964,17 @@ def _run(context, user_message, history, pending_action):
                 ledger_complete = bool(state['objective_ledger']) and all(
                     row['status'] == 'VERIFIED' for row in state['objective_ledger'])
                 if message is not None and len(state['objective_ledger']) == 1 and ledger_complete:
+                    if row['target_count'] > 1:
+                        # 单目标多结果也走完整交付边界：逐项刷新并生成完整报告。
+                        # 先持久化 complete，使崩溃恢复不能退回只交付最后一次选择。
+                        completion = Decision(action='complete', reason='所需推荐数量已满足，刷新全部交付证据',
+                            claims=[dict(objective_id=row['objective_id'], evidence_refs=list(row['evidence_refs']))])
+                        state['pending'] = dict(decision=completion.model_dump(), step_id=None, pg_review_id=None)
+                        _save(context, state, plan)
+                        recorder.record('completion_requested', source='runtime', reason='RECOMMENDATION_QUANTITY_SATISFIED',
+                                        claims=[claim.model_dump() for claim in completion.claims])
+                        recorder.record('step_completed', step_id=step.step_id, specialist='shopping', status=step.status)
+                        continue
                     # Keep the pending proposal through terminal persistence. If
                     # the process dies before commit, resume must refresh again.
                     apply_controls(context)

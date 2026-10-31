@@ -85,8 +85,10 @@ def test_evaluation_steering_injection_is_once_per_durable_run(monkeypatch):
             payload=json.loads(messages[-1].content)
             goal=payload['goal']
             return AIMessage(content=json.dumps({'verdict':'APPROVED','issues':[], 'requirements':[
+                {'source_quote':goal['objectives'][0]['source_quote'],'interpretation':'推荐耳机',
+                 'objective_ids':['shopping'],'constraint_refs':[],'status':'COVERED'},
                 {'source_quote':goal['hard_constraints'][0]['source_quote'],'interpretation':'预算及耳机',
-                 'objective_ids':['shopping'],'constraint_refs':['global:0'],'status':'COVERED'}]}),
+                 'objective_ids':[],'constraint_refs':['global:0'],'status':'COVERED'}]}),
                 usage_metadata={'input_tokens':100,'output_tokens':80,'total_tokens':180})
     model = Model()
     monkeypatch.setattr(decisions,'get_llm',lambda **_:model)

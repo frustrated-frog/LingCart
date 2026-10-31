@@ -116,7 +116,7 @@ def test_native_batch_and_completion_execute_real_tools_without_json_action_wrap
     assert [s['tool'] for s in result['plan']['steps']] == ['search_products', 'get_order_status', 'select_product', 'select_product']
     assert result['plan']['steps'][-1]['depends_on'] == ['step-1']
     assert sum(e['type'] == 'native_submission' for e in result['events']) == 7
-    assert result['request_ir']['version'] == 'request-ir/v1'
+    assert result['request_ir']['version'] == 'request-ir/v2'
     assert len(result['request_ir']['sha256']) == 64
     assert any(e['type'] == 'request_ir_projected' for e in result['events'])
     assert project_trace(result['events'])['integrity']['complete']
@@ -203,6 +203,9 @@ def test_multiple_recommendations_in_native_batch_continue_to_completion(monkeyp
     assert result['plan']['objective_ledger'][0]['target_count'] == 2
     assert len(result['plan']['objective_ledger'][0]['selected_product_ids']) == 2
     assert len(set(result['plan']['objective_ledger'][0]['selected_product_ids'])) == 2
+    selections = [s for s in result['plan']['steps'] if s['tool'] == 'select_product']
+    assert len(selections) == 4  # 两项初次核验 + 两项最终刷新。
+    assert all(product_id in result['reply'] for product_id in result['plan']['objective_ledger'][0]['selected_product_ids'])
     assert not any(e['type'] == 'native_batch_cancelled' for e in result['events'])
 
 
