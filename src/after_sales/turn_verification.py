@@ -24,6 +24,25 @@ def trusted_case_scope(cases):
                                    for k in ('requirement_id', 'question')}) for c in cases.values()]
 
 
+def material_protocol_errors(payload, issues):
+    """只识别材料协议错误，不把其他目标或权限错误伪装成材料澄清。"""
+    objectives = payload.get('objectives', []) if isinstance(payload, dict) else []
+    fields = {'evidence_updates', 'evidence_text', 'evidence_readiness_claims', 'requirement_id',
+              'clarification_id', 'revoke_evidence_id'}
+    messages = ('Batch evidence updates use', 'Each policy requirement may be updated',
+                'A readiness update cannot add or revoke evidence')
+    for issue in issues:
+        loc = issue['loc']
+        if (len(loc) < 2 or loc[0] != 'objectives' or not isinstance(loc[1], int)
+                or loc[1] >= len(objectives) or not isinstance(objectives[loc[1]], dict)
+                or objectives[loc[1]].get('kind') != 'AFTER_SALES_CONTINUE'):
+            return None
+        if not ((len(loc) > 2 and loc[2] in fields)
+                or (len(loc) == 2 and any(message in issue['msg'] for message in messages))):
+            return None
+    return [{'path': '.'.join(map(str, issue['loc'])), 'message': issue['msg']} for issue in issues] if issues else None
+
+
 def verify_material_scope(context, objectives, rows, cases, request):
     facts = [row for row in rows if row.material_scope is not None and row.source_quote in request]
     for row in facts:

@@ -839,6 +839,15 @@ def understand_turn(user_message: str, history: list | None, pending_action: dic
         except (ValueError, TypeError, ValidationError) as exc:
             record_failure('MODEL_FORMAT_ERROR')
             if isinstance(exc, ValidationError) and attempt > 0:
+                if context and getattr(context.mechanisms.get('verification'), 'requires_material_scope', False):
+                    from src.after_sales.turn_verification import material_protocol_errors
+                    material_errors = material_protocol_errors(canonical_payload, exc.errors(include_input=False, include_url=False))
+                    if material_errors:
+                        question = '材料更新格式仍未能可靠解释。请分别说明每项材料的名称和实际情况。'
+                        context.record('case_turn_verification_conflict', attempt=attempt + 1, terminal=True,
+                                       question=question, feedback={'issue': '材料协议修复后仍不合法', 'fields': material_errors})
+                        return TurnUnderstanding(commands=[DialogueCommand(
+                            kind='CLARIFY', source_quote=user_message[:500], message=question)])
                 fallback = _clarify_invalid_constraint_plan(canonical_payload, exc, user_message)
                 if fallback is not None:
                     _validate_grounding(fallback, user_message, history)

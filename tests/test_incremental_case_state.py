@@ -26,6 +26,7 @@ class Models:
         self.batch = False
         self.repair_batch = False
         self.invalid_batch_parent = False
+        self.legacy_batch = 'never'
         self.explicit_target = None
         self.bad_boundary = False
         self.repair_boundary = True
@@ -49,6 +50,8 @@ class Models:
                                                  for kind, disposition in self.scopes.get(request, [])]
                 if self.invalid_batch_parent:
                     objective['source_quote']=request[:4]
+                if self.legacy_batch=='always' or (self.legacy_batch=='first' and 'Previous output was invalid' not in prompt):
+                    objective['evidence_text']=request
             else:
                 objective['evidence_text'] = request
                 if self.explicit_target:
@@ -273,3 +276,19 @@ def test_incremental_model_failure_closes_approval(models, monkeypatch):
     assert all(c['to_status']=='UNKNOWN' for c in transitions(result)[-1]['changes'])
     with tools._session() as session:
         assert session.get(PendingAction, approved['pending_action']['action_id']).status=='CLOSED'
+
+
+@pytest.mark.parametrize('legacy',['first','always'])
+def test_mixed_batch_protocol_repairs_once_then_clarifies(models,legacy):
+    run(MESSAGE)
+    text='原包装附件和序列号标签均完整清晰'
+    models.scopes[text]=[('ORIGINAL_PACKAGING','PROVIDED'),('SERIAL_LABEL','PROVIDED')]
+    models.batch=True
+    models.legacy_batch=legacy
+    result=run(text)
+    if legacy=='first':
+        assert result['status']=='WAITING_APPROVAL', result
+    else:
+        assert result['status']=='WAITING_CLARIFICATION' and not result['trace'], result
+        assert '材料更新格式' in result['reply']
+        assert any(e['type']=='case_turn_verification_conflict' and e['terminal'] for e in result['events'])
