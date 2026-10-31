@@ -1,4 +1,5 @@
 import { CaseLookahead } from '../components/CaseLookahead'
+import { CaseStateChanges } from '../components/CaseStateChanges'
 import { useQuery } from '@tanstack/react-query'
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
@@ -353,6 +354,7 @@ function ResultTab({ detail }: { detail: RunDetail }) {
     <div className="result-copy">{detail.result.reply ?? '该运行尚未生成最终回复。'}</div>
     <ResultArtifactViews artifacts={detail.result.artifacts} />
     <PolicyAwareCaseExecution detail={detail} />
+    {(detail.profile?.profile_id === 'after-sales-incremental-state-v1' || detail.result.events?.some(e => e.type === 'case_evidence_transition_assessed')) && <CaseStateChanges events={detail.result.events ?? []} />}
     {(detail.result.events?.some(e => e.type === 'case_lookahead_solved') || detail.profile?.profile_id === 'after-sales-lookahead-v1') && <CaseLookahead events={detail.result.events ?? []} />}
     {steps.length > 0 ? <div className="table-wrap"><table><thead><tr><th>步骤</th><th>执行角色</th><th>操作</th><th>状态</th></tr></thead><tbody>
       {steps.map((step, index) => <tr key={String(step.step_id ?? index)}><td>{String(step.step_id ?? index + 1)}</td><td>{SPECIALIST_LABELS[String(step.specialist ?? '')] ?? String(step.specialist ?? '—')}</td><td>{TOOL_LABELS[String(step.tool ?? '')] ?? String(step.tool ?? '—')}</td><td>{STATUS_LABELS[String(step.status ?? '')] ?? String(step.status ?? '—')}</td></tr>)}
