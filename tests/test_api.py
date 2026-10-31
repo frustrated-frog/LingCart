@@ -362,6 +362,36 @@ def test_api_stale_action_cannot_confirm_new_pending_action():
     assert tools.check_refund_eligibility(1001)["eligible"]
 
 
+@pytest.mark.parametrize("message", [
+    "不想取消刚才订单 1003 的付款操作。",
+    "如果取消订单1003的付款操作会怎样？",
+    "取消订单1003和1004的付款操作",
+])
+def test_ambiguous_cancellation_keeps_durable_approval_even_if_model_proposes_cancel(monkeypatch, message):
+    from src.dialogue_understanding import TurnUnderstanding
+
+    monkeypatch.setattr("src.orchestrator.get_llm", lambda **_: object())
+    monkeypatch.setattr("src.dialogue_understanding.understand_turn", lambda *args, **kwargs: TurnUnderstanding(
+        reason="测试模型不能越过确定性授权边界",
+        commands=[{"kind": "CANCEL_PENDING", "source_quote": message}],
+        objectives=[],
+    ))
+    session_id = "negated-cancel"
+    first = client.post("/chat", json={"message": "帮我支付订单1003", "session_id": session_id}).json()
+    pending = first["pending_action"]
+    response = client.post("/chat", json={"message": message, "session_id": session_id, "request_id": "ambiguous"})
+    assert response.status_code == 200
+    assert response.json()["pending_action"] == pending
+    assert response.json()["terminal_reason"] != "USER_CANCELLED_ACTION"
+    replay = client.post("/chat", json={"message": message, "session_id": session_id, "request_id": "ambiguous"}).json()
+    assert replay["cached"] and replay["pending_action"] == pending
+    assert tools.get_payment_status(1003)["status"] == "pending"
+    cancelled = client.post("/chat", json={"message": "取消", "session_id": session_id,
+                                         "action_id": pending["action_id"]}).json()
+    assert cancelled["terminal_reason"] == "USER_CANCELLED_ACTION"
+    assert cancelled["pending_action"] is None
+
+
 def test_api_interruption_returns_handle_and_resumes_without_losing_the_request(monkeypatch):
     def interrupted(*args, **kwargs):
         raise RuntimeError("injected process interruption")

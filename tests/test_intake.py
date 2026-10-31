@@ -269,3 +269,36 @@ def test_expanded_cancellation_still_requires_matching_polarity_target_and_famil
     pending = {"type": "PROCESS_PAYMENT", "order_id": 1003}
 
     assert parse_approval_response(message, pending) == APPROVAL_UNKNOWN
+
+
+@pytest.mark.parametrize("message", [
+    "不想取消刚才订单 1003 的付款操作。",
+    "我并不打算取消订单1003的付款操作",
+    "没有要求取消订单1003的付款操作",
+    "如果取消订单1003的付款操作会怎样？",
+    "取消订单1003的付款操作会怎样",
+    "取消付款吗？",
+    "取消？",
+    "他说‘取消订单1003的付款操作’",
+    "请解释“取消订单1003的付款操作”",
+    "取消订单1003和1004的付款操作",
+    "取消付款和退款操作",
+    "取消付款，等等，继续执行",
+    "先不要取消付款，但也不要扣款",
+    "don't cancel the payment",
+    "if I cancel the payment",
+])
+def test_cancellation_fast_path_rejects_non_directive_or_ambiguous_sentences(message):
+    assert parse_approval_response(message, {"type": "PROCESS_PAYMENT", "order_id": 1003}) == APPROVAL_UNKNOWN
+
+
+@pytest.mark.parametrize("message", [
+    "取消刚才订单 1003 的付款操作，不要扣款。",
+    "请取消订单1003的付款操作。",
+    "我想取消这笔付款",
+    "先不要执行",
+    "取消，先不要支付",
+    "cancel the pending payment for order 1003",
+])
+def test_cancellation_fast_path_accepts_complete_unambiguous_directives(message):
+    assert parse_approval_response(message, {"type": "PROCESS_PAYMENT", "order_id": 1003}) == APPROVAL_CANCELLED

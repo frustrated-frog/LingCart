@@ -171,14 +171,16 @@ def parse_approval_response(user_message: str, pending_action: dict | None = Non
     """Recognize an explicit answer to a previously proposed side effect."""
 
     normalized = " ".join(user_message.strip().lower().split())
+    if re.search(r"[?？]", normalized):
+        return APPROVAL_UNKNOWN
     compact = re.sub(r"[\s，,。.!！?？]", "", normalized)
     english = re.sub(r"[,。.！!？?]", " ", normalized)
     english = " ".join(english.split())
-    mentioned_family = (
-        "REFUND" if "退款" in normalized or "refund" in normalized
-        else "PAYMENT" if "支付" in normalized or "付款" in normalized or "payment" in normalized
-        else None
-    )
+    mentioned_families = set()
+    if re.search(r"退款|\brefund\b", normalized):
+        mentioned_families.add("REFUND")
+    if re.search(r"支付|付款|扣款|\b(?:payment|pay|charge)\b", normalized):
+        mentioned_families.add("PAYMENT")
     pending_family = None
     if pending_action:
         pending_family = (
@@ -186,20 +188,27 @@ def parse_approval_response(user_message: str, pending_action: dict | None = Non
             else "PAYMENT" if pending_action.get("type") == "PROCESS_PAYMENT"
             else None
         )
-    if mentioned_family and pending_family and mentioned_family != pending_family:
+    if len(mentioned_families) > 1 or (pending_family and mentioned_families - {pending_family}):
         return APPROVAL_UNKNOWN
     mentioned_order_ids = {int(value) for value in re.findall(r"(?<!\d)\d{4,}(?!\d)", normalized)}
     pending_order_id = (pending_action or {}).get("order_id")
-    if mentioned_order_ids and pending_order_id not in mentioned_order_ids:
+    if mentioned_order_ids and mentioned_order_ids != {pending_order_id}:
         return APPROVAL_UNKNOWN
     cancelled = {"取消", "取消操作", "取消支付", "取消退款", "算了", "不要", "不支付", "不退款", "取消先不要执行", "取消先不要支付", "取消不退款了"}
+    # 每个分句都必须是完整的直接指令。局部命中无法区分否定、引用、
+    # 假设和相反指令；未覆盖的自然表达交回理解层，并保留待确认动作。
+    target = (r"(?:(?:刚才|刚刚|当前|这次|待确认|待执行)的?)?"
+              r"(?:订单\d{4,}的?)?(?:(?:这个|这笔|这项|该))?"
+              r"(?:(?:支付|付款|退款|扣款)(?:操作|请求)?|操作)")
+    cancellation_clause = (
+        r"(?:请|请帮我|帮我|麻烦你|我想|我要)?"
+        r"(?:取消(?:" + target + r")?|(?:先)?(?:不要|别)(?:再|继续)?(?:执行|扣款|支付|付款|退款))"
+        r"(?:吧|了)?"
+    )
+    clauses = [clause for clause in re.split(r"[，,。.!！；;]", re.sub(r"\s", "", normalized)) if clause]
     explicit_chinese_cancellation = bool(
-        pending_action
-        and not re.search(r"(?:不要|别|不)取消", normalized)
-        and (
-            re.search(r"取消.{0,32}(?:操作|支付|付款|退款|扣款)", normalized)
-            or re.search(r"(?:不要|别)(?:再)?(?:执行|扣款|支付|付款|退款)", normalized)
-        )
+        pending_action and clauses
+        and all(re.fullmatch(cancellation_clause, clause) for clause in clauses)
     )
     explicit_english_cancellation = bool(
         pending_action
