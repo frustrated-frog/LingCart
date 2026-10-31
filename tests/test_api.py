@@ -69,6 +69,14 @@ def test_production_build_and_client_routes_are_served_when_available():
     assert deep_link.status_code == 200
     assert 'LingCart · 消费任务智能体' in home.text
     assert '<div id="root"></div>' in deep_link.text
+    assert home.headers['cache-control'] == 'no-cache'
+    inspector = client.get('/runs/saved-run', headers={'Accept': 'text/html,application/xhtml+xml'})
+    assert inspector.status_code == 200 and '<div id="root"></div>' in inspector.text
+    assert inspector.headers['cache-control'] == 'no-cache'
+    assert client.get('/runs/saved-run', headers={'Accept': 'application/json'}).status_code == 422
+    assert client.get('/runs/saved-run', headers={'Accept': 'text/html;q=0'}).status_code == 422
+    scoped = client.get('/runs/saved-run', params={'session_id': 'wrong'}, headers={'Accept': 'text/html'})
+    assert scoped.status_code == 404 and scoped.headers['content-type'].startswith('application/json')
 
 
 def test_engineering_overview_exposes_real_registry_and_aggregates_only():

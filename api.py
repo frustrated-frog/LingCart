@@ -22,7 +22,7 @@ import uuid
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from src import tools
@@ -644,11 +644,5 @@ app.include_router(pg_router)
 
 # A production build is served by FastAPI so deployment has one process and
 # one origin.  Vite's development server is still used for local hot reload.
-_frontend_dist = Path(__file__).resolve().parent / 'frontend' / 'dist'
-if _frontend_dist.is_dir():
-    @app.get('/{frontend_path:path}', include_in_schema=False)
-    def frontend_app(frontend_path: str):
-        requested = (_frontend_dist / frontend_path).resolve()
-        if _frontend_dist.resolve() in requested.parents and requested.is_file():
-            return FileResponse(requested)
-        return FileResponse(_frontend_dist / 'index.html')
+from src.web_host import register_frontend
+register_frontend(app, Path(__file__).resolve().parent / 'frontend' / 'dist')
