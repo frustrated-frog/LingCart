@@ -645,6 +645,8 @@ def prepare_after_sales_case(
                 expected_revision=case.revision,
             )
             _commit(session)
+            from src.after_sales.incremental import committed_transition
+            transition = committed_transition(prepared, case, assessment.assessment_id)
             return {
                 "case_id": case.case_id,
                 "order_id": case.order_id,
@@ -654,6 +656,7 @@ def prepare_after_sales_case(
                 "requires_confirmation": evaluation.outcome.value == "ELIGIBLE",
                 "case": case.model_dump(mode="json"),
                 "data_source": "AFTER_SALES_CASE_LEDGER",
+                **({'evidence_transition': transition} if transition is not None else {}),
             }
     except AfterSalesDomainError as exc:
         raise AgentError(exc.code, str(exc), retryable=exc.retryable) from exc

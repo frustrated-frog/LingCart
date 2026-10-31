@@ -11,6 +11,32 @@ export interface InformationPath {
   first_action_burden: number
 }
 
+export type EvidenceSemanticStatus = 'SUFFICIENT' | 'INCOMPLETE' | 'IRRELEVANT' | 'CONFLICT' | 'UNKNOWN'
+export interface CaseEvidenceTransition {
+  version: 'case-evidence-transition-v1'
+  report_id: string
+  assessment_id: string
+  assessment_report_id: string
+  input_hash: string
+  case_id: string
+  from_revision: number
+  to_revision: number
+  commit_status: 'COMMITTED'
+  policy_outcome: string | null
+  error_code: string | null
+  changes: {
+    requirement_id: string
+    evidence_type: string
+    description: string
+    from_status: EvidenceSemanticStatus | null
+    to_status: EvidenceSemanticStatus
+    action: 'PRESERVE' | 'REASSESS'
+    reason: string
+    reason_code: string
+    prior_assessment_id: string | null
+  }[]
+}
+
 export interface LookaheadReport {
   version: 'case-lookahead-v1'
   report_id: string
@@ -234,6 +260,7 @@ export interface RequestSemantics {
       outcome: { kind: string; reason_code?: string | null; quantity: number; order_id: number | null; question: string | null; product_ids: string[] } | null
       predicate: { field: string | null; op: string; value: unknown } | null
       restriction: ExecutionRestriction | null
+      material_scope?: { case_id: string; requirement_id: string; disposition: 'PROVIDED' | 'DEFERRED' } | null
     }
   }>
   revisions: Array<{

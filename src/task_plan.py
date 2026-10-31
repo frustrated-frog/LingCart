@@ -837,7 +837,16 @@ def execute_plan(intake, run_id, *, plan=None, source="deterministic", incomplet
         reason = "NO_FEASIBLE_SOLUTION"
     if incomplete_reason and status == "SUCCEEDED":
         status, reason = "PARTIAL", incomplete_reason
-    response = _finish(recorder, intake, run_id, agent, trace, reply="\n\n".join(_facts(s) for s in plan.steps) or "没有可执行的业务步骤。",
+    # 同一轮批量更新可能生成多个案件版本；回复和追问只能使用该案件的最后投影。
+    # 中间观察仍保留在步骤、事件和账本中，不覆盖已提交的历史结果。
+    latest_case_steps = {}
+    for step in plan.steps:
+        if isinstance(step.result, dict) and step.result.get("data_source") == "AFTER_SALES_CASE_LEDGER":
+            latest_case_steps[step.result["case_id"]] = step
+    visible_steps = [s for s in plan.steps if not isinstance(s.result, dict)
+                     or s.result.get("data_source") != "AFTER_SALES_CASE_LEDGER"
+                     or latest_case_steps[s.result["case_id"]] is s]
+    response = _finish(recorder, intake, run_id, agent, trace, reply="\n\n".join(_facts(s) for s in visible_steps) or "没有可执行的业务步骤。",
                        status=status, terminal_reason=reason, pending_action=pending, error=errors[-1] if errors else None)
     response["artifacts"] = [
         step.result["artifact"] for step in plan.steps
@@ -849,7 +858,7 @@ def execute_plan(intake, run_id, *, plan=None, source="deterministic", incomplet
     response["plan"] = plan.payload()
     pending_clarifications = [
         autonomous.get("pending_clarification")
-        for step in plan.steps
+        for step in latest_case_steps.values()
         if isinstance(step.result, dict)
         and isinstance((autonomous := step.result.get("autonomous_execution")), dict)
         and isinstance(autonomous.get("pending_clarification"), dict)

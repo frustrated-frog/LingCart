@@ -201,6 +201,7 @@ def continue_case(
                                             expected_revision=case.revision, actor_id=run.session_id, now=now)
             incoming_id = next((e['evidence_id'] for e in case.evidence
                                 if evidence_text and e['source_ref'] == f'agent_runs:{run.run_id}:request'
+                                and e['evidence_type'] == requirement['evidence_type']
                                 and e['payload'].get('statement') == evidence_text), None)
             assessment = persist_assessment(session, case, run.run_id, prepared, incoming_id=incoming_id, now=now)
             case = service.record_semantic_assessment(case_id, assessment.assessment_id,
@@ -220,6 +221,10 @@ def continue_case(
                 )
             tools._commit(session)
             result = case_result(case)
+            from src.after_sales.incremental import committed_transition
+            transition = committed_transition(prepared, case, assessment.assessment_id)
+            if transition is not None:
+                result['evidence_transition'] = transition
             if clarification_binding is not None:
                 result["clarification_binding"] = clarification_binding
             return result

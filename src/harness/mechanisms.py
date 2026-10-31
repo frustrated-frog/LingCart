@@ -77,6 +77,22 @@ class EvidenceVerificationMechanism(EmbeddedMechanism):
 
 
 @dataclass(frozen=True)
+class IncrementalCaseVerificationMechanism(EvidenceVerificationMechanism):
+    requires_material_scope: bool = True
+    evidence_verifier_version: str = 'evidence-incremental-v1'
+
+    def evidence_prompt_hash(self):
+        from src.after_sales.incremental import DELTA_PROMPT, IncrementalResponse
+        from src.after_sales.semantic import PROMPT
+        from src.after_sales.service import _checksum
+        return _checksum({'base': PROMPT, 'delta': DELTA_PROMPT, 'schema': IncrementalResponse.model_json_schema()})
+
+    def assess_evidence(self, inputs, *, model, runtime):
+        from src.after_sales.incremental import assess_incremental
+        return assess_incremental(inputs, model=model, runtime=runtime)
+
+
+@dataclass(frozen=True)
 class AfterSalesPlanningMechanism(EmbeddedMechanism):
     """研究对照用的售后计划消费策略，不改变 Stable Kernel 执行边界。"""
 
@@ -237,6 +253,7 @@ def built_in_mechanisms() -> tuple[HarnessMechanism, ...]:
     after_sales_intent_sources = (
         "src/after_sales/intent.py", "src/after_sales/context.py", "src/request_semantics.py",
         "src/request_semantics_runtime.py", "src/semantic_wire.py",
+        "src/after_sales/turn_verification.py",
     )
     after_sales_planning_sources = (
         "src/orchestrator.py", "src/dialogue_understanding.py", "src/task_plan.py",
@@ -310,6 +327,11 @@ def built_in_mechanisms() -> tuple[HarnessMechanism, ...]:
                            "src/after_sales/semantic.py", "src/after_sales/evidence.py",
                            "src/after_sales/actions.py", "src/after_sales/pending_clarification.py",
                            "src/after_sales/policy.py", "src/tools.py")),
+        IncrementalCaseVerificationMechanism("verification", "incremental-case-verification", "1", ("orchestrator",),
+                          ("src/direct_executor.py", "src/task_plan.py", "src/catalog_query.py",
+                           "src/after_sales/semantic.py", "src/after_sales/evidence.py", "src/after_sales/incremental.py",
+                           "src/after_sales/actions.py", "src/after_sales/pending_clarification.py",
+                           "src/after_sales/policy.py", "src/tools.py", "src/dialogue_understanding.py") + after_sales_intent_sources),
         EmbeddedMechanism("planning", "bounded-model-loop", "1", ("adaptive",),
                           ("src/adaptive.py", "src/adaptive_decision.py", "src/request_semantics.py",
                            "src/request_semantics_runtime.py", "src/semantic_wire.py")),

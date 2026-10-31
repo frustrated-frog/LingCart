@@ -769,6 +769,19 @@ def understand_turn(user_message: str, history: list | None, pending_action: dic
             return understanding
         except AgentError as exc:
             record_failure(exc.code)
+            from src.after_sales.turn_verification import CaseTurnMismatch
+            if isinstance(exc, CaseTurnMismatch):
+                if context:
+                    context.record('case_turn_verification_conflict', feedback=exc.feedback, question=exc.question,
+                                   attempt=attempt + 1, terminal=attempt > 0)
+                if attempt > 0:
+                    # 已完成案件和材料继续保留；不一致解释不能进入写入计划。
+                    return TurnUnderstanding(commands=[DialogueCommand(
+                        kind='CLARIFY', source_quote=user_message[:500], message=exc.question)])
+                error_text = exc.repair_text()
+                if context:
+                    context.record('dialogue_protocol_retry', attempt=attempt + 1, error=error_text)
+                continue
             repairable = {
                 "REQUEST_SEMANTICS_MISMATCH",
                 "UNKNOWN_CAPABILITY",

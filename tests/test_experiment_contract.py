@@ -157,6 +157,22 @@ def test_preplay_contract_freezes_v4_and_only_adds_bounded_transition_search():
             get_product_runner(profile_id)
 
 
+def test_incremental_state_changes_only_verification_and_stays_research_only():
+    from src.harness import get_runner, get_product_runner
+    from src.errors import AgentError
+
+    experiment = ExperimentSpec.from_path(
+        ROOT / 'research/experiments/after-sales-incremental-state-v1/experiment-spec.json')
+    left = get_runner(experiment.baseline_profile).provenance()
+    right = get_runner(experiment.candidate_profile).provenance()
+    assert left['engine'] == right['engine']
+    assert [m for m in left['mechanisms'] if m['slot'] != 'verification'] == [
+        m for m in right['mechanisms'] if m['slot'] != 'verification']
+    assert experiment.repeats == 2 and experiment.evaluation_split == 'test'
+    with pytest.raises(AgentError, match='仅限研究'):
+        get_product_runner(experiment.candidate_profile)
+
+
 def test_contract_rejects_reversed_guards_and_requires_a_cost_metric():
     payload = json.loads((ROOT / 'research/templates/experiment-spec.json').read_text())
     payload['guard_metrics'][0]['objective'] = 'minimize'

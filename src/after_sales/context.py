@@ -202,5 +202,6 @@ def normalize_case_continuation(objective: dict, sources: tuple[str, ...]):
                 "resolver_version": "1",
                 "normalized_value": normalized[key],
                 "source_quote": quote,
+                "binding_mode": "IMPLICIT" if objective.get("requirement_id") is None else "EXPLICIT",
             }
     return normalized, provenance

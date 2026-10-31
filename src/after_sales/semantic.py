@@ -223,7 +223,7 @@ def collect_inputs(session, runtime, args, *, now):
     revoked = args.get("revoke_evidence_id")
     if revoked and revoked not in {e["evidence_id"] for e in evidence}:
         raise AgentError("EVIDENCE_NOT_ACTIVE", "只能撤回当前案件中可溯源的有效陈述", retryable=False)
-    return {"case_id": case.case_id, "case_revision": case.revision,
+    inputs = {"case_id": case.case_id, "case_revision": case.revision,
             "order_id": case.order_id, "order_item_id": case.order_item_id,
             "policy_version_id": evaluation.policy_version_id, "policy_checksum": evaluation.policy_checksum,
             "previous_basis_hash": evidence_basis(case.evidence), "observed_at": now.isoformat(),
@@ -231,6 +231,10 @@ def collect_inputs(session, runtime, args, *, now):
             "requirements": [{key: r[key] for key in ("requirement_id", "evidence_type", "description")}
                              for r in requirements if r["validation_condition"] == "CUSTOMER_ATTESTATION"],
             "evidence": evidence}
+    if getattr(runtime.mechanisms.get('verification'), 'requires_material_scope', False):
+        from src.after_sales.incremental import add_prior_context
+        add_prior_context(inputs, evaluation, args)
+    return inputs
 
 
 def prepare(args, runtime):
@@ -265,25 +269,37 @@ def prepare(args, runtime):
     if inputs.get('skip'):
         return
     start = runtime.model_cursor
+    mechanism = runtime.mechanisms.get('verification')
+    verifier_version = getattr(mechanism, 'evidence_verifier_version', VERSION)
+    prompt_hash = getattr(mechanism, 'evidence_prompt_hash', lambda: _checksum(PROMPT))()
+    transition_report = None
     try:
-        mechanism = runtime.mechanisms.get('verification')
         reviewer = getattr(mechanism, 'assess_evidence', assess)
         result = reviewer(inputs, model=get_llm(purpose="evidence_verification"), runtime=runtime)
+        transition_report = result.pop('transition_report', None)
         # 插槽实现也必须经过内核协议校验，不能凭字典授予充分性。
         if result.get('error_code'):
             result = abstention(inputs, result['error_code'])
         else:
             result = validate_response(json.dumps(result, ensure_ascii=False), inputs)
+        if transition_report is not None:
+            from src.after_sales.incremental import validate_transition
+            validate_transition(result, inputs, transition_report)
     except ModelGatewayConfigurationError:
         result = abstention(inputs, "SEMANTIC_MODEL_UNAVAILABLE")
     except (ValueError, TypeError):
         result = abstention(inputs, "SEMANTIC_PROTOCOL_INVALID")
-    prepared[key] = {"input": inputs, "result": result, "verifier_version": VERSION,
-                     "prompt_sha256": _checksum(PROMPT), "input_hash": _checksum(inputs),
+        transition_report = None
+    prepared[key] = {"input": inputs, "result": result, "verifier_version": verifier_version,
+                     "prompt_sha256": prompt_hash, "input_hash": _checksum(inputs),
                      "model_start": start, "model_end": runtime.model_cursor}
+    if transition_report is not None:
+        prepared[key]['transition_report'] = transition_report
     runtime.checkpoint(evidence_semantic_results=prepared)
     runtime.record("evidence_semantic_assessed", case_id=inputs["case_id"], input_hash=_checksum(inputs),
-                   verifier_version=VERSION, requirements=result["requirements"], error_code=result.get("error_code"))
+                   verifier_version=verifier_version, requirements=result["requirements"], error_code=result.get("error_code"))
+    if transition_report is not None:
+        runtime.record('case_evidence_transition_assessed', report=transition_report)
 
 
 def prepared_assessment(session, runtime, args, case, evaluation):

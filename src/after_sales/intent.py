@@ -19,12 +19,15 @@ def verify_intent(context, understanding, request, history):
         context.snapshot['after_sales_previous_semantics'] = deepcopy(previous)
     # 同一轮规划修复保持提取输入不变，复用独立结果，不把刚接受的输出当成上一轮输入。
     previous = context.snapshot['after_sales_previous_semantics']
-    contract = extract_contract(context, request, history, previous=previous)
+    from src.after_sales.context import current_case_context
+    from src.after_sales.turn_verification import CaseTurnMismatch, trusted_case_scope, verify_material_scope
+    cases = {case['case_id']: case for case in current_case_context() if case.get('case_id')}
+    scoped = getattr(context.mechanisms.get('verification'), 'requires_material_scope', False)
+    contract = extract_contract(context, request, history, previous=previous,
+                                **({'case_context': trusted_case_scope(cases)} if scoped else {}))
     from src.execution_boundaries import apply_semantic_boundaries
     apply_semantic_boundaries(context, contract, restrict_only=True)
     rows = validate_contract(contract)
-    from src.after_sales.context import current_case_context
-    cases = {case['case_id']: case for case in current_case_context()}
     expected = Counter()
     for objective in objectives:
         if objective.kind == 'AFTER_SALES_CASE':
@@ -41,7 +44,11 @@ def verify_intent(context, understanding, request, history):
     restrictions = {row.restriction for row in rows if row.restriction}
     for change in understanding.execution_boundaries:
         if (change.operation == 'DENY') != (change.restriction in restrictions):
-            raise AgentError('REQUEST_SEMANTICS_MISMATCH', '执行限制与独立需求不一致', retryable=False)
+            raise CaseTurnMismatch('执行限制与独立需求不一致', fields={
+                'proposed_change': change.model_dump(), 'independent_restrictions': sorted(restrictions)},
+                question='这轮只是补充材料，还是也要修改执行限制？请明确说明要新增或解除的限制。')
+    if scoped:
+        verify_material_scope(context, objectives, rows, cases, request)
     # 新提取的限制只有完整语义接受后才允许释放。
     apply_semantic_boundaries(context, contract)
     context.snapshot['request_semantics'] = deepcopy(contract)

@@ -41,6 +41,12 @@ class OutcomeSpec(StrictModel):
         return self
 
 
+class MaterialScope(StrictModel):
+    case_id: str = Field(min_length=1, max_length=64)
+    requirement_id: str = Field(min_length=1, max_length=160)
+    disposition: Literal['PROVIDED', 'DEFERRED']
+
+
 class IntentRequirement(StrictModel):
     requirement_id: str = Field(pattern=r'^[a-zA-Z][a-zA-Z0-9_-]{0,39}$')
     kind: Literal['OUTCOME', 'CONDITION', 'PROHIBITION', 'EXECUTION_BOUNDARY', 'USER_FACT', 'SOFT_PREFERENCE', 'UNKNOWN']
@@ -50,6 +56,7 @@ class IntentRequirement(StrictModel):
     predicate: Constraint | None = None
     targets: list[str] = Field(default_factory=list, max_length=8)
     restriction: Literal['READ_ONLY', 'NO_PAYMENT', 'NO_REFUND', 'NO_SUBMISSION'] | None = None
+    material_scope: MaterialScope | None = None
 
     @model_validator(mode='after')
     def typed_requirement(self):
@@ -63,6 +70,8 @@ class IntentRequirement(StrictModel):
             raise ValueError('Predicate source must equal requirement source')
         if self.restriction and self.kind not in {'PROHIBITION', 'EXECUTION_BOUNDARY'}:
             raise ValueError('Only an execution boundary may restrict effects')
+        if self.material_scope is not None and self.kind != 'USER_FACT':
+            raise ValueError('Only a material USER_FACT may carry material_scope')
         return self
 
 

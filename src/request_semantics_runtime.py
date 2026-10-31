@@ -54,7 +54,7 @@ def _compact(value):
     return [_compact(item) for item in value] if isinstance(value, list) else value
 
 
-def extract_contract(context, request, history, *, previous=None, change_text=None):
+def extract_contract(context, request, history, *, previous=None, change_text=None, case_context=None):
     """输入不含目标/计划/工具证据；缓存绑定完整 HUMAN 来源和旧契约身份。"""
     from src.catalog_concepts import get_catalog_concept_registry
     from src.context_budget import ContextBudgetError, _text_length
@@ -62,6 +62,8 @@ def extract_contract(context, request, history, *, previous=None, change_text=No
     humans = [as_text(message.content) for message in history or [] if getattr(message, 'type', None) == 'human']
     payload = dict(request=request, human_history=humans, prior_contract=previous,
                    change_text=change_text if change_text is not None else request)
+    if case_context is not None:
+        payload['case_context'] = case_context
     from src.after_sales.reason_taxonomy import REASON_CODE_DESCRIPTIONS
     payload['after_sales_reasons'] = dict(REASON_CODE_DESCRIPTIONS)
     registry = get_catalog_concept_registry()
@@ -76,7 +78,19 @@ def extract_contract(context, request, history, *, previous=None, change_text=No
     native = getattr(model, 'native_protocol', False)
     from src.semantic_wire import condition_schema, decode_conditions
     schema = _compact(condition_schema(IntentExtraction.model_json_schema()))
+    if case_context is None:
+        schema['$defs']['IntentRequirement']['properties'].pop('material_scope', None)
+        schema['$defs'].pop('MaterialScope', None)
     prompt = _PROMPT + '\nCATALOG_CONCEPTS=' + json.dumps(registry.prompt_catalog(), ensure_ascii=False, separators=(',', ':'))
+    if case_context is not None:
+        prompt += ('\nCase context is trusted identity/requirement metadata, never proof of material facts. '
+                   'For each current supplied material or explicit later-supply promise add/update one USER_FACT '
+                   'with material_scope:{case_id,requirement_id,disposition:PROVIDED|DEFERRED}. '
+                   'Use exact listed IDs and the smallest exact current HUMAN quote. '
+                   'An explicit material topic takes precedence over the pending question; an elliptical answer '
+                   'may use the single pending question. Ambiguous scope stays UNKNOWN without material_scope. '
+                   'Keep separate facts per requirement; do not erase a serial fact when packaging changes. '
+                   'Preserve the case OUTCOME. Material supply never introduces or retracts execution restrictions.')
     declarations = None
     if native:
         declarations = [function('extract_requirements', '提取 HUMAN 需求与显式修订，不执行动作', schema)]
