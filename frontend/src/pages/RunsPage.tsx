@@ -4,6 +4,7 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { api } from '../api/client'
 import { ExecutionWorkbench } from '../components/ExecutionWorkbench'
 import { ResultArtifactViews } from '../components/CatalogResultView'
+import { RequestSemanticsPanel } from '../components/RequestSemanticsPanel'
 import type { RunDetail } from '../types'
 import {
   DefinitionGrid,
@@ -371,6 +372,7 @@ function EvidenceTab({ detail }: { detail: RunDetail }) {
     REVISE_BINDING: '修订约束映射', CHANGE_CANDIDATE_OR_EVIDENCE: '更换候选或补充证据', STOP: '停止重复恢复',
   }
   return <>
+    <RequestSemanticsPanel detail={detail} />
     <DefinitionGrid items={[
       ['目标修订版本', String(adaptive.goal_revision ?? 0)],
       ['约束映射版本', String(adaptive.binding_revision ?? 0)],

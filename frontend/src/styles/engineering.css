@@ -622,3 +622,41 @@
 
 .pg-lab-entry { display:flex; align-items:center; justify-content:space-between; gap:20px; border:1px solid #b7cabe; border-radius:5px; background:#e8f0e8; padding:17px 20px; margin-bottom:18px; color:#294b37; text-decoration:none; }
 .pg-lab-entry b { font-size:15px; }.pg-lab-entry small { display:block; font-size:11px; margin-top:6px; color:#526d5b; }.pg-lab-entry>strong { font-size:12px; }.pg-lab-entry:hover { background:#dfeadd; }
+/* 独立需求契约：颜色表达已修订/保留，数量与约束直接来自后端。 */
+.semantic-panel { margin-bottom: 24px; min-width: 0; }
+.semantic-header { display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 22px 24px; background: var(--nav); color: #edf3ff; border-left: 3px solid #7da6ff; }
+.semantic-kicker { color: #acbfdf; font-size: 11px; letter-spacing: .08em; }
+.semantic-header h3 { font-size: 20px; margin: 10px 0; }
+.semantic-header p { color: #bdcce1; font-size: 12px; line-height: 1.7; margin: 0; }
+.semantic-header code { flex-shrink: 0; color: #a9bfe5; font-size: 10px; line-height: 1.9; }
+.semantic-objectives { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-top: 12px; }
+.semantic-objective { min-width: 0; padding: 18px; background: var(--surface); border: 1px solid var(--line); border-top: 3px solid var(--blue); }
+.semantic-objective.is-revised { border-top-color: var(--amber); }
+.semantic-objective-heading { display: flex; gap: 12px; justify-content: space-between; color: var(--muted); font-size: 10px; }
+.semantic-objective-heading code { overflow-wrap: anywhere; }
+.semantic-objective-heading span { flex-shrink: 0; color: var(--ink-2); }
+.semantic-objective h4 { font-size: 14px; line-height: 1.6; margin: 14px 0 10px; overflow-wrap: anywhere; }
+.semantic-quantity { color: var(--ink-2); font-size: 11px; }
+.semantic-quantity b { padding-left: 10px; font: 600 22px var(--mono); color: var(--blue); }
+.semantic-objective blockquote { margin: 14px 0; padding: 8px 12px; border-left: 2px solid var(--line-strong); background: var(--surface-2); color: var(--ink-2); font-size: 12px; line-height: 1.7; overflow-wrap: anywhere; }
+.semantic-constraints { list-style: none; margin: 0; padding: 0; }
+.semantic-constraints li { padding: 9px 0; border-top: 1px solid var(--line); font-size: 12px; line-height: 1.6; }
+.semantic-constraints small { display: block; color: var(--muted); margin-top: 3px; font-size: 10px; }
+.semantic-note { color: var(--muted); font-size: 11px; line-height: 1.7; }
+.semantic-context { margin: 12px 0; border: 1px solid var(--line); background: var(--surface); }
+.semantic-context > div { display: grid; grid-template-columns: 80px 1fr 1fr; gap: 12px; padding: 12px 16px; font-size: 12px; line-height: 1.7; border-bottom: 1px solid var(--line); }
+.semantic-context > div:last-child { border-bottom: 0; }
+.semantic-context b { color: var(--ink-2); font-weight: 500; }
+.semantic-context q { color: var(--muted); overflow-wrap: anywhere; }
+.semantic-context .is-uncertain { background: var(--amber-soft); }
+.semantic-operation { display: inline-block; padding: 3px 8px; background: var(--surface-2); font-size: 11px; white-space: nowrap; }
+.operation-replace { color: #86510f; background: var(--amber-soft); }
+.operation-retract { color: var(--red); background: var(--red-soft); }
+.operation-add { color: #11675e; background: var(--teal-soft); }
+.semantic-boundaries { margin-top: 14px; padding: 14px 18px; border: 1px solid var(--line); background: var(--surface); }
+.semantic-boundaries h4 { margin: 0 0 8px; font-size: 12px; }
+.semantic-boundaries p { margin: 0; font-size: 11px; color: var(--muted); line-height: 1.7; }
+.semantic-boundaries ul { list-style: none; padding: 0; margin: 0; display: flex; gap: 10px 24px; flex-wrap: wrap; }
+.semantic-boundaries li { display: flex; align-items: baseline; gap: 10px; font-size: 12px; line-height: 1.7; }
+.semantic-boundaries b { color: var(--red); font-weight: 600; }
+.semantic-boundaries q { color: var(--ink-2); overflow-wrap: anywhere; }

@@ -19,6 +19,7 @@ const phases = [
     icon: Sparkles,
     events: new Set([
       'intake', 'dialogue_protocol_retry', 'route_decision', 'request_audited', 'request_ir_projected',
+      'request_semantics_extracted', 'request_semantics_compiled', 'request_semantics_revised', 'execution_boundaries_updated', 'execution_boundary_blocked',
       'catalog_request_audited', 'constraint_binding_proposed', 'constraint_binding_unresolved',
       'constraint_binding_rejected', 'constraint_bindings_refined',
     ]),
