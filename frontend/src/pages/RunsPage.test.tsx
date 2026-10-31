@@ -55,6 +55,18 @@ function renderPage() {
 beforeEach(() => vi.restoreAllMocks())
 
 describe('RunsPage LivePlan evidence', () => {
+  it('shows persisted failure counts and stop decisions without inventing recovery evidence', async () => {
+    vi.spyOn(api, 'runs').mockResolvedValue({ runs: [summary] })
+    vi.spyOn(api, 'run').mockResolvedValue({ ...detail, checkpoint: { ...detail.checkpoint, failure_ledger: {
+      signature: { signature: { stage: 'decision', code: 'INVALID_TOOL_ARGUMENTS' },
+        signature_sha256: 'c'.repeat(64), occurrence: 3, max_recoveries: 2, blocked: true, recovery_action: 'STOP' },
+    } } })
+    renderPage()
+    fireEvent.click(await screen.findByRole('tab', { name: '上下文与证据' }))
+    expect(screen.getByRole('cell', { name: '3 次 · 最多恢复 2 次' })).toBeInTheDocument()
+    expect(screen.getByRole('cell', { name: '停止重复恢复' })).toBeInTheDocument()
+    expect(screen.getByRole('cell', { name: /INVALID_TOOL_ARGUMENTS/ })).toBeInTheDocument()
+  })
   it('shows persisted monitor evidence, advice and precommit rejection', async () => {
     vi.spyOn(api, 'runs').mockResolvedValue({ runs: [summary] })
     vi.spyOn(api, 'run').mockResolvedValue(detail)
@@ -90,6 +102,7 @@ describe('RunsPage LivePlan evidence', () => {
     expect(screen.getAllByText('1').length).toBeGreaterThan(0)
     expect(screen.getByText(/PROHIBITION/)).toBeInTheDocument()
     expect(screen.getByText(/不要执行支付/)).toBeInTheDocument()
+    expect(screen.getByText('本次运行尚未记录共享恢复事件。')).toBeInTheDocument()
   })
 })
 

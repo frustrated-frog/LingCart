@@ -365,6 +365,11 @@ function EvidenceTab({ detail }: { detail: RunDetail }) {
   const requestRequirements = requestIr && typeof requestIr === 'object'
     ? (requestIr as { requirements?: unknown[] }).requirements ?? []
     : []
+  const failures = Object.values(record(checkpoint.failure_ledger)).map(record)
+  const recoveryLabels: Record<string, string> = {
+    REPAIR_PROTOCOL: '修正协议', REPAIR_ARGUMENTS: '修正参数', REVISE_INTERPRETATION: '修订需求解释',
+    REVISE_BINDING: '修订约束映射', CHANGE_CANDIDATE_OR_EVIDENCE: '更换候选或补充证据', STOP: '停止重复恢复',
+  }
   return <>
     <DefinitionGrid items={[
       ['目标修订版本', String(adaptive.goal_revision ?? 0)],
@@ -373,9 +378,23 @@ function EvidenceTab({ detail }: { detail: RunDetail }) {
       ['模型已读证据', Array.isArray(adaptive.read_evidence_refs) ? adaptive.read_evidence_refs.length : 0],
       ['目标数量', Array.isArray(adaptive.objective_ledger) ? adaptive.objective_ledger.length : 0],
       ['语义要求', requestRequirements.length],
+      ['失败身份', failures.length],
       ['上下文', checkpoint.context ? '已记录' : '未记录'],
     ]} />
     <div className="split-json"><div><h3>统一请求语义</h3><JsonBlock value={requestIr ?? { status: '尚未生成 RequestIR' }} /></div><div><h3>目标、映射事务与证据</h3><JsonBlock value={{ goal: adaptive.goal, objective_ledger: adaptive.objective_ledger ?? [], constraint_bindings: adaptive.constraint_bindings ?? {}, binding_transaction: adaptive.binding_tx ?? null, binding_resolution: adaptive.binding_resolution ?? null, binding_evidence_access: adaptive.binding_evidence_access ?? {}, working_memory: adaptive.working_memory, read_evidence_refs: adaptive.read_evidence_refs ?? [] }} /></div></div>
+    <SectionHeading index="R" title="失败与有界恢复" />
+    {failures.length ? <div className="table-wrap"><table><thead><tr><th>阶段 / 错误</th><th>失败次数</th><th>恢复动作</th><th>身份指纹</th></tr></thead><tbody>
+      {failures.map((failure) => {
+        const signature = record(failure.signature)
+        return <tr key={String(failure.signature_sha256)}>
+          <td><small>{String(signature.stage ?? '—')}</small><br /><code>{String(signature.code ?? '—')}</code></td>
+          <td>{String(failure.occurrence ?? '—')} 次 · 最多恢复 {String(failure.max_recoveries ?? '—')} 次</td>
+          <td>{recoveryLabels[String(failure.recovery_action)] ?? String(failure.recovery_action ?? '—')}</td>
+          <td><code title={String(failure.signature_sha256)}>{String(failure.signature_sha256 ?? '').slice(0, 16)}</code></td>
+        </tr>
+      })}
+    </tbody></table></div> : <div className="empty-inline">本次运行尚未记录共享恢复事件。</div>}
+    <details><summary>恢复账本与结构化上下文</summary><JsonBlock value={{ failure_ledger: checkpoint.failure_ledger ?? {}, context: checkpoint.context ?? null }} /></details>
   </>
 }
 

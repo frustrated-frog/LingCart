@@ -257,6 +257,12 @@ def review_request(context, state, plan, history, *, phase, _protocol_retry=0):
                    if isinstance(error, ValidationError) else str(error))
         failure = AgentError('AUDIT_FORMAT_ERROR', '独立审查响应需修正：' + json.dumps(details, ensure_ascii=False), retryable=False)
         failure.audit_phase = phase
+        from src.failure_recovery import register_failure, signature
+        record = register_failure(context, signature('audit_protocol', failure.code, {'phase': phase},
+            {'basis_sha256': audit_basis_fingerprint(state, plan, phase)}),
+            attempt_id=f'audit:{phase}:{context.model_cursor}')
+        if record['blocked']:
+            raise AgentError('NO_PROGRESS_AUDIT_LOOP', '同一审查协议重复失败，已停止无进展修复', retryable=False) from error
         if _protocol_retry < 1:
             context.record('audit_protocol_retry', phase=phase, code=failure.code)
             retry_state = {**state, 'audit_format_feedback': dict(phase=phase, message=str(failure))}

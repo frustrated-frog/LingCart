@@ -33,6 +33,8 @@ _PHASES = {
     "intervention_applied": "INTERVENTION",
     "request_audited": "VERIFY",
     "request_ir_projected": "CONTEXT",
+    "failure_registered": "GUARD",
+    "completion_requested": "VERIFY",
     "catalog_request_audited": "VERIFY",
     "compilation_coverage": "PLAN",
     "catalog_goal_verified": "VERIFY",
@@ -59,6 +61,8 @@ _PHASES = {
 }
 
 _LABELS = {
+    "failure_registered": "已记录失败身份与恢复次数",
+    "completion_requested": "已请求全部推荐的最终刷新",
     "evidence_semantic_assessed": "已独立核验证据语义与冲突",
     "evidence_semantic_reused": "已复用持久化证据语义核验",
     "case_plan_revised": "售后案件证据与行动计划已修订",

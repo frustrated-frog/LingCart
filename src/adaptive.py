@@ -22,6 +22,8 @@ from src.task_plan import TaskPlan, TaskStep, verify_observation
 from src.constraint_bindings import (build_binding_transaction, constraint_refs, effective_goal,
     fingerprint, propose_bindings, record_binding_evidence, require_bindings_approved,
     resolve_catalog_concepts)
+from src.failure_recovery import (feedback as recovery_feedback, previous_failure, recovery_basis,
+    recovery_target, register_failure, signature as failure_signature)
 
 MAX_REPLANS = 2
 MAX_DECISION_REPAIRS = 2
@@ -565,12 +567,17 @@ def _accept(context, recorder, state, plan, decision, history, *, validated_tool
             'goal_revision': state['goal_revision'], 'binding_revision': state.get('binding_revision', 0),
             'objective_id': decision.objective_id, 'product_id': decision.product_id,
         })
-        previous_failure = state.get('selection_failures', {}).get(failure_key) or {}
-        if previous_failure.get('count', 0) >= 2:
+        legacy_failure = state.get('selection_failures', {}).get(failure_key) or {}
+        candidate_failure = failure_signature('recommendation', 'RECOMMENDATION_VERIFICATION_FAILED',
+            {'objective_id': decision.objective_id, 'product_id': decision.product_id},
+            recovery_basis(state, plan, product_id=decision.product_id))
+        shared_failure = previous_failure(context, candidate_failure)
+        count = shared_failure['occurrence'] if shared_failure else legacy_failure.get('count', 0)
+        if count >= 2:
             recorder.record('loop_blocked', code='NO_PROGRESS_RECOMMENDATION_LOOP',
                             objective_id=decision.objective_id, product_id=decision.product_id,
-                            occurrence=previous_failure['count'] + 1,
-                            failure_signature=previous_failure.get('signature'))
+                            occurrence=count + 1,
+                            failure_signature=candidate_failure.sha256)
             raise AgentError('NO_PROGRESS_RECOMMENDATION_LOOP',
                              '同一商品在相同目标和约束下重复核验失败，已停止无进展循环', retryable=False)
         for ref in decision.evidence_refs:
@@ -609,7 +616,7 @@ def _selection_step(state, plan, decision):
              goal_revision=state['goal_revision']), dependencies)
 
 
-def _repair(context, recorder, state, plan, error):
+def _repair(context, recorder, state, plan, error, decision=None):
     _discard_native_queue(context, state, error.code)
     state['repair_count'] = state.get('repair_count', 0) + 1
     state['model_cursor'] = context.model_cursor
@@ -620,9 +627,12 @@ def _repair(context, recorder, state, plan, error):
             state['audit_format_feedback'] = dict(phase=getattr(error, 'audit_phase', None), message=str(error))
             state['feedback']['instruction'] = '审查响应格式无效不代表原提案被语义否定。可重提同一目标或映射，让审查模型修正协议；不要为此改变用户原意。'
     state['pending'] = None
+    failure = failure_signature('decision', error.code, recovery_target(decision), recovery_basis(state))
+    record = register_failure(context, failure, attempt_id=f'model:{context.model_cursor}')
+    state['feedback'] = {**(state.get('feedback') or {}), 'recovery': recovery_feedback(record)}
     _save(context, state, plan)
     recorder.record('decision_rejected', code=error.code, message=str(error), repair_count=state['repair_count'])
-    if state['repair_count'] > MAX_DECISION_REPAIRS:
+    if record['blocked'] or state['repair_count'] > MAX_DECISION_REPAIRS:
         raise AgentError('DECISION_REPAIR_BUDGET_EXHAUSTED', '模型决策修复次数已耗尽：' + str(error), retryable=False)
 
 
@@ -706,16 +716,13 @@ def _verify_recommendation(context, recorder, state, plan, decision, step):
         state['feedback'] = dict(code='RECOMMENDATION_VERIFICATION_FAILED', failures=failures, evidence_ref=step.step_id)
         if constraint_failures:
             state['feedback']['constraint_failures'] = constraint_failures
-        failure_key = fingerprint({
-            'goal_revision': state['goal_revision'], 'binding_revision': state.get('binding_revision', 0),
-            'objective_id': decision.objective_id, 'product_id': decision.product_id,
-        })
-        signature = fingerprint(sorted(failure.split(': step-', 1)[0] for failure in failures))
-        previous = state.setdefault('selection_failures', {}).get(failure_key) or {}
-        count = previous.get('count', 0) + 1 if previous.get('signature') == signature else 1
-        state['selection_failures'][failure_key] = {'signature': signature, 'count': count,
-                                                    'failures': deepcopy(failures)}
-        state['feedback']['repeat_count'] = count
+        record = register_failure(context, failure_signature(
+            'recommendation', 'RECOMMENDATION_VERIFICATION_FAILED',
+            {'objective_id': decision.objective_id, 'product_id': decision.product_id},
+            recovery_basis(state, plan, product_id=decision.product_id)),
+            attempt_id=f'selection:{step.step_id}', max_recoveries=1)
+        state['feedback']['repeat_count'] = record['occurrence']
+        state['feedback']['recovery'] = recovery_feedback(record)
         recorder.record('verification_failed', step_id=step.step_id, **state['feedback'])
         return None
     step.status = 'SUCCEEDED'
@@ -877,6 +884,7 @@ def _run(context, user_message, history, pending_action):
             apply_controls(context)
             context.require()
             if state['pending'] is None:
+                decision = None
                 try:
                     _apply_liveplan(context, state, plan)
                     if state.get('native_queue'):
@@ -912,7 +920,7 @@ def _run(context, user_message, history, pending_action):
                 except AgentError as error:
                     if error.code in {'MODEL_FORMAT_ERROR', 'UNKNOWN_TOOL', 'INVALID_TOOL_ARGUMENTS', 'REQUEST_AUDIT_REJECTED', 'AUDIT_FORMAT_ERROR', 'REQUEST_IR_COMPILE_ERROR',
                                       'INVALID_CONSTRAINT_BINDING', 'UNREAD_BINDING_EVIDENCE', 'UNOBSERVED_BINDING_FIELD', 'BINDING_AUDIT_REJECTED'}:
-                        _repair(context, recorder, state, plan, error)
+                        _repair(context, recorder, state, plan, error, decision)
                         continue
                     if error.code not in {'UNREAD_RECOMMENDATION_EVIDENCE', 'INVALID_RECOMMENDATION_OBJECTIVE',
                                           'BINDING_ALREADY_CURRENT', 'DUPLICATE_RECOMMENDATION',
@@ -923,8 +931,13 @@ def _run(context, user_message, history, pending_action):
                     _discard_native_queue(context, state, error.code)
                     state['feedback'] = dict(code=error.code, message=str(error))
                     state['model_cursor'] = context.model_cursor
+                    recovery = register_failure(context, failure_signature('decision', error.code,
+                        recovery_target(decision), recovery_basis(state)), attempt_id=f'model:{context.model_cursor}')
+                    state['feedback']['recovery'] = recovery_feedback(recovery)
                     _save(context, state, plan)
                     recorder.record('decision_rejected', code=error.code, action=decision.action)
+                    if recovery['blocked']:
+                        raise AgentError('NO_PROGRESS_FAILURE_LOOP', '同一决策重复失败，已停止无进展恢复', retryable=False)
                     continue
             pending = state['pending']
             if state.get('goal') and (state.get('request_ir') or {}).get('version') == 'request-ir/v2':
@@ -1046,6 +1059,16 @@ def _run(context, user_message, history, pending_action):
                     state['feedback'] = dict(step_id=step.step_id, **step.error)
             _record_context_outcome(context, state, plan, pending, decision, step)
             state['pending'] = None
+            failure = state.get('feedback') or {}
+            if (failure.get('code') and 'recovery' not in failure
+                    and failure['code'] not in {'OBJECTIVES_REQUIRE_COMPLETION', 'BINDINGS_REFINED'}):
+                recovery = register_failure(context, failure_signature('execution', failure['code'],
+                    recovery_target(decision), recovery_basis(state)),
+                    attempt_id=f'execution:{step.step_id if step else context.model_cursor}')
+                failure['recovery'] = recovery_feedback(recovery)
+                if recovery['blocked']:
+                    _save(context, state, plan)
+                    raise AgentError('NO_PROGRESS_FAILURE_LOOP', '相同执行条件下重复失败，已保留证据并停止恢复', retryable=False)
             if state.get('feedback') and state['feedback'].get('code') != 'OBJECTIVES_REQUIRE_COMPLETION':
                 _discard_native_queue(context, state, state['feedback'].get('code', 'OBSERVATION_CHANGED'))
             _save(context, state, plan)

@@ -111,7 +111,7 @@ class ContextEngine:
             return item
 
         payload = dict(request=state['request'], goal=state['goal'], goal_revision=state['goal_revision'],
-            next_steps=state['next_steps'], feedback=state.get('feedback'),
+            next_steps=state['next_steps'], feedback=deepcopy(state.get('feedback')),
             working_memory=state.get('working_memory'),
             objective_ledger=state.get('objective_ledger', []),
             observations=[overview(s) for s in plan.steps],
@@ -119,6 +119,10 @@ class ContextEngine:
             context_manifest={'archived_refs': [], 'policy': 'FULL_RECORDS_OR_REFERENCES',
                               'mechanism_id': self.mechanism_id, 'selection_strategy': self.selection_strategy,
                               'history_total': len(history or []), 'omitted_history_indices': []})
+        if (payload['feedback'] or {}).get('recovery'):
+            # 完整失败身份留在持久账本；模型只需下一步动作和重复次数，避免挤出商品事实。
+            recovery = payload['feedback']['recovery']
+            payload['feedback']['recovery'] = {key: recovery[key] for key in ('occurrence', 'recovery_action')}
         from src.runtime import current_runtime
         runtime = current_runtime()
         steering = runtime.mechanisms.get('steering') if runtime else None
@@ -173,6 +177,11 @@ class ContextEngine:
                     omitted = len(history or []) - len(payload['history'])
                     payload['history'].pop(0)
                     payload['context_manifest']['omitted_history_indices'].append(omitted)
+                if not fits() and (payload['feedback'] or {}).get('recovery'):
+                    # 恢复提示为辅助元数据，优先让最新事实完整进入上下文。
+                    hint = payload['feedback'].pop('recovery')
+                    if not fits():
+                        payload['feedback']['recovery'] = hint
             if not fits():
                 payload['observations'][index] = summary
                 payload['history'] = saved_history

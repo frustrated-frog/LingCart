@@ -659,6 +659,14 @@ def understand_turn(user_message: str, history: list | None, pending_action: dic
 
     context = current_runtime()
     error_text = None
+    def record_failure(code):
+        if context:
+            from src.failure_recovery import register_failure, signature
+            from src.constraint_bindings import fingerprint
+            register_failure(context, signature('dialogue_protocol', code, {'protocol': 'TurnUnderstanding'},
+                {'request_sha256': fingerprint(user_message), 'goal_revision': context.snapshot.get('goal_revision', 0),
+                 'capability_registry_version': get_capability_registry().version}),
+                attempt_id=f'dialogue:{context.model_cursor}', max_recoveries=1)
     for attempt in range(2):
         selected = model.json_mode() if hasattr(model, "json_mode") else model
         prompt = _prompt(user_message, history, pending_action, error_text, review_feedback)
@@ -703,6 +711,7 @@ def understand_turn(user_message: str, history: list | None, pending_action: dic
                 )
             return understanding
         except AgentError as exc:
+            record_failure(exc.code)
             repairable = {
                 "UNKNOWN_CAPABILITY",
                 "INVALID_CAPABILITY_ARGUMENTS",
@@ -751,6 +760,7 @@ def understand_turn(user_message: str, history: list | None, pending_action: dic
             if context:
                 context.record("dialogue_protocol_retry", attempt=attempt + 1, error=error_text)
         except (ValueError, TypeError, ValidationError) as exc:
+            record_failure('MODEL_FORMAT_ERROR')
             if isinstance(exc, ValidationError) and attempt > 0:
                 fallback = _clarify_invalid_constraint_plan(canonical_payload, exc, user_message)
                 if fallback is not None:

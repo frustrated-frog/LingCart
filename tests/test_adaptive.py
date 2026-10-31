@@ -761,6 +761,32 @@ def test_repeated_failed_selection_is_stopped_before_model_budget_exhaustion(mon
                and event['code'] == 'NO_PROGRESS_RECOMMENDATION_LOOP' for event in result['events'])
     assert result['budget']['consumed']['model_calls'] < result['budget']['limits']['max_model_calls']
     assert script.inputs[-1]['feedback']['repeat_count'] == 2
+    failures = [event for event in result['events'] if event['type'] == 'failure_registered']
+    assert [event['occurrence'] for event in failures] == [1, 2]
+    assert len({event['signature_sha256'] for event in failures}) == 1
+
+
+def test_argument_repair_count_survives_crash_without_double_counting_cached_response(monkeypatch):
+    class CrashAfterSecondFailure(RunStore):
+        def save_checkpoint(self, run_id, token, snapshot, event=None):
+            super().save_checkpoint(run_id, token, snapshot, event)
+            if event and event['type'] == 'failure_registered' and event['occurrence'] == 2:
+                raise Crash()
+    invalid = dict(action='tool', reason='修正搜索', tool='search_products', args={'unexpected': 'invalid'})
+    script = model(monkeypatch, search(first=True), invalid, invalid, invalid)
+    with pytest.raises(Crash):
+        run_conversation('推荐预算500的耳机', 'failure-resume', runner=run_adaptive, store=CrashAfterSecondFailure())
+    store = RunStore()
+    run_id = store.conversation('failure-resume')['active_run_id']
+    ledger = store.run(run_id)['checkpoint']['failure_ledger']
+    assert len(ledger) == 1 and next(iter(ledger.values()))['occurrence'] == 2
+    result = resume_run('failure-resume', run_id, runner=run_adaptive)
+    assert result['terminal_reason'] == 'DECISION_REPAIR_BUDGET_EXHAUSTED'
+    failures = [event for event in result['events'] if event['type'] == 'failure_registered']
+    assert [event['occurrence'] for event in failures] == [1, 2, 3]
+    assert failures[-1]['blocked']
+    assert len(script.inputs) == 4
+    assert len(result['trace']) == 1
 
 
 @pytest.mark.parametrize('predicate', [dict(field='specs.未知特征', op='not_contains', value='主动降噪'),
@@ -1229,7 +1255,7 @@ def test_missing_goal_claim_is_returned_to_model_for_repair(monkeypatch):
         complete(('shopping', ['step-2'])), order_query(), COMPOUND_COMPLETE)
     result = run_adaptive(COMPOUND_REQUEST)
     assert result['status'] == 'SUCCEEDED', result
-    assert script.inputs[3]['feedback'] == dict(code='COMPLETION_VERIFICATION_FAILED',
+    assert {key: value for key, value in script.inputs[3]['feedback'].items() if key != 'recovery'} == dict(code='COMPLETION_VERIFICATION_FAILED',
         failures=[dict(objective_id='order', code='MISSING_COMPLETION_CLAIM')])
 
 
@@ -1549,7 +1575,9 @@ def test_malformed_auditor_response_never_falls_back_to_approval(monkeypatch):
     audit_sequence(monkeypatch, *[{} for _ in range(6)])
     result = run_adaptive('推荐预算500的耳机')
     assert result['status'] == 'FAILED' and not result['trace']
-    assert result['terminal_reason'] == 'DECISION_REPAIR_BUDGET_EXHAUSTED'
+    assert result['terminal_reason'] == 'NO_PROGRESS_AUDIT_LOOP'
+    assert sum(e['type'] == 'failure_registered' and e['signature']['stage'] == 'audit_protocol'
+               for e in result['events']) == 3
     assert result.get('request_audit') is None
 
 
@@ -1623,7 +1651,7 @@ def test_audit_must_account_for_every_hard_predicate(monkeypatch):
     audit_sequence(monkeypatch, *[incomplete for _ in range(6)])
     result = run_adaptive('推荐预算500的耳机')
     assert result['status'] == 'FAILED' and not result['trace']
-    assert result['terminal_reason'] == 'DECISION_REPAIR_BUDGET_EXHAUSTED'
+    assert result['terminal_reason'] == 'NO_PROGRESS_AUDIT_LOOP'
 
 
 def test_steering_during_request_audit_prevents_old_action(monkeypatch):
