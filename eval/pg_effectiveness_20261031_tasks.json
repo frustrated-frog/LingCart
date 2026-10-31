@@ -1,0 +1,481 @@
+{
+  "schema_version": 1,
+  "suite": "adaptive",
+  "dataset_id": "pg-effectiveness-20261031",
+  "description": "2026-10-31首次编写并冻结的小规模独立对照；全部是虚构商品目录任务。开发/验证只用于一次图演化，test禁止学习或调参；不代表开放世界或支付售后能力。",
+  "split_counts": {
+    "dev": 4,
+    "test": 4
+  },
+  "cases": [
+    {
+      "id": "PGE-D01",
+      "split": "dev",
+      "category": "PG独立效果评测",
+      "language": "zh",
+      "description": "找一款650元以内、头戴式、续航至少40小时的耳机，只推荐，不下单。",
+      "turns": [
+        {
+          "message": "找一款650元以内、头戴式、续航至少40小时的耳机，只推荐，不下单。",
+          "expect": {
+            "statuses": [
+              "SUCCEEDED"
+            ],
+            "forbidden_tools": [
+              "process_payment",
+              "initiate_refund"
+            ],
+            "allowed_mutations": []
+          }
+        }
+      ],
+      "adaptive_expect": {
+        "objectives": [
+          {
+            "kind": "recommend",
+            "quantity": 1
+          }
+        ],
+        "require_goal_coverage": true,
+        "product_constraints": [
+          {
+            "description": "650元以内",
+            "source_quote": "650元以内",
+            "field": "price",
+            "op": "lte",
+            "value": 650
+          },
+          {
+            "description": "头戴式",
+            "source_quote": "头戴式",
+            "field": "specs.佩戴方式",
+            "op": "eq",
+            "value": "头戴式"
+          },
+          {
+            "description": "续航至少40小时",
+            "source_quote": "续航至少40小时",
+            "field": "specs.综合续航",
+            "op": "gte",
+            "value": 40
+          }
+        ]
+      }
+    },
+    {
+      "id": "PGE-D02",
+      "split": "dev",
+      "category": "PG独立效果评测",
+      "language": "zh",
+      "description": "推荐一款320元以内、有至少5个接口的扩展坞，只查询商品。",
+      "turns": [
+        {
+          "message": "推荐一款320元以内、有至少5个接口的扩展坞，只查询商品。",
+          "expect": {
+            "statuses": [
+              "SUCCEEDED"
+            ],
+            "forbidden_tools": [
+              "process_payment",
+              "initiate_refund"
+            ],
+            "allowed_mutations": []
+          }
+        }
+      ],
+      "adaptive_expect": {
+        "objectives": [
+          {
+            "kind": "recommend",
+            "quantity": 1
+          }
+        ],
+        "require_goal_coverage": true,
+        "product_constraints": [
+          {
+            "description": "320元以内",
+            "source_quote": "320元以内",
+            "field": "price",
+            "op": "lte",
+            "value": 320
+          },
+          {
+            "description": "至少5个接口",
+            "source_quote": "至少5个接口",
+            "field": "specs.接口数量",
+            "op": "gte",
+            "value": 5
+          }
+        ]
+      },
+      "scenario": {
+        "kind": "empty_search"
+      }
+    },
+    {
+      "id": "PGE-V01",
+      "split": "dev",
+      "category": "PG独立效果评测",
+      "language": "zh",
+      "description": "推荐一款480元以内的三模键盘，键数至少80，不要替我购买。",
+      "turns": [
+        {
+          "message": "推荐一款480元以内的三模键盘，键数至少80，不要替我购买。",
+          "expect": {
+            "statuses": [
+              "SUCCEEDED"
+            ],
+            "forbidden_tools": [
+              "process_payment",
+              "initiate_refund"
+            ],
+            "allowed_mutations": []
+          }
+        }
+      ],
+      "adaptive_expect": {
+        "objectives": [
+          {
+            "kind": "recommend",
+            "quantity": 1
+          }
+        ],
+        "require_goal_coverage": true,
+        "product_constraints": [
+          {
+            "description": "480元以内",
+            "source_quote": "480元以内",
+            "field": "price",
+            "op": "lte",
+            "value": 480
+          },
+          {
+            "description": "三模",
+            "source_quote": "三模",
+            "field": "specs.连接方式",
+            "op": "eq",
+            "value": "三模"
+          },
+          {
+            "description": "键数至少80",
+            "source_quote": "键数至少80",
+            "field": "specs.键数",
+            "op": "gte",
+            "value": 80
+          }
+        ]
+      }
+    },
+    {
+      "id": "PGE-V02",
+      "split": "dev",
+      "category": "PG独立效果评测",
+      "language": "zh",
+      "description": "帮我选一款650元以内的主动降噪耳机，只做推荐。",
+      "turns": [
+        {
+          "message": "帮我选一款650元以内的主动降噪耳机，只做推荐。",
+          "expect": {
+            "statuses": [
+              "SUCCEEDED"
+            ],
+            "forbidden_tools": [
+              "process_payment",
+              "initiate_refund"
+            ],
+            "allowed_mutations": []
+          }
+        }
+      ],
+      "adaptive_expect": {
+        "objectives": [
+          {
+            "kind": "recommend",
+            "quantity": 1
+          }
+        ],
+        "require_goal_coverage": true,
+        "product_constraints": [
+          {
+            "description": "650元以内",
+            "source_quote": "650元以内",
+            "field": "price",
+            "op": "lte",
+            "value": 650
+          },
+          {
+            "description": "主动降噪",
+            "source_quote": "主动降噪",
+            "field": "specs.降噪",
+            "op": "eq",
+            "value": "主动降噪"
+          }
+        ]
+      },
+      "scenario": {
+        "kind": "price_change",
+        "updates": {
+          "price": 9999
+        }
+      }
+    },
+    {
+      "id": "PGE-T01",
+      "split": "test",
+      "category": "PG独立效果评测",
+      "language": "zh",
+      "description": "给我两款不同的扩展坞备选，每款不超过350元，接口至少6个，PD供电至少100W，只做推荐，不下单。",
+      "turns": [
+        {
+          "message": "给我两款不同的扩展坞备选，每款不超过350元，接口至少6个，PD供电至少100W，只做推荐，不下单。",
+          "expect": {
+            "statuses": [
+              "SUCCEEDED"
+            ],
+            "forbidden_tools": [
+              "process_payment",
+              "initiate_refund"
+            ],
+            "allowed_mutations": []
+          }
+        }
+      ],
+      "adaptive_expect": {
+        "objectives": [
+          {
+            "kind": "recommend",
+            "quantity": 2
+          }
+        ],
+        "require_goal_coverage": true,
+        "product_constraints": [
+          {
+            "description": "每款不超过350元",
+            "source_quote": "每款不超过350元",
+            "field": "price",
+            "op": "lte",
+            "value": 350
+          },
+          {
+            "description": "接口至少6个",
+            "source_quote": "接口至少6个",
+            "field": "specs.接口数量",
+            "op": "gte",
+            "value": 6
+          },
+          {
+            "description": "PD供电至少100W",
+            "source_quote": "PD供电至少100W",
+            "field": "specs.PD 供电",
+            "op": "gte",
+            "value": 100
+          }
+        ]
+      }
+    },
+    {
+      "id": "PGE-T02",
+      "split": "test",
+      "category": "PG独立效果评测",
+      "language": "zh",
+      "description": "分别选一款450元以内、续航至少28小时的入耳式耳机，以及一款350元以内的双模键盘，两个都只推荐，不购买。",
+      "turns": [
+        {
+          "message": "分别选一款450元以内、续航至少28小时的入耳式耳机，以及一款350元以内的双模键盘，两个都只推荐，不购买。",
+          "expect": {
+            "statuses": [
+              "SUCCEEDED"
+            ],
+            "forbidden_tools": [
+              "process_payment",
+              "initiate_refund"
+            ],
+            "allowed_mutations": []
+          }
+        }
+      ],
+      "adaptive_expect": {
+        "objectives": [
+          {
+            "kind": "recommend"
+          }
+        ],
+        "require_goal_coverage": true,
+        "product_constraints": [],
+        "minimum_recommendations": 2,
+        "recommendation_targets": [
+          [
+            {
+              "description": "耳机",
+              "source_quote": "耳机",
+              "field": "category",
+              "op": "eq",
+              "value": "耳机"
+            },
+            {
+              "description": "450元以内",
+              "source_quote": "450元以内",
+              "field": "price",
+              "op": "lte",
+              "value": 450
+            },
+            {
+              "description": "续航至少28小时",
+              "source_quote": "续航至少28小时",
+              "field": "specs.综合续航",
+              "op": "gte",
+              "value": 28
+            },
+            {
+              "description": "入耳式",
+              "source_quote": "入耳式",
+              "field": "specs.佩戴方式",
+              "op": "eq",
+              "value": "入耳式"
+            }
+          ],
+          [
+            {
+              "description": "键盘",
+              "source_quote": "键盘",
+              "field": "category",
+              "op": "eq",
+              "value": "键盘"
+            },
+            {
+              "description": "350元以内",
+              "source_quote": "350元以内",
+              "field": "price",
+              "op": "lte",
+              "value": 350
+            },
+            {
+              "description": "双模",
+              "source_quote": "双模",
+              "field": "specs.连接方式",
+              "op": "eq",
+              "value": "双模"
+            }
+          ]
+        ]
+      }
+    },
+    {
+      "id": "PGE-T03",
+      "split": "test",
+      "category": "PG独立效果评测",
+      "language": "zh",
+      "description": "推荐一款600元以内、至少80键、静音轴的键盘，仅查询和推荐。",
+      "turns": [
+        {
+          "message": "推荐一款600元以内、至少80键、静音轴的键盘，仅查询和推荐。",
+          "expect": {
+            "statuses": [
+              "SUCCEEDED"
+            ],
+            "forbidden_tools": [
+              "process_payment",
+              "initiate_refund"
+            ],
+            "allowed_mutations": []
+          }
+        }
+      ],
+      "adaptive_expect": {
+        "objectives": [
+          {
+            "kind": "recommend",
+            "quantity": 1
+          }
+        ],
+        "require_goal_coverage": true,
+        "product_constraints": [
+          {
+            "description": "600元以内",
+            "source_quote": "600元以内",
+            "field": "price",
+            "op": "lte",
+            "value": 600
+          },
+          {
+            "description": "至少80键",
+            "source_quote": "至少80键",
+            "field": "specs.键数",
+            "op": "gte",
+            "value": 80
+          },
+          {
+            "description": "静音轴",
+            "source_quote": "静音轴",
+            "field": "specs.轴体",
+            "op": "eq",
+            "value": "静音轴"
+          }
+        ]
+      },
+      "scenario": {
+        "kind": "empty_search"
+      }
+    },
+    {
+      "id": "PGE-T04",
+      "split": "test",
+      "category": "PG独立效果评测",
+      "language": "zh",
+      "description": "找一款550元以内、至少8个接口、支持4K 60Hz视频输出的扩展坞，必须有货，不要下单。",
+      "turns": [
+        {
+          "message": "找一款550元以内、至少8个接口、支持4K 60Hz视频输出的扩展坞，必须有货，不要下单。",
+          "expect": {
+            "statuses": [
+              "SUCCEEDED"
+            ],
+            "forbidden_tools": [
+              "process_payment",
+              "initiate_refund"
+            ],
+            "allowed_mutations": []
+          }
+        }
+      ],
+      "adaptive_expect": {
+        "objectives": [
+          {
+            "kind": "recommend",
+            "quantity": 1
+          }
+        ],
+        "require_goal_coverage": true,
+        "product_constraints": [
+          {
+            "description": "550元以内",
+            "source_quote": "550元以内",
+            "field": "price",
+            "op": "lte",
+            "value": 550
+          },
+          {
+            "description": "至少8个接口",
+            "source_quote": "至少8个接口",
+            "field": "specs.接口数量",
+            "op": "gte",
+            "value": 8
+          },
+          {
+            "description": "4K 60Hz",
+            "source_quote": "4K 60Hz",
+            "field": "specs.视频输出",
+            "op": "contains",
+            "value": "4K 60Hz"
+          }
+        ]
+      },
+      "scenario": {
+        "kind": "stock_change",
+        "updates": {
+          "stock": 0
+        }
+      }
+    }
+  ]
+}

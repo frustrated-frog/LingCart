@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "experiment_id": "pg-effectiveness-20261031",
+  "baseline_profile": "adaptive-v1",
+  "online_profile": "adaptive-pg-context-v4",
+  "seed_graph": "research/graphs/pg-seed-v2.json",
+  "test_cases": [
+    "PGE-T01",
+    "PGE-T02",
+    "PGE-T03",
+    "PGE-T04"
+  ],
+  "test_repeats": 2,
+  "arm_order": "rotate baseline/seed/evolved by test case; consecutive repetitions within block",
+  "maximum_task_runs": 30,
+  "maximum_model_attempts_including_refiner": 482,
+  "retained_seed_policy": "Run third arm independently; label unchanged graph; no evolution benefit claim",
+  "selection_policy": "One dev-only iteration; existing structural, safety, cost and non-regression validation gate",
+  "test_policy": "Never tune after first test; retain all outcomes; same Gateway/model/runtime/budgets; no promotion from this small batch"
+}
