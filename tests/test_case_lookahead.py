@@ -96,6 +96,23 @@ def test_unavailable_obligation_is_not_counted_as_resolved():
     assert report.paths[0].remaining_if_sufficient == ('deferred',)
 
 
+def test_live_diagnostic_policy_fixture_satisfies_the_actual_business_schema():
+    from pathlib import Path
+    from eval.run_live_eval import load_dataset
+    from eval.run_task_eval import _runtime, _isolated_db
+    from src.after_sales.policy import AfterSalesPolicyEngine
+    from src.backend.seed import DEFAULT_AFTER_SALES_POLICY_VERSION_ID
+
+    dataset = load_dataset(Path(__file__).resolve().parents[1] / 'eval/after_sales_lookahead_dev_tasks.json')
+    runtime = _runtime()
+    for case in dataset['cases']:
+        with _isolated_db(runtime, case['fixture']):
+            with tools._session() as session:
+                policy = session.get(runtime['db'].PolicyVersion, DEFAULT_AFTER_SALES_POLICY_VERSION_ID)
+                rules = AfterSalesPolicyEngine._validated_rules(policy)
+                assert set(rules['required_evidence_by_reason']['NOT_AS_DESCRIBED']) == {'ORIGINAL_PACKAGING', 'SERIAL_LABEL'}
+
+
 
 @pytest.mark.parametrize('crash', [False, True])
 def test_real_ledger_answer_replans_and_resume_does_not_duplicate_write(database, monkeypatch, crash):

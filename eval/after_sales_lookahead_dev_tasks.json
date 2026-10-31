@@ -19,17 +19,17 @@
             {
               "evidence_type": "ORIGINAL_PACKAGING",
               "accepted_sources": [
-                "CUSTOMER_TEXT"
+                "CUSTOMER_STATEMENT"
               ],
-              "condition": "SEMANTIC_SUFFICIENCY",
+              "condition": "CUSTOMER_ATTESTATION",
               "description": "核对原包装完整与附件齐全两个方面"
             },
             {
               "evidence_type": "SERIAL_LABEL",
               "accepted_sources": [
-                "CUSTOMER_TEXT"
+                "CUSTOMER_STATEMENT"
               ],
-              "condition": "SEMANTIC_SUFFICIENCY",
+              "condition": "CUSTOMER_ATTESTATION",
               "description": "核对序列号标签是否清晰完整"
             }
           ]

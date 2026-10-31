@@ -16,6 +16,16 @@ def main():
     args.output.mkdir(parents=True, exist_ok=False)
     dataset_path = ROOT / 'eval/after_sales_lookahead_dev_tasks.json'
     dataset = load_dataset(dataset_path)
+    # 先在隔离库核验政策夹具，避免把配置错误当成 Agent 失败或浪费模型请求。
+    from eval.run_task_eval import _runtime, _isolated_db
+    from src.after_sales.policy import AfterSalesPolicyEngine
+    from src.backend.seed import DEFAULT_AFTER_SALES_POLICY_VERSION_ID
+    runtime = _runtime()
+    for case in dataset['cases']:
+        with _isolated_db(runtime, case['fixture']):
+            with runtime['tools']._session() as session:
+                policy = session.get(runtime['db'].PolicyVersion, DEFAULT_AFTER_SALES_POLICY_VERSION_ID)
+                AfterSalesPolicyEngine._validated_rules(policy)
     for name, profile in [('baseline', 'after-sales-active-clarification-v5'), ('candidate', 'after-sales-lookahead-v1')]:
         report = evaluate(dataset, dataset_path=dataset_path, repeats=1, split='dev',
                           harness_profile=profile, max_model_calls_per_run=8,
