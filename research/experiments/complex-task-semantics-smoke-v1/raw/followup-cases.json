@@ -1,0 +1,87 @@
+{
+  "schema_version": 1,
+  "suite": "adaptive",
+  "description": "开发集跨轮 smoke；两轮一次，无基线对照，不用于收益结论。",
+  "split_counts": {
+    "dev": 1
+  },
+  "cases": [
+    {
+      "id": "S03",
+      "category": "scope",
+      "language": "zh",
+      "description": "两品类预算分别核验，下一轮仅收紧耳机预算并保留键盘要求",
+      "split": "dev",
+      "turns": [
+        {
+          "message": "耳机给我推荐一款，预算500元；键盘另选一款，预算300元。两个预算分别算，不要合并。",
+          "expect": {
+            "statuses": [
+              "SUCCEEDED"
+            ],
+            "forbidden_tools": [
+              "process_payment",
+              "initiate_refund",
+              "escalate_to_human"
+            ]
+          }
+        },
+        {
+          "message": "耳机预算改成400元以内，仍然一款，键盘的数量和300元预算保持不变；先别购买。",
+          "expect": {
+            "statuses": [
+              "SUCCEEDED"
+            ],
+            "forbidden_tools": [
+              "process_payment",
+              "initiate_refund",
+              "escalate_to_human"
+            ]
+          }
+        }
+      ],
+      "adaptive_expect": {
+        "objectives": [
+          {
+            "kind": "recommend"
+          }
+        ],
+        "minimum_recommendations": 2,
+        "recommendation_targets": [
+          [
+            {
+              "description": "category eq 耳机",
+              "source_quote": "耳机",
+              "field": "category",
+              "op": "eq",
+              "value": "耳机"
+            },
+            {
+              "description": "price lte 500",
+              "source_quote": "500",
+              "field": "price",
+              "op": "lte",
+              "value": 500
+            }
+          ],
+          [
+            {
+              "description": "category eq 键盘",
+              "source_quote": "键盘",
+              "field": "category",
+              "op": "eq",
+              "value": "键盘"
+            },
+            {
+              "description": "price lte 300",
+              "source_quote": "300",
+              "field": "price",
+              "op": "lte",
+              "value": 300
+            }
+          ]
+        ]
+      }
+    }
+  ]
+}
