@@ -29,6 +29,7 @@ def test_tool_executor_records_real_call_and_result():
         "replay_policy": "REPLAY_SAFE",
         "concurrency_policy": "PARALLEL_SAFE",
         "transactional": False,
+        "business_effects": [],
     }
 
 
@@ -160,6 +161,7 @@ def test_side_effect_tool_uses_high_risk_serial_policy():
         "replay_policy": "REQUIRES_APPROVAL",
         "concurrency_policy": "SERIAL_PER_RUN",
         "transactional": True,
+        "business_effects": ["FINAL_SUBMISSION", "PAYMENT"],
     }
 
 

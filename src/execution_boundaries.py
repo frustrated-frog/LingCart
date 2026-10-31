@@ -90,14 +90,14 @@ def require_allowed(context, name, spec):
     """在账本重放、preflight 和副作用执行之前检查，已有审批不能越过限制。"""
     if context is None:
         return
-    from src.runtime import ToolEffect
+    from src.runtime import BusinessEffect, ToolEffect
     for row in current_boundaries(context):
         restriction = row['restriction']
         blocked = (
             (restriction == 'READ_ONLY' and spec.effect == ToolEffect.WRITE)
-            or (restriction == 'NO_PAYMENT' and (name == 'process_payment' or spec.approval_action == 'PROCESS_PAYMENT'))
-            or (restriction == 'NO_REFUND' and (name == 'initiate_refund' or spec.approval_action == 'INITIATE_REFUND'))
-            or (restriction == 'NO_SUBMISSION' and spec.effect == ToolEffect.WRITE and spec.approval_action is not None)
+            or (restriction == 'NO_PAYMENT' and BusinessEffect.PAYMENT in spec.business_effects)
+            or (restriction == 'NO_REFUND' and BusinessEffect.REFUND in spec.business_effects)
+            or (restriction == 'NO_SUBMISSION' and bool(set(spec.business_effects) & {BusinessEffect.PAYMENT, BusinessEffect.REFUND, BusinessEffect.FINAL_SUBMISSION}))
         )
         if blocked:
             context.record('execution_boundary_blocked', tool=name, restriction=restriction, source=row['source'])

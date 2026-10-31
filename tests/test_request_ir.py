@@ -219,3 +219,14 @@ def test_compiler_preserves_quantity_and_recommendation_only_scope():
     assert ir.requirements[0].quantity == 2
     assert ir.requirements[2].objective_ids == ["shopping"]
     assert ir.adaptive_goal_sha256
+
+
+@pytest.mark.parametrize('identity', ['EarA', 'ORDER_1001', 'eara', 'Z' + 'a_9-' * 9 + 'AbC'])
+def test_every_legal_objective_id_projects_without_case_loss(identity):
+    from src.adaptive_decision import Objective
+    objective = Objective(id=identity, kind='recommend', description='耳机', source_quote='推荐耳机')
+    audit = dict(verdict='APPROVED', issues=[], requirements=[dict(scope='GOAL_REQUIREMENT',
+        source_quote='推荐耳机', interpretation='耳机', objective_ids=[identity], constraint_refs=[], status='COVERED')])
+    result = project_adaptive_request_ir('推荐耳机', [], dict(summary='耳机', objectives=[objective.model_dump()]), audit)
+    assert result.requirements[0].requirement_id == 'outcome:' + identity
+    assert result.requirements[0].objective_ids == [identity]

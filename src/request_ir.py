@@ -56,7 +56,7 @@ class SourceSpan(StrictModel):
 
 
 class SemanticRequirement(StrictModel):
-    requirement_id: str = Field(pattern=r"^[a-z][a-z0-9_.:-]{0,159}$")
+    requirement_id: str = Field(pattern=r"^[a-zA-Z][a-zA-Z0-9_.:-]{0,159}$")
     kind: RequirementKind
     description: str = Field(min_length=1, max_length=600)
     source: SourceSpan

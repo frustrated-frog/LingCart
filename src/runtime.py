@@ -452,6 +452,13 @@ class ToolEffect(StrEnum):
     WRITE = "WRITE"
 
 
+class BusinessEffect(StrEnum):
+    PAYMENT = "PAYMENT"
+    REFUND = "REFUND"
+    CASE_DRAFT_WRITE = "CASE_DRAFT_WRITE"
+    FINAL_SUBMISSION = "FINAL_SUBMISSION"
+
+
 class ReplayPolicy(StrEnum):
     REPLAY_SAFE = "REPLAY_SAFE"
     AT_MOST_ONCE = "AT_MOST_ONCE"
@@ -476,6 +483,7 @@ class ToolSpec:
     concurrency_policy: ConcurrencyPolicy | None = None
     approval_action: str | None = None
     preflight: object = None
+    business_effects: tuple[BusinessEffect, ...] = ()
 
     def __post_init__(self):
         # side_effect 保留旧调用兼容性；新策略字段一旦明确指定就不能被静默覆盖。
@@ -495,7 +503,23 @@ class ToolSpec:
                 object.__setattr__(self, key, kinds[key](default if value is None else value))
         except ValueError as exc:
             raise AgentError("INVALID_TOOL_POLICY", "工具策略包含未知标识", retryable=False) from exc
+        # 兼容已注册的审批动作；业务限制本身只消费效果集合。
+        legacy_effects = {"PROCESS_PAYMENT": (BusinessEffect.PAYMENT,),
+                          "INITIATE_REFUND": (BusinessEffect.REFUND,),
+                          "SUBMIT_AFTER_SALES_CASE": (BusinessEffect.REFUND, BusinessEffect.FINAL_SUBMISSION)}
+        try:
+            effects = {BusinessEffect(value) for value in self.business_effects}
+            effects.update(legacy_effects.get(self.approval_action, ()))
+            if self.approval_action:
+                effects.add(BusinessEffect.FINAL_SUBMISSION)
+        except (ValueError, TypeError) as exc:
+            raise AgentError("INVALID_TOOL_POLICY", "未知业务效果", retryable=False) from exc
+        object.__setattr__(self, "business_effects", tuple(sorted(effects)))
         invalid = (
+            (bool(effects) and self.effect != ToolEffect.WRITE)
+            or (bool(effects & {BusinessEffect.PAYMENT, BusinessEffect.REFUND, BusinessEffect.FINAL_SUBMISSION})
+                and self.replay_policy != ReplayPolicy.REQUIRES_APPROVAL)
+            or
             (self.side_effect and self.effect != ToolEffect.WRITE)
             or (
                 self.transactional
@@ -532,6 +556,7 @@ class ToolSpec:
             "replay_policy": self.replay_policy.value,
             "concurrency_policy": self.concurrency_policy.value,
             "transactional": self.transactional,
+            "business_effects": [effect.value for effect in self.business_effects],
         }
 
 
@@ -566,6 +591,7 @@ _PRODUCTION_TOOL_POLICIES = {
         "get_payment_status": {}, "check_refund_eligibility": {}, "answer_faq": {},
         "search_products": {}, "get_catalog_facets": {}, "discover_products": {}, "compare_products": {},
         "prepare_after_sales_case": {
+            "business_effects": (BusinessEffect.CASE_DRAFT_WRITE,),
             "transactional": True,
             "effect": ToolEffect.WRITE,
             "risk_level": ToolRiskLevel.GUARDED,
@@ -573,6 +599,7 @@ _PRODUCTION_TOOL_POLICIES = {
             "concurrency_policy": ConcurrencyPolicy.SERIAL_PER_RUN,
         },
         "continue_after_sales_case": {
+            "business_effects": (BusinessEffect.CASE_DRAFT_WRITE,),
             "transactional": True,
             "effect": ToolEffect.WRITE,
             "risk_level": ToolRiskLevel.GUARDED,
@@ -580,18 +607,20 @@ _PRODUCTION_TOOL_POLICIES = {
             "concurrency_policy": ConcurrencyPolicy.SERIAL_PER_RUN,
         },
         "record_after_sales_evidence_readiness": {
+            "business_effects": (BusinessEffect.CASE_DRAFT_WRITE,),
             "transactional": True,
             "effect": ToolEffect.WRITE,
             "risk_level": ToolRiskLevel.GUARDED,
             "replay_policy": ReplayPolicy.IDEMPOTENT_WRITE,
             "concurrency_policy": ConcurrencyPolicy.SERIAL_PER_RUN,
         },
-        "process_payment": {"side_effect": True, "transactional": True, "approval_action": "PROCESS_PAYMENT"},
-        "initiate_refund": {"side_effect": True, "transactional": True, "approval_action": "INITIATE_REFUND"},
+        "process_payment": {"side_effect": True, "transactional": True, "approval_action": "PROCESS_PAYMENT", "business_effects": (BusinessEffect.PAYMENT, BusinessEffect.FINAL_SUBMISSION)},
+        "initiate_refund": {"side_effect": True, "transactional": True, "approval_action": "INITIATE_REFUND", "business_effects": (BusinessEffect.REFUND, BusinessEffect.FINAL_SUBMISSION)},
         "submit_after_sales_case": {
             "side_effect": True,
             "transactional": True,
             "approval_action": "SUBMIT_AFTER_SALES_CASE",
+            "business_effects": (BusinessEffect.REFUND, BusinessEffect.FINAL_SUBMISSION),
         },
         "escalate_to_human": {"effect": ToolEffect.WRITE, "risk_level": ToolRiskLevel.GUARDED,
                               "replay_policy": ReplayPolicy.AT_MOST_ONCE,
@@ -600,11 +629,11 @@ _PRODUCTION_TOOL_POLICIES = {
     "src.agents.order_agent": {"get_order_status": {}, "get_order_details": {}, "track_shipment": {}},
     "src.agents.payment_agent": {
         "get_payment_status": {},
-        "process_payment": {"side_effect": True, "transactional": True, "approval_action": "PROCESS_PAYMENT"},
+        "process_payment": {"side_effect": True, "transactional": True, "approval_action": "PROCESS_PAYMENT", "business_effects": (BusinessEffect.PAYMENT, BusinessEffect.FINAL_SUBMISSION)},
     },
     "src.agents.refund_agent": {
         "get_order_status": {}, "check_refund_eligibility": {},
-        "initiate_refund": {"side_effect": True, "transactional": True, "approval_action": "INITIATE_REFUND"},
+        "initiate_refund": {"side_effect": True, "transactional": True, "approval_action": "INITIATE_REFUND", "business_effects": (BusinessEffect.REFUND, BusinessEffect.FINAL_SUBMISSION)},
     },
     "src.agents.faq_agent": {"answer_faq": {}},
     "src.catalog_query": {"query_catalog": {}},
@@ -617,7 +646,7 @@ def tool_spec(name, fn):
         function = getattr(fn.function, "func", None) or fn.function
         return ToolSpec(function, fn.schema or _argument_schema(name, fn.function), fn.side_effect,
                         fn.transactional, fn.risk_level, fn.effect, fn.replay_policy, fn.concurrency_policy,
-                        fn.approval_action, fn.preflight)
+                        fn.approval_action, fn.preflight, fn.business_effects)
     function = getattr(fn, "func", None) or fn
     # 依据注册对象身份匹配，不能仅凭工具名或伪造 __module__ 取得权限。
     for module_name, definitions in _PRODUCTION_TOOL_POLICIES.items():
