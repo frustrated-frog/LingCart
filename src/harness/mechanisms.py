@@ -234,12 +234,16 @@ def built_in_mechanisms() -> tuple[HarnessMechanism, ...]:
     from src.liveplan import LivePlanSteeringMechanism
     from src.pg_context import PGContextMechanism
 
+    after_sales_intent_sources = (
+        "src/after_sales/intent.py", "src/after_sales/context.py", "src/request_semantics.py",
+        "src/request_semantics_runtime.py", "src/semantic_wire.py",
+    )
     after_sales_planning_sources = (
         "src/orchestrator.py", "src/dialogue_understanding.py", "src/task_plan.py",
         "src/after_sales/execution.py", "src/catalog_request_audit.py", "src/catalog_query.py",
         "src/capability_registry.py", "src/catalog_concepts.py", "src/catalog_metadata.py", "src/intake.py",
         "src/harness/mechanisms.py",
-    )
+    ) + after_sales_intent_sources
     evidence_readiness_sources = after_sales_planning_sources + (
         "src/after_sales/readiness.py", "src/after_sales/planning.py", "src/after_sales/policy.py",
         "src/after_sales/service.py", "src/after_sales/contracts.py", "src/after_sales/actions.py",
@@ -256,7 +260,7 @@ def built_in_mechanisms() -> tuple[HarnessMechanism, ...]:
                           ("src/orchestrator.py", "src/dialogue_understanding.py",
                            "src/catalog_request_audit.py", "src/catalog_query.py",
                            "src/capability_registry.py", "src/catalog_concepts.py",
-                           "src/catalog_metadata.py", "src/intake.py")),
+                           "src/catalog_metadata.py", "src/intake.py") + after_sales_intent_sources),
         AfterSalesPlanningMechanism(
             "planning", "case-plan-observer", "0", ("orchestrator",),
             after_sales_planning_sources, case_execution_mode="observe_only",
@@ -302,7 +306,7 @@ def built_in_mechanisms() -> tuple[HarnessMechanism, ...]:
                            "src/after_sales/policy.py", "src/tools.py")),
         EmbeddedMechanism("planning", "bounded-model-loop", "1", ("adaptive",),
                           ("src/adaptive.py", "src/adaptive_decision.py", "src/request_semantics.py",
-                           "src/request_semantics_runtime.py")),
+                           "src/request_semantics_runtime.py", "src/semantic_wire.py")),
         ContextMechanism("context", "evidence-reference-context", "1", ("adaptive",),
                          ("src/context_engine.py", "src/harness/mechanisms.py"), "recent-first"),
         ContextMechanism("context", "objective-first-context", "1", ("adaptive",),
@@ -315,7 +319,8 @@ def built_in_mechanisms() -> tuple[HarnessMechanism, ...]:
                           ("src/request_audit.py", "src/adaptive_goals.py", "src/after_sales/semantic.py",
                            "src/after_sales/evidence.py", "src/after_sales/actions.py", "src/after_sales/policy.py", "src/tools.py")),
         EmbeddedMechanism("tool_protocol", "native-strict-tools", "1", ("adaptive",),
-                          ("src/native_protocol.py", "src/runtime.py", "src/execution_boundaries.py")),
+                          ("src/native_protocol.py", "src/runtime.py", "src/execution_boundaries.py",
+                           "src/semantic_wire.py")),
         LivePlanSteeringMechanism(),
         PGContextMechanism(),
         PGContextMechanism(

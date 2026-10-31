@@ -526,6 +526,19 @@ def _advance_after_sales_case(
     }
 
 
+def _case_submission_restricted(context):
+    from src.execution_boundaries import require_allowed
+    from src.runtime import tool_spec
+    from src import tools
+    try:
+        require_allowed(context, 'submit_after_sales_case', tool_spec('submit_after_sales_case', tools.submit_after_sales_case))
+    except AgentError as error:
+        if error.code != 'EXECUTION_BOUNDARY_VIOLATION':
+            raise
+        return True
+    return False
+
+
 def execute_plan(intake, run_id, *, plan=None, source="deterministic", incomplete_reason=None):
     context = current_runtime()
     recorder = TraceRecorder(run_id)
@@ -583,6 +596,10 @@ def execute_plan(intake, run_id, *, plan=None, source="deterministic", incomplet
                             step.result = {
                                 "message": f"售后案件 {observation['case_id']} 已经提交，无需重复操作。"
                             }
+                        elif outcome == "ELIGIBLE" and _case_submission_restricted(context):
+                            step.status = "SUCCEEDED"
+                            step.outcome = "SATISFIED"
+                            step.result = {"message": f"售后案件 {observation['case_id']} 已保存；按当前要求未提交、未退款。"}
                         elif outcome == "ELIGIBLE":
                             from src.execution_boundaries import require_allowed
                             from src.runtime import tool_spec
@@ -677,8 +694,17 @@ def execute_plan(intake, run_id, *, plan=None, source="deterministic", incomplet
                     step.outcome = ("UNAVAILABLE_EVIDENCE"
                                     if step.result.get("provenance") == "NO_REALTIME_SOURCE" else "SATISFIED")
                 else:
-                    step.result, event = executor.execute(step.tool, step.args)
-                    trace.append(_trace_entry(run_id, step.specialist, step.tool, step.args, step.result, event))
+                    execution_args = dict(step.args)
+                    if execution_args.pop('_case_revision_dependency', False):
+                        previous = completed[step.depends_on[0]].result
+                        if (previous.get('case_id') != execution_args.get('case_id')
+                                or type(previous.get('revision')) is not int):
+                            raise AgentError('CASE_REVISION_CONFLICT', '前项材料更新没有可用的案件版本', retryable=False)
+                        execution_args['expected_revision'] = previous['revision']
+                        recorder.record('case_update_revision_bound', step_id=step.step_id,
+                                        case_id=previous['case_id'], case_revision=previous['revision'])
+                    step.result, event = executor.execute(step.tool, execution_args)
+                    trace.append(_trace_entry(run_id, step.specialist, step.tool, execution_args, step.result, event))
                     if isinstance(step.result, dict) and isinstance(step.result.get("clarification_binding"), dict):
                         recorder.record("case_clarification_answer_bound", **step.result["clarification_binding"])
                     step.status = event["status"]

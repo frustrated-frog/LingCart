@@ -13,7 +13,8 @@ from src.request_ir import SourceSpan, locate_source_span
 
 class OutcomeSpec(StrictModel):
     kind: Literal['recommend', 'get_order_status', 'get_order_details', 'track_shipment',
-                  'check_refund_eligibility', 'get_payment_status', 'answer_faq', 'compare_products', 'unresolved']
+                  'check_refund_eligibility', 'get_payment_status', 'answer_faq', 'compare_products', 'unresolved', 'after_sales_case']
+    reason_code: str | None = Field(None, max_length=40)
     quantity: int = Field(1, ge=1, le=100)
     order_id: int | None = Field(None, ge=1)
     question: str | None = Field(None, min_length=1, max_length=500)
@@ -22,9 +23,15 @@ class OutcomeSpec(StrictModel):
     @model_validator(mode='after')
     def valid_target(self):
         order_kind = self.kind in {'get_order_status', 'get_order_details', 'track_shipment',
-                                  'check_refund_eligibility', 'get_payment_status'}
+                                  'check_refund_eligibility', 'get_payment_status', 'after_sales_case'}
         if order_kind != (self.order_id is not None):
             raise ValueError('Order outcomes require an order ID, other outcomes cannot carry one')
+        if self.kind == 'after_sales_case':
+            from src.after_sales.reason_taxonomy import REASON_CODE_DESCRIPTIONS
+            if self.reason_code not in REASON_CODE_DESCRIPTIONS:
+                raise ValueError('After-sales outcome requires a registered reason')
+        elif self.reason_code is not None:
+            raise ValueError('Only after-sales outcomes carry a reason')
         if (self.kind == 'answer_faq') != (self.question is not None):
             raise ValueError('Only FAQ outcomes require a question')
         if self.kind != 'recommend' and self.quantity != 1:
@@ -197,7 +204,7 @@ def compare_goal(contract, goal, request, history=None):
         span = locate_source_span(row.source_quote, request, history)
         candidates = []
         for objective in goal['objectives']:
-            actual = {key: objective[key] for key in expected}
+            actual = {key: objective.get(key) for key in expected}
             source = locate_source_span(objective['source_quote'], request, history)
             if (actual == expected and source.source_sha256 == span.source_sha256
                     and max(source.start, span.start) < min(source.end, span.end)):

@@ -39,3 +39,8 @@ def test_unknown_concept_rejected_and_pd_unit_compiled():
     c=Constraint.model_validate(decode_conditions(p))
     encoded=get_catalog_concept_registry().encode(c.catalog_concept)
     assert encoded.field=='specs.PD 供电' and encoded.value==100
+    registry = get_catalog_concept_registry()
+    assert registry.decode_observation('hub.pd_power_watts', '100W') == 100
+    assert registry.decode_observation('hub.pd_power_watts', '不支持') == 0
+    with pytest.raises(ValueError):
+        registry.decode_observation('hub.pd_power_watts', '100Wh')

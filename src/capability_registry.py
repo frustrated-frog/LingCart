@@ -360,7 +360,7 @@ class CapabilityRegistry:
         spec = self.registration(str(objective["kind"])).spec
         protocol_fields = {
             "id", "kind", "source_quote", "desired_outcome", "target_type", "evidence_requirement",
-            "evidence_context_quotes", "evidence_readiness_claims", "clarification_id",
+            "evidence_context_quotes", "evidence_readiness_claims", "evidence_updates", "clarification_id",
         }
         supplied = {
             name for name, value in objective.items()
@@ -626,6 +626,26 @@ def _after_sales_case(objective: Mapping[str, object], request: str) -> tuple[Co
 
 def _continue_after_sales_case(objective: Mapping[str, object], request: str) -> tuple[CompiledOperation, ...]:
     arguments = {"case_id": objective["case_id"], "expected_revision": objective["case_revision"]}
+    if objective.get('evidence_updates'):
+        from src.after_sales.context import current_case_context
+        case = next(c for c in current_case_context() if c['case_id'] == objective['case_id'])
+        requirements = {r['requirement_id']: r for r in case['requirements']}
+        operations = []
+        for index, update in enumerate(objective['evidence_updates']):
+            args = dict(arguments)
+            if index:
+                args['_case_revision_dependency'] = True
+            if update['disposition'] == 'PROVIDED':
+                operation = 'continue_after_sales_case'
+                args.update(requirement_id=update['requirement_id'], evidence_text=update['source_quote'])
+            else:
+                operation = 'record_after_sales_evidence_readiness'
+                args['evidence_readiness_claims'] = [dict(evidence_type=requirements[update['requirement_id']]['evidence_type'],
+                    disposition='DEFERRED', source_quote=update['source_quote'])]
+            operations.append(CompiledOperation(f'case-update-{index}', 'after_sales', operation, args,
+                (f'case-update-{index-1}',) if index else ()))
+        return (*operations, CompiledOperation('case-proposal', 'after_sales', 'prepare_case_submission', {},
+                                             (operations[-1].ref,)))
     if objective.get("evidence_readiness_claims"):
         arguments["evidence_readiness_claims"] = objective["evidence_readiness_claims"]
         return (

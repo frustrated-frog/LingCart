@@ -115,7 +115,7 @@ def current_case_context() -> list[dict]:
                 case_id=row.case_id,
             )
             result.append({"case_id": row.case_id, "order_id": row.order_id,
-                           "revision": row.revision, "status": row.status,
+                           "revision": row.revision, "status": row.status, "reason_code": row.reason_code,
                            "policy": {
                                "policy_version_id": decision.get("policy_version_id"),
                                "policy_checksum": decision.get("policy_checksum"),
@@ -184,6 +184,11 @@ def normalize_case_continuation(objective: dict, sources: tuple[str, ...]):
     revoked = objective.get("revoke_evidence_id")
     if revoked and revoked not in {e['evidence_id'] for e in case['evidence']}:
         raise AgentError("EVIDENCE_NOT_FOUND", "撤回材料不属于当前案件", retryable=False)
+    updates = objective.get("evidence_updates") or []
+    requirements = {r['requirement_id']: r for r in case['requirements']}
+    for update in updates:
+        if update['requirement_id'] not in requirements or update['source_quote'] not in quote:
+            raise AgentError('UNGROUNDED_EVIDENCE', '材料更新必须引用本轮原文及当前案件要求', retryable=False)
     normalized.update(case_id=case['case_id'], case_revision=case['revision'])
     provenance = {
         key: {"resolver": "session_case_ledger", "resolver_version": "2",

@@ -67,6 +67,12 @@ class DialogueCommand(StrictModel):
         return self
 
 
+class CaseEvidenceUpdate(StrictModel):
+    requirement_id: str = Field(min_length=1, max_length=160)
+    disposition: Literal['PROVIDED', 'DEFERRED']
+    source_quote: str = Field(min_length=1, max_length=500)
+
+
 class BusinessObjective(StrictModel):
     _argument_provenance: dict[str, dict] = PrivateAttr(default_factory=dict)
 
@@ -76,6 +82,7 @@ class BusinessObjective(StrictModel):
     desired_outcome: str | None = Field(None, min_length=1, max_length=300)
     target_type: str | None = Field(None, min_length=1, max_length=80)
     evidence_requirement: str | None = Field(None, pattern=r"^[A-Z][A-Z0-9_]{1,63}$")
+    evidence_updates: list[CaseEvidenceUpdate] = Field(default_factory=list, max_length=8)
     evidence_context_quotes: list[str] = Field(default_factory=list, max_length=8)
     evidence_readiness_claims: list[EvidenceReadinessClaim] = Field(default_factory=list, max_length=8)
     order_id: int | None = Field(None, ge=1)
@@ -109,6 +116,12 @@ class BusinessObjective(StrictModel):
 
     @model_validator(mode="after")
     def objective_fields(self):
+        if self.evidence_updates:
+            if self.kind != 'AFTER_SALES_CONTINUE' or self.evidence_readiness_claims or any(
+                value is not None for value in (self.evidence_text, self.revoke_evidence_id, self.clarification_id)):
+                raise ValueError('Batch evidence updates use one continuation objective without legacy mutation fields')
+            if len({u.requirement_id for u in self.evidence_updates}) != len(self.evidence_updates):
+                raise ValueError('Each policy requirement may be updated once per turn')
         normalized_products = [value.upper() for value in self.product_ids]
         if len(normalized_products) != len(set(normalized_products)):
             raise ValueError("Product IDs must be unique")
@@ -176,6 +189,9 @@ new goals/omissions never release restrictions or grant approval.
 Commands: GREETING/IDENTITY/CAPABILITIES/ACKNOWLEDGEMENT; CLARIFY for material ambiguity; HUMAN_HANDOFF only explicit;
 CONFIRM_PENDING/CANCEL_PENDING only shown action; UNSUPPORTED for unregistered/inaccessible/unsafe action.
 Stable text=GENERAL_ANSWER; unsupported current facts=REALTIME_EXTERNAL. Use registered kinds/fields.
+AFTER_SALES_CONTINUE supports evidence_updates:[{requirement_id,disposition:PROVIDED|DEFERRED,source_quote}].
+One current-case requirement per entry; exact HUMAN quote. PROVIDED needs verification; DEFERRED needs a promise.
+Use one objective, no legacy evidence fields with updates.
 AFTER_SALES_CASE: one objective per order item; facts/no-submit rules are not extra goals.
 PRODUCT_SEARCH=literal lookup; PRODUCT_DISCOVERY=exploration. Copy explicit count to quantity, otherwise omit.
 CATALOG_QUERY: complete AST; each scope/filter/order/partition/selector/metric/projection needs ID/quote.
@@ -269,11 +285,16 @@ def _validate_goal_coverage(understanding: TurnUnderstanding, user_message: str)
     clauses = _coordinated_goal_clauses(user_message)
     if len(clauses) < 2:
         return
-    quotes = [*(command.source_quote for command in understanding.commands),
+    quotes = [*(change.source_quote for change in understanding.execution_boundaries),
+              *(u.source_quote for o in understanding.objectives for u in o.evidence_updates),*(command.source_quote for command in understanding.commands),
               *(objective.source_quote for objective in understanding.objectives),
               *(quote for objective in understanding.objectives for quote in objective.evidence_context_quotes),
               *(claim.source_quote for objective in understanding.objectives
                 for claim in objective.evidence_readiness_claims)]
+    contract = (current_runtime().snapshot.get('after_sales_intent_contract') or {}) if current_runtime() else {}
+    quotes.extend(row['source']['text'] for row in contract.get('requirements', [])
+                  if row['source']['source'] == 'CURRENT_TURN'
+                  and row['requirement']['kind'] in {'USER_FACT', 'UNKNOWN', 'PROHIBITION', 'EXECUTION_BOUNDARY'})
     uncovered = [clause for clause in clauses if not any(quote in clause for quote in quotes)]
     if uncovered:
         raise AgentError(
@@ -419,6 +440,10 @@ def _validate_grounding(understanding: TurnUnderstanding, user_message: str, his
                 "当前 Harness Profile 未启用 evidence_readiness_claims 协议",
                 retryable=False,
             )
+    if any(o.evidence_updates for o in understanding.objectives):
+        for o in understanding.objectives:
+            if any(u.source_quote not in user_message for u in o.evidence_updates):
+                raise AgentError('UNGROUNDED_EVIDENCE', '材料更新必须引用本轮原文', retryable=False)
     quoted = [*(command.source_quote for command in understanding.commands),
               *(objective.source_quote for objective in understanding.objectives),
               *(quote for objective in understanding.objectives for quote in objective.evidence_context_quotes),
@@ -440,6 +465,8 @@ def _validate_grounding(understanding: TurnUnderstanding, user_message: str, his
                     value = CatalogQuerySpec.model_validate(value, strict=True)
                 if name == "constraint_plan" and isinstance(value, dict):
                     value = ConstraintPlanSpec.model_validate(value, strict=True)
+                if name == "evidence_updates" and isinstance(value, list):
+                    value = [CaseEvidenceUpdate.model_validate(item, strict=True) for item in value]
                 if name == "evidence_readiness_claims" and isinstance(value, list):
                     value = [EvidenceReadinessClaim.model_validate(item, strict=True) for item in value]
                 setattr(objective, name, value)
@@ -514,6 +541,8 @@ def _validate_grounding(understanding: TurnUnderstanding, user_message: str, his
             _validate_catalog_scope(objective.catalog_query, user_message)
         if objective.constraint_plan is not None:
             validate_constraint_plan_grounding(objective.constraint_plan, sources)
+    from src.after_sales.intent import verify_intent
+    verify_intent(current_runtime(), understanding, user_message, history)
     _validate_goal_coverage(understanding, user_message)
 
 
@@ -612,6 +641,9 @@ def _prompt(user_message: str, history: list | None, pending_action: dict | None
     )
     # Runtime-owned ledger identity: never ask the model to invent or copy it.
     objective_properties.pop("clarification_id", None)
+    # 多材料小协议已在固定指令完整声明，避免重复展开内部模型标题和引用。
+    objective_properties['evidence_updates'] = {'type': 'array', 'items': {'type': 'object'}}
+    (schema.get('$defs') or {}).pop('CaseEvidenceUpdate', None)
     if not case_first_evidence:
         objective_properties.pop("evidence_context_quotes", None)
     if not readiness_ledger:
@@ -627,7 +659,12 @@ def _prompt(user_message: str, history: list | None, pending_action: dict | None
             "snapshot": {"source": snapshot.source, "version": snapshot.version},
             "categories": facets.get("categories", []),
             "price_range": facets.get("price_range"),
-            "concepts": get_catalog_concept_registry().prompt_catalog(),
+            "concepts": {
+                "schema_revision": get_catalog_concept_registry().schema_revision,
+                "columns": ["concept_id", "meaning", "operators", "canonical_values"],
+                "rows": [[c[k] for k in ("concept_id", "meaning", "operators", "canonical_values")]
+                         for c in get_catalog_concept_registry().prompt_catalog()['concepts']],
+            },
             "constraint_domain_providers": constraint_provider_prompt_catalog(),
         }
     evidence_boundary_prompt = (
@@ -726,6 +763,7 @@ def understand_turn(user_message: str, history: list | None, pending_action: dic
         except AgentError as exc:
             record_failure(exc.code)
             repairable = {
+                "REQUEST_SEMANTICS_MISMATCH",
                 "UNKNOWN_CAPABILITY",
                 "INVALID_CAPABILITY_ARGUMENTS",
                 "INCOMPLETE_REQUEST_COVERAGE",

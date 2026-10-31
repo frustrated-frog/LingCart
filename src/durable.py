@@ -201,6 +201,7 @@ def execute_claim(claim, *, store=None, runner=None):
             semantics = context.snapshot.get('request_semantics') or (context.snapshot.get('adaptive') or {}).get('request_semantics')
             if semantics:
                 state['request_semantics'] = deepcopy(semantics)
+                result['request_semantics'] = deepcopy(semantics)
             if 'execution_boundaries' in context.snapshot:
                 state['execution_boundaries'] = deepcopy(context.snapshot['execution_boundaries'])
             result['execution_boundaries'] = deepcopy(state.get('execution_boundaries', []))

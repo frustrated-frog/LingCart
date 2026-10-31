@@ -205,7 +205,7 @@ export interface RequestSemantics {
       description: string
       source_quote: string
       targets: string[]
-      outcome: { kind: string; quantity: number; order_id: number | null; question: string | null; product_ids: string[] } | null
+      outcome: { kind: string; reason_code?: string | null; quantity: number; order_id: number | null; question: string | null; product_ids: string[] } | null
       predicate: { field: string | null; op: string; value: unknown } | null
       restriction: ExecutionRestriction | null
     }

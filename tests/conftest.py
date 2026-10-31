@@ -8,6 +8,8 @@ def no_unconfigured_semantic_model(monkeypatch):
     def unavailable(**_):
         raise AgentError('MODEL_UNAVAILABLE', '测试未配置语义模型替身', retryable=False)
     monkeypatch.setattr('src.request_semantics_runtime.get_llm', unavailable)
+    # 既有售后测试隔离独立需求提取，专测账本、材料核验和执行；独立入口另有集成测试。
+    monkeypatch.setattr('src.after_sales.intent.verify_intent', lambda *args: None)
 
 
 @pytest.fixture

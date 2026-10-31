@@ -66,15 +66,14 @@ def record_readiness(*, case_id, expected_revision, evidence_readiness_claims):
                 "run_id": run.run_id,
                 "claims": [claim.model_dump(mode="json") for claim in claims],
             })[:24]
-            case = service.attach_run(
-                case_id,
-                run.run_id,
-                session_id=run.session_id,
-                role="READINESS_UPDATE",
-                idempotency_key=f"run:{run.run_id}:{action_identity}",
-                expected_revision=case.revision,
-                now=now,
-            )
+            existing_link = session.scalar(select(AfterSalesCaseRun).where(
+                AfterSalesCaseRun.case_id == case_id, AfterSalesCaseRun.run_id == run.run_id))
+            if existing_link is None:
+                case = service.attach_run(
+                    case_id, run.run_id, session_id=run.session_id, role="READINESS_UPDATE",
+                    idempotency_key=f"run:{run.run_id}:{action_identity}", expected_revision=case.revision, now=now)
+            elif existing_link.session_id != run.session_id:
+                raise AgentError("CASE_RUN_CONFLICT", "运行与案件会话不一致", retryable=False)
             for claim in claims:
                 claim_identity = _checksum(claim.model_dump(mode="json"))[:24]
                 case = service.record_evidence_readiness(

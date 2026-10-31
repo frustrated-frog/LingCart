@@ -39,6 +39,9 @@ Quantities belong only in outcome.quantity; distinct recommendation items are en
 are represented by each price predicate's targets, never an extra unbound product predicate. Verification, listing,
 ordering and scope instructions can be EXECUTION_BOUNDARY with restriction=null; they are not catalog predicates.
 Only actual business-action prohibitions carry restriction. Do not encode process rules as product fields.
+After-sales: one after_sales_case OUTCOME per order, including order_id and registered reason_code.
+Opening or continuing the same case preserves that outcome; material facts, missing information, deferral and no-submit
+instructions are USER_FACT/UNKNOWN/boundaries, never extra outcomes or proof of policy satisfaction.
 source_quote and FAQ question must be exact HUMAN substrings. Descriptions are Chinese. Existing stable IDs persist.
 '''
 
@@ -59,6 +62,8 @@ def extract_contract(context, request, history, *, previous=None, change_text=No
     humans = [as_text(message.content) for message in history or [] if getattr(message, 'type', None) == 'human']
     payload = dict(request=request, human_history=humans, prior_contract=previous,
                    change_text=change_text if change_text is not None else request)
+    from src.after_sales.reason_taxonomy import REASON_CODE_DESCRIPTIONS
+    payload['after_sales_reasons'] = dict(REASON_CODE_DESCRIPTIONS)
     registry = get_catalog_concept_registry()
     basis = fingerprint(dict(input=payload, protocol='request-semantics/v1', registry=registry.fingerprint))
     cached = context.snapshot.get('semantic_extraction') or {}

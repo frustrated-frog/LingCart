@@ -268,6 +268,11 @@ def project_dialogue_request_ir(
                 source=locate_source_span(claim["source_quote"], request, history),
                 objective_ids=[objective_id],
             ))
+        for index, update in enumerate(objective.get("evidence_updates") or []):
+            requirements.append(SemanticRequirement(
+                requirement_id=f"fact:{objective_id}:update:{index}", kind="USER_FACT",
+                description=f"{update['requirement_id']}:{update['disposition']}",
+                source=locate_source_span(update['source_quote'], request, history), objective_ids=[objective_id]))
         for index, preference in enumerate(objective.get("soft_preferences") or []):
             requirements.append(SemanticRequirement(
                 requirement_id=f"preference:{objective_id}:{index}",
