@@ -819,14 +819,15 @@ def test_pending_clarification_binds_elliptical_answer_then_selects_next_obligat
         assert session.scalar(select(Refund).where(Refund.order_id == 1001)).status == "none"
 
 
-def test_model_cannot_forge_pending_clarification_binding(database, monkeypatch):
+@pytest.mark.parametrize("planning_profile", ["after-sales-active-clarification-v5", "after-sales-lookahead-v1"])
+def test_model_cannot_forge_pending_clarification_binding(database, monkeypatch, planning_profile):
     from src import llm
     from src.harness import get_runner
 
     with tools._session() as session:
         require_two_customer_evidence(session)
     monkeypatch.setattr(llm, "get_llm", lambda **_kwargs: BindingAwareSemanticModel())
-    runner = get_runner("after-sales-active-clarification-v5")
+    runner = get_runner(planning_profile)
     opened = run_conversation(
         MESSAGE,
         "forged-clarification-binding",

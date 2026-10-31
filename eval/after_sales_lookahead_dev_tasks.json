@@ -1,0 +1,110 @@
+{
+  "schema_version": 1,
+  "suite": "support",
+  "split_counts": {
+    "dev": 1
+  },
+  "cases": [
+    {
+      "id": "LOOKAHEAD-D01",
+      "split": "dev",
+      "category": "after_sales_multi_turn",
+      "language": "zh",
+      "description": "两项材料逐步补充，重新规划并停在确认前；开发诊断，不证明泛化收益。",
+      "fixture": {
+        "after_sales": {
+          "reason_code": "NOT_AS_DESCRIBED",
+          "delivered_days_ago": 2,
+          "required_evidence": [
+            {
+              "evidence_type": "ORIGINAL_PACKAGING",
+              "accepted_sources": [
+                "CUSTOMER_TEXT"
+              ],
+              "condition": "SEMANTIC_SUFFICIENCY",
+              "description": "核对原包装完整与附件齐全两个方面"
+            },
+            {
+              "evidence_type": "SERIAL_LABEL",
+              "accepted_sources": [
+                "CUSTOMER_TEXT"
+              ],
+              "condition": "SEMANTIC_SUFFICIENCY",
+              "description": "核对序列号标签是否清晰完整"
+            }
+          ]
+        }
+      },
+      "turns": [
+        {
+          "message": "订单 1001 的耳机出现异响，与商品描述不符，请建立售后案件处理。原包装、附件和序列号标签的状态我目前都还没核对。",
+          "expect": {
+            "statuses": [
+              "SUCCEEDED"
+            ],
+            "tools": [
+              {
+                "name": "prepare_after_sales_case"
+              }
+            ],
+            "forbidden_tools": [
+              "submit_after_sales_case",
+              "initiate_refund",
+              "process_payment"
+            ],
+            "db": {
+              "refunds.1001.status": "none"
+            }
+          }
+        },
+        {
+          "message": "补充订单 1001 的售后材料：我已核对序列号标签，标签清晰完整。",
+          "expect": {
+            "statuses": [
+              "SUCCEEDED"
+            ],
+            "tools": [
+              {
+                "name": "continue_after_sales_case"
+              }
+            ],
+            "forbidden_tools": [
+              "submit_after_sales_case",
+              "initiate_refund",
+              "process_payment"
+            ],
+            "db": {
+              "refunds.1001.status": "none"
+            }
+          }
+        },
+        {
+          "message": "继续补充该案件的原包装材料：原包装完整，附件全部齐全。",
+          "expect": {
+            "statuses": [
+              "WAITING_APPROVAL"
+            ],
+            "tools": [
+              {
+                "name": "continue_after_sales_case"
+              }
+            ],
+            "forbidden_tools": [
+              "submit_after_sales_case",
+              "initiate_refund",
+              "process_payment"
+            ],
+            "db": {
+              "refunds.1001.status": "none"
+            },
+            "terminal_reason": "APPROVAL_REQUIRED",
+            "pending_action": {
+              "type": "SUBMIT_AFTER_SALES_CASE",
+              "requires_approval": true
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -1,6 +1,8 @@
 """义务图只求解已持久化候选，不绕过政策、证据或授权边界。"""
 from copy import deepcopy
 
+import pytest
+
 from src.after_sales.execution import project_case_execution_state
 from src.after_sales.obligation_graph import (
     build_obligation_graph,
@@ -206,7 +208,8 @@ def test_deferred_claim_is_preserved_without_reasking_user():
     assert directive.selection.reason_code == "DEFERRED_OBLIGATION_PRESERVED"
 
 
-def test_eligible_resolution_requires_a_bound_approval_candidate():
+@pytest.mark.parametrize("lookahead", [False, True])
+def test_eligible_resolution_requires_a_bound_approval_candidate(lookahead):
     approval = {
         "kind": "REQUEST_CUSTOMER_CONFIRMATION",
         "goal_id": "resolution",
@@ -225,7 +228,15 @@ def test_eligible_resolution_requires_a_bound_approval_candidate():
     state = project_case_execution_state(result)
 
     graph = build_obligation_graph(state)
-    directive = decide_next_obligation_action(state, graph)
+    if lookahead:
+        from src.after_sales.clarification import build_clarification_portfolio
+        from src.after_sales.lookahead import PLANNER, solve_lookahead
+        decision, report = solve_lookahead(graph, build_clarification_portfolio(state, graph, result))
+        assert report.status == "NOT_REQUIRED"
+        assert not report.paths
+        directive = decide_next_obligation_action(state, graph, selection=decision.candidate_selection, planner_version=PLANNER)
+    else:
+        directive = decide_next_obligation_action(state, graph)
 
     assert graph.status == "READY"
     assert directive.status == "WAIT_APPROVAL"

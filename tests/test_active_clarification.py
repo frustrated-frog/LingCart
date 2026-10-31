@@ -1,6 +1,8 @@
 """主动澄清只排序已绑定问题，不预测用户或发明政策事实。"""
 from copy import deepcopy
 
+import pytest
+
 from src.after_sales.clarification import (
     build_clarification_portfolio,
     solve_active_clarification,
@@ -208,7 +210,8 @@ def test_semantic_question_must_match_the_persisted_plan_action():
     assert decision.candidate_selection is None
 
 
-def test_deferred_obligation_is_not_compiled_as_a_question():
+@pytest.mark.parametrize("lookahead", [False, True])
+def test_deferred_obligation_is_not_compiled_as_a_question(lookahead):
     result = _two_question_result()
     claim_id = "b" * 64
     serial_goal = next(
@@ -241,7 +244,12 @@ def test_deferred_obligation_is_not_compiled_as_a_question():
     graph = build_obligation_graph(state)
 
     portfolio = build_clarification_portfolio(state, graph, result)
-    decision = solve_active_clarification(graph, portfolio)
+    if lookahead:
+        from src.after_sales.lookahead import solve_lookahead
+        decision, report = solve_lookahead(graph, portfolio)
+        assert report.paths[0].remaining_if_sufficient == ("policy:v1:SERIAL_LABEL",)
+    else:
+        decision = solve_active_clarification(graph, portfolio)
 
     assert portfolio.status == "READY"
     assert [row.requirement_id for row in portfolio.questions] == ["policy:v1:ORDER_FACT"]

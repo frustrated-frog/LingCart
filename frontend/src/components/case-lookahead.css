@@ -1,0 +1,24 @@
+.case-lookahead { margin: 24px 0; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--surface); overflow: hidden; }
+.case-lookahead > header { display:flex; justify-content:space-between; align-items:center; gap:24px; padding:20px 24px; border-bottom:1px solid var(--line); }
+.case-lookahead header span { font:11px var(--mono); color:var(--blue); }
+.case-lookahead h3 { margin:6px 0 0; font-size:20px; letter-spacing:-.03em; }
+.case-lookahead label { display:flex; align-items:center; gap:10px; color:var(--ink-2); font-size:12px; white-space:nowrap; }
+.case-lookahead select { background:var(--surface); border:1px solid var(--line-strong); padding:8px; border-radius:4px; max-width:290px; }
+.case-lookahead select:focus-visible { outline:2px solid var(--blue); outline-offset:3px; }
+.lookahead-source { display:flex; flex-wrap:wrap; gap:16px; padding:16px 24px 0; font-size:12px; color:var(--ink-2); }
+.case-lookahead > p { padding:0 24px; font-size:12px; color:var(--muted); }
+.lookahead-paths { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px; padding:8px 24px 24px; }
+.lookahead-paths article { padding:16px; border:1px solid var(--line); border-radius:6px; background:var(--surface); }
+.lookahead-paths article.chosen { border-color:var(--blue); box-shadow:inset 3px 0 var(--blue); background:var(--blue-soft); }
+.lookahead-path-title { display:flex; justify-content:space-between; gap:12px; font-size:12px; }
+.lookahead-path-title span { color:var(--ink-2); }
+.lookahead-paths ol { list-style:none; padding:0; margin:18px 0; }
+.lookahead-paths li { position:relative; border-left:1px solid var(--line-strong); padding:0 0 18px 16px; font-size:13px; overflow-wrap:anywhere; }
+.lookahead-paths li:last-child { padding-bottom:0; }
+.lookahead-paths li::before { content:''; position:absolute; top:5px; left:-4px; width:7px; height:7px; background:var(--blue); border-radius:50%; }
+.lookahead-paths li span { display:block; margin-bottom:5px; font:10px var(--mono); color:var(--muted); }
+.lookahead-branches { display:grid; grid-template-columns:1fr 1fr; border-top:1px solid var(--line); padding-top:12px; gap:12px; }
+.lookahead-branches span,.lookahead-branches b { display:block; font-size:11px; }
+.lookahead-branches span { color:var(--muted); margin-bottom:6px; }
+.lookahead-paths small { display:block; margin-top:14px; color:var(--muted); font-size:10px; }
+.case-lookahead footer { border-top:1px solid var(--line); background:var(--surface-2); padding:14px 24px; font-size:12px; }

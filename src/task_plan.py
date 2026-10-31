@@ -24,6 +24,7 @@ from src.after_sales.clarification import (
     build_clarification_portfolio,
     solve_active_clarification,
 )
+from src.after_sales.lookahead import PLANNER as LOOKAHEAD_PLANNER_VERSION, solve_lookahead
 from src.after_sales.pending_clarification import build_pending_clarification
 
 
@@ -312,40 +313,43 @@ def _advance_after_sales_case(
             state=state.model_dump(mode="json"),
             autonomous_action_index=index,
         )
-        if action_selection_mode in {"obligation_graph", "active_clarification"}:
+        if action_selection_mode in {"obligation_graph", "active_clarification", "lookahead"}:
             graph = build_obligation_graph(state) if state.status == "READY" else None
+            planner_version = (LOOKAHEAD_PLANNER_VERSION if action_selection_mode == "lookahead"
+                               else ACTIVE_CLARIFICATION_PLANNER_VERSION if action_selection_mode == "active_clarification"
+                               else OBLIGATION_ACTION_PLANNER_VERSION)
             clarification_portfolio = None
             clarification_decision = None
-            if action_selection_mode == "active_clarification" and graph is not None:
+            if action_selection_mode in {"active_clarification", "lookahead"} and graph is not None:
                 clarification_portfolio = build_clarification_portfolio(state, graph, current)
-                clarification_decision = solve_active_clarification(graph, clarification_portfolio)
+                if action_selection_mode == "lookahead":
+                    clarification_decision, lookahead = solve_lookahead(graph, clarification_portfolio)
+                    recorder.record("case_lookahead_solved", report=lookahead.model_dump(mode="json"),
+                                    case_id=state.case_id, case_revision=state.case_revision,
+                                    autonomous_action_index=index)
+                else:
+                    clarification_decision = solve_active_clarification(graph, clarification_portfolio)
                 if graph.status != "READY":
                     directive = decide_next_obligation_action(
                         state,
                         graph,
-                        planner_version=ACTIVE_CLARIFICATION_PLANNER_VERSION,
+                        planner_version=planner_version,
                     )
                 elif clarification_decision.status == "INVALID":
                     directive = abstain_obligation_action(
                         state,
                         graph,
                         clarification_decision.reason_code,
-                        planner_version=ACTIVE_CLARIFICATION_PLANNER_VERSION,
+                        planner_version=planner_version,
                     )
                 else:
                     directive = decide_next_obligation_action(
                         state,
                         graph,
                         selection=clarification_decision.candidate_selection,
-                        planner_version=ACTIVE_CLARIFICATION_PLANNER_VERSION,
+                        planner_version=planner_version,
                     )
-                planner_version = ACTIVE_CLARIFICATION_PLANNER_VERSION
             else:
-                planner_version = (
-                    ACTIVE_CLARIFICATION_PLANNER_VERSION
-                    if action_selection_mode == "active_clarification"
-                    else OBLIGATION_ACTION_PLANNER_VERSION
-                )
                 directive = decide_next_obligation_action(
                     state,
                     graph,
@@ -390,7 +394,7 @@ def _advance_after_sales_case(
         final_status, final_reason = directive.status, directive.reason_code
         final_question = directive.question
         if (
-            action_selection_mode == "active_clarification"
+            action_selection_mode in {"active_clarification", "lookahead"}
             and clarification_portfolio is not None
             and clarification_decision is not None
             and clarification_decision.status == "SELECTED"

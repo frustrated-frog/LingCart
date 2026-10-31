@@ -166,6 +166,22 @@ def test_active_clarification_profile_changes_only_the_planning_mechanism():
         get_product_runner("after-sales-active-clarification-v5")
 
 
+def test_lookahead_profile_changes_only_planning_and_stays_research_only():
+    from src.harness.registry import get_product_runner, get_runner
+
+    baseline = get_runner("after-sales-active-clarification-v5").provenance()
+    candidate = get_runner("after-sales-lookahead-v1").provenance()
+    assert baseline["engine"] == candidate["engine"]
+    assert [m for m in baseline["mechanisms"] if m["slot"] != "planning"] == [
+        m for m in candidate["mechanisms"] if m["slot"] != "planning"
+    ]
+    planning = next(m for m in candidate["mechanisms"] if m["slot"] == "planning")
+    assert planning["configuration"]["action_selection_mode"] == "lookahead"
+    assert "src/after_sales/lookahead.py" in planning["source_files"]
+    with pytest.raises(AgentError, match="仅限研究"):
+        get_product_runner("after-sales-lookahead-v1")
+
+
 def test_two_profiles_bind_different_context_implementations_to_same_engine():
     from src.task_plan import TaskPlan, TaskStep
 

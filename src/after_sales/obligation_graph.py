@@ -82,6 +82,7 @@ class CandidateSelection(BaseModel):
     solver_version: Literal[
         "obligation-action-solver-v1",
         "active-clarification-solver-v1",
+        "case-lookahead-solver-v1",
     ] = OBLIGATION_ACTION_SOLVER_VERSION
     selection_id: str = Field(pattern=r"^[0-9a-f]{64}$")
     graph_id: str = Field(pattern=r"^[0-9a-f]{64}$")
@@ -107,6 +108,7 @@ class ObligationActionDirective(BaseModel):
     planner_version: Literal[
         "policy-aware-obligation-planner-v1",
         "policy-aware-active-clarification-v1",
+        "policy-aware-lookahead-v1",
     ] = OBLIGATION_ACTION_PLANNER_VERSION
     verifier_version: Literal["policy-obligation-graph-verifier-v1"] = OBLIGATION_GRAPH_VERIFIER_VERSION
     directive_id: str = Field(pattern=r"^[0-9a-f]{64}$")

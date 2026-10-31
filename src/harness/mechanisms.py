@@ -295,6 +295,12 @@ def built_in_mechanisms() -> tuple[HarnessMechanism, ...]:
             evidence_intake_mode="readiness_ledger",
             action_selection_mode="active_clarification",
         ),
+        AfterSalesPlanningMechanism(
+            "planning", "lookahead-case-execution", "1", ("orchestrator",),
+            active_clarification_sources + ("src/after_sales/lookahead.py",),
+            case_execution_mode="policy_aware", evidence_intake_mode="readiness_ledger",
+            action_selection_mode="lookahead",
+        ),
         EmbeddedMechanism("tool_protocol", "runtime-tool-ledger", "2", ("orchestrator",),
                           ("src/runtime.py", "src/persistence.py", "src/backend/db.py",
                            "src/execution_boundaries.py",

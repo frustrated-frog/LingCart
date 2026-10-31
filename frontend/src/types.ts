@@ -1,5 +1,31 @@
 export type ResearchStatus = 'baseline' | 'candidate' | 'promoted'
 
+export interface InformationPath {
+  candidate_ids: string[]
+  requirement_ids: string[]
+  remaining_if_sufficient: string[]
+  remaining_if_no_information: string[]
+  user_turns: number
+  tool_calls: number
+  response_burden: number
+  first_action_burden: number
+}
+
+export interface LookaheadReport {
+  version: 'case-lookahead-v1'
+  report_id: string
+  state_id: string
+  graph_id: string
+  portfolio_id: string
+  status: 'SELECTED' | 'FALLBACK' | 'INVALID' | 'NOT_REQUIRED'
+  reason_code: string
+  horizon: 2
+  expanded_paths: number
+  selected_candidate_id: string | null
+  paths: InformationPath[]
+  assumption: 'SUFFICIENT_INFORMATION_NOT_OBSERVED'
+}
+
 export interface MechanismRef {
   slot: string
   id: string
