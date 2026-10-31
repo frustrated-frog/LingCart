@@ -1,0 +1,8 @@
+{
+  "run-01/baseline.json": "de567ccbfffcd7fa1890f2ade02c3e3b6ef22b88a11632ffc0336400fbae551d",
+  "run-01/candidate.json": "ac5c5d4f5d7c26635d73a39dca42e2380b768091a2abe6f106521e4069a34cdf",
+  "run-02/baseline.json": "a74427d7d592bd5704c6f58482669155b575b60dde8ab5199ae2a847f9645c57",
+  "run-02/candidate.json": "64606d7bc6646a23b5a184694563ccbbcb7d95098ef819a46620ddca0948b25d",
+  "run-03/baseline.json": "eedff3a118530c2517cfa47b4fdd5640512109eef0e2ab7781e72c97a2aaf98b",
+  "run-03/candidate.json": "9a2d7f7a2c604ae2d6006d0fd210cd73924a458e5aa91d22091a4a71fe4071b6"
+}

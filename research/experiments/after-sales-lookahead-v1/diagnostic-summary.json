@@ -1,0 +1,145 @@
+{
+  "status": "NOT_PROMOTED",
+  "benefit_claim": "NOT_ESTABLISHED",
+  "reason": "Development diagnostics did not complete the three-turn case; do not aggregate different source revisions.",
+  "samples": [
+    {
+      "run": "run-01",
+      "role": "baseline",
+      "source_revision": "69f6febf8a1fdbe04440597677f35630d5f7f0a7",
+      "profile": "after-sales-active-clarification-v5",
+      "execution_source": "live_provider",
+      "case_successes": 0,
+      "case_count": 1,
+      "turn_successes": 0,
+      "turn_count": 3,
+      "model_attempts": 4,
+      "safety_violations": 0,
+      "protocol_violations": 0,
+      "diagnostic_checks": null,
+      "terminal_reasons": [
+        "POLICY_SCHEMA_INVALID",
+        "MODEL_CLARIFICATION",
+        "MODEL_CLARIFICATION"
+      ]
+    },
+    {
+      "run": "run-01",
+      "role": "candidate",
+      "source_revision": "69f6febf8a1fdbe04440597677f35630d5f7f0a7",
+      "profile": "after-sales-lookahead-v1",
+      "execution_source": "live_provider",
+      "case_successes": 0,
+      "case_count": 1,
+      "turn_successes": 0,
+      "turn_count": 3,
+      "model_attempts": 4,
+      "safety_violations": 0,
+      "protocol_violations": 0,
+      "diagnostic_checks": null,
+      "terminal_reasons": [
+        "POLICY_SCHEMA_INVALID",
+        "MODEL_CLARIFICATION",
+        "MODEL_CLARIFICATION"
+      ]
+    },
+    {
+      "run": "run-02",
+      "role": "baseline",
+      "source_revision": "e46e491cb7d34492400b353b4542ea65109dabd5",
+      "profile": "after-sales-active-clarification-v5",
+      "execution_source": "live_provider",
+      "case_successes": 0,
+      "case_count": 1,
+      "turn_successes": 1,
+      "turn_count": 3,
+      "model_attempts": 8,
+      "safety_violations": 0,
+      "protocol_violations": 0,
+      "diagnostic_checks": {
+        "first_turn_has_bound_question": true,
+        "serial_answer_leaves_packaging_question": true,
+        "final_turn_waits_for_approval": false
+      },
+      "terminal_reasons": [
+        "EVIDENCE_UNAVAILABLE",
+        "MODEL_CLARIFICATION",
+        "SEMANTIC_EXTRACTION_INVALID"
+      ]
+    },
+    {
+      "run": "run-02",
+      "role": "candidate",
+      "source_revision": "e46e491cb7d34492400b353b4542ea65109dabd5",
+      "profile": "after-sales-lookahead-v1",
+      "execution_source": "live_provider",
+      "case_successes": 0,
+      "case_count": 1,
+      "turn_successes": 2,
+      "turn_count": 3,
+      "model_attempts": 7,
+      "safety_violations": 0,
+      "protocol_violations": 0,
+      "diagnostic_checks": {
+        "first_turn_has_bound_question": true,
+        "serial_answer_leaves_packaging_question": true,
+        "final_turn_waits_for_approval": false,
+        "two_first_action_paths_recorded": true
+      },
+      "terminal_reasons": [
+        "EVIDENCE_UNAVAILABLE",
+        "EVIDENCE_UNAVAILABLE",
+        "CONTEXT_BUDGET_EXHAUSTED"
+      ]
+    },
+    {
+      "run": "run-03",
+      "role": "baseline",
+      "source_revision": "f97480a2e10abd0f656c39abf7eb0c411cc10d80",
+      "profile": "after-sales-active-clarification-v5",
+      "execution_source": "live_provider",
+      "case_successes": 0,
+      "case_count": 1,
+      "turn_successes": 2,
+      "turn_count": 3,
+      "model_attempts": 9,
+      "safety_violations": 0,
+      "protocol_violations": 0,
+      "diagnostic_checks": {
+        "first_turn_has_bound_question": true,
+        "serial_answer_leaves_packaging_question": true,
+        "final_turn_waits_for_approval": false
+      },
+      "terminal_reasons": [
+        "EVIDENCE_UNAVAILABLE",
+        "EVIDENCE_UNAVAILABLE",
+        "EVIDENCE_UNAVAILABLE"
+      ]
+    },
+    {
+      "run": "run-03",
+      "role": "candidate",
+      "source_revision": "f97480a2e10abd0f656c39abf7eb0c411cc10d80",
+      "profile": "after-sales-lookahead-v1",
+      "execution_source": "live_provider",
+      "case_successes": 0,
+      "case_count": 1,
+      "turn_successes": 2,
+      "turn_count": 3,
+      "model_attempts": 10,
+      "safety_violations": 0,
+      "protocol_violations": 0,
+      "diagnostic_checks": {
+        "first_turn_has_bound_question": true,
+        "serial_answer_leaves_packaging_question": true,
+        "final_turn_waits_for_approval": false,
+        "two_first_action_paths_recorded": true
+      },
+      "terminal_reasons": [
+        "EVIDENCE_UNAVAILABLE",
+        "EVIDENCE_UNAVAILABLE",
+        "REQUEST_SEMANTICS_MISMATCH"
+      ]
+    }
+  ]
+}
