@@ -1,0 +1,22 @@
+{
+  "purpose": "seen_case_diagnostic_not_effectiveness_evaluation",
+  "repeats": 1,
+  "selections": [
+    [
+      "case",
+      "eval/after_sales_autonomy_tasks.json",
+      "ASA-D01",
+      "dev",
+      "after-sales-policy-execution-v1",
+      "auto"
+    ]
+  ],
+  "requested_limits": {
+    "max_model_calls_per_run": 16,
+    "max_prompt_tokens_per_run": 256000,
+    "max_completion_tokens_per_run": 12000,
+    "max_seconds_per_run": 90,
+    "max_provider_attempts_per_call": 1
+  },
+  "limit_policy": "evaluate intersects each limit with existing runtime defaults"
+}
