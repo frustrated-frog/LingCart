@@ -24,6 +24,8 @@ class Models:
     def __init__(self):
         self.scopes = {SERIAL: [('SERIAL_LABEL', 'PROVIDED')], PACKAGING: [('ORIGINAL_PACKAGING', 'PROVIDED')]}
         self.batch = False
+        self.repair_batch = False
+        self.invalid_batch_parent = False
         self.explicit_target = None
         self.bad_boundary = False
         self.repair_boundary = True
@@ -42,9 +44,11 @@ class Models:
             case = payload['session_cases'][0]
             requirements = {r['evidence_type']: r['requirement_id'] for r in case['requirements']}
             objective = dict(id='material', kind='AFTER_SALES_CONTINUE', source_quote=request)
-            if self.batch:
+            if self.batch or (self.repair_batch and 'Previous output was invalid' in prompt):
                 objective['evidence_updates'] = [dict(requirement_id=requirements[kind], disposition=disposition, source_quote=request)
                                                  for kind, disposition in self.scopes.get(request, [])]
+                if self.invalid_batch_parent:
+                    objective['source_quote']=request[:4]
             else:
                 objective['evidence_text'] = request
                 if self.explicit_target:
@@ -240,6 +244,23 @@ def test_deferred_material_then_provided_does_not_invent_evidence(models):
     models.batch=False
     run(SERIAL)
     assert run(PACKAGING)['status']=='WAITING_APPROVAL'
+
+
+@pytest.mark.parametrize('invalid_parent',[False,True])
+def test_batch_repair_is_bounded_and_bad_quotes_end_in_targeted_clarification(models,invalid_parent):
+    run(MESSAGE)
+    text='原包装附件和序列号标签均完整清晰'
+    models.scopes[text]=[('ORIGINAL_PACKAGING','PROVIDED'),('SERIAL_LABEL','PROVIDED')]
+    models.repair_batch=True
+    models.invalid_batch_parent=invalid_parent
+    result=run(text)
+    assert any('objective.source_quote covers all update quotes' in p for p in models.prompts)
+    if invalid_parent:
+        assert result['status']=='WAITING_CLARIFICATION' and not result['trace']
+        assert '分别说明每项材料' in result['reply']
+        assert len([e for e in result['events'] if e['type']=='dialogue_protocol_retry'])==1
+    else:
+        assert result['status']=='WAITING_APPROVAL' and result.get('pending_clarification') is None
 
 
 def test_incremental_model_failure_closes_approval(models, monkeypatch):

@@ -5,9 +5,9 @@ from src.errors import AgentError
 
 
 class CaseTurnMismatch(AgentError):
-    def __init__(self, message, *, fields, question):
+    def __init__(self, message, *, fields, question, instruction=None):
         super().__init__('REQUEST_SEMANTICS_MISMATCH', message, retryable=False)
-        self.feedback = {'issue': message, 'fields': fields, 'instruction':
+        self.feedback = {'issue': message, 'fields': fields, 'instruction': instruction or
                          'Correct only the inconsistent interpretation using HUMAN evidence. '
                          'Do not invent restrictions, facts or authorization.'}
         self.question = question
@@ -56,6 +56,9 @@ def verify_material_scope(context, objectives, rows, cases, request):
             if len(targets) != 1:
                 raise CaseTurnMismatch('材料归属缺失或包含多个要求',
                     fields={'source_quote': update['quote'], 'independent_targets': sorted(targets)},
+                    instruction=('Split materials into evidence_updates using policy IDs and verbatim quotes; '
+                                 'objective.source_quote covers all update quotes. Omit legacy fields. '
+                                 'No invented facts or authorization.') if len(targets) > 1 else None,
                     question='请说明这段材料对应哪一项要求；若涉及多项，请分别说明。')
             target = next(iter(targets))
             if target != update['requirement_id']:

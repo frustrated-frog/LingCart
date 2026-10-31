@@ -62,6 +62,11 @@ def main():
                 complete=sample['passed'] and all(c['passed'] for c in checks) and final_ok))
         report['diagnostic_checks']=diagnostics
         (args.output/f'{name}.json').write_text(_report_json_dumps(report,indent=2)+'\n')
+        # 整体报告已经包含逐轮原始样本；只清理完全相同的断点副本，异常退出仍保留副本。
+        for sample in report['samples']:
+            path=args.output/f"{name}-{sample['case_id']}-{sample['repetition']}.json"
+            if json.loads(path.read_text()) == json.loads(_report_json_dumps(sample)):
+                path.unlink()
         print(json.dumps(dict(profile=profile,complete=sum(d['complete'] for d in diagnostics),samples=len(diagnostics))),flush=True)
 
 

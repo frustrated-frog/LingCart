@@ -770,6 +770,12 @@ def understand_turn(user_message: str, history: list | None, pending_action: dic
         except AgentError as exc:
             record_failure(exc.code)
             from src.after_sales.turn_verification import CaseTurnMismatch
+            if (exc.code == 'UNGROUNDED_EVIDENCE' and context
+                    and getattr(context.mechanisms.get('verification'), 'requires_material_scope', False)):
+                exc = CaseTurnMismatch(str(exc), fields={
+                    'invalid_material_objectives': [o.model_dump(exclude_none=True, exclude_defaults=True) for o in understanding.objectives
+                                                    if o.kind == 'AFTER_SALES_CONTINUE']},
+                    question='材料引用与当前要求未能一致匹配。请分别说明每项材料的名称和实际情况。')
             if isinstance(exc, CaseTurnMismatch):
                 if context:
                     context.record('case_turn_verification_conflict', feedback=exc.feedback, question=exc.question,
