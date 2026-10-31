@@ -30,9 +30,21 @@ def main():
         report = evaluate(dataset, dataset_path=dataset_path, repeats=1, split='dev',
                           harness_profile=profile, max_model_calls_per_run=8,
                           max_provider_attempts_per_call=1)
+        results = [t['result'] for s in report['samples'] for t in s['turns']]
+        pending = [(r.get('pending_clarification') or {}).get('requirement_id', '') for r in results]
+        report['diagnostic_checks'] = {
+            'first_turn_has_bound_question': bool(pending and pending[0]),
+            'serial_answer_leaves_packaging_question': len(pending) == 3 and pending[1].endswith(':ORIGINAL_PACKAGING'),
+            'final_turn_waits_for_approval': len(results) == 3 and results[2]['status'] == 'WAITING_APPROVAL',
+        }
+        if name == 'candidate':
+            report['diagnostic_checks']['two_first_action_paths_recorded'] = any(
+                e['type'] == 'case_lookahead_solved' and len(e['report']['paths']) == 2
+                for e in (results[0].get('events', []) if results else []))
         (args.output / f'{name}.json').write_text(_report_json_dumps(report, indent=2) + '\n')
         print(_report_json_dumps(dict(profile=profile, status=report['status'],
                                      passed=[s['passed'] for s in report['samples']],
+                                     diagnostic_checks=report['diagnostic_checks'],
                                      failures=[t['failures'] for s in report['samples'] for t in s['turns']])), flush=True)
 
 

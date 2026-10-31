@@ -40,7 +40,8 @@
           "message": "订单 1001 的耳机出现异响，与商品描述不符，请建立售后案件处理。原包装、附件和序列号标签的状态我目前都还没核对。",
           "expect": {
             "statuses": [
-              "SUCCEEDED"
+              "SUCCEEDED",
+              "PARTIAL"
             ],
             "tools": [
               {
@@ -54,14 +55,17 @@
             ],
             "db": {
               "refunds.1001.status": "none"
-            }
+            },
+            "error_present": false,
+            "pending_present": false
           }
         },
         {
           "message": "补充订单 1001 的售后材料：我已核对序列号标签，标签清晰完整。",
           "expect": {
             "statuses": [
-              "SUCCEEDED"
+              "SUCCEEDED",
+              "PARTIAL"
             ],
             "tools": [
               {
@@ -75,7 +79,9 @@
             ],
             "db": {
               "refunds.1001.status": "none"
-            }
+            },
+            "error_present": false,
+            "pending_present": false
           }
         },
         {
