@@ -139,6 +139,9 @@ def test_real_ledger_answer_replans_and_resume_does_not_duplicate_write(database
     assert opened['pending_clarification']['requirement_id'].endswith(':SERIAL_LABEL')
     first_report = next(e['report'] for e in opened['events'] if e['type']=='case_lookahead_solved')
     assert len(first_report['paths']) == 2
+    assert opened['pending_clarification']['question'] in opened['reply']
+    assert '为推进当前政策义务，请先确认：' in opened['reply']
+    assert '请说明原包装是否完整，以及附件是否齐全？' not in opened['reply']
     monkeypatch.setattr(orchestrator, 'get_llm', lambda **_: Understanding())
     if crash:
         with pytest.raises(CrashAfterCaseWrite):
@@ -157,3 +160,23 @@ def test_real_ledger_answer_replans_and_resume_does_not_duplicate_write(database
                                                         ToolLedger.tool_name=='continue_after_sales_case')).all()
         assert len(ledger)==1
         assert session.scalar(select(Refund).where(Refund.order_id==1001)).status=='none'
+    if not crash:
+        packaging = '原包装完整，附件全部齐全'
+        class RepairUnderstanding:
+            def json_mode(self): return self
+            def invoke(self, prompt):
+                objective = dict(id='packaging', kind='AFTER_SALES_CONTINUE', source_quote=packaging,
+                                 evidence_text=packaging)
+                if 'Previous output was invalid' not in prompt:
+                    # 真实诊断中的冲突协议：批量更新与旧材料字段混用。
+                    objective['evidence_updates'] = [dict(
+                        requirement_id=result['pending_clarification']['requirement_id'],
+                        disposition='PROVIDED', source_quote=packaging)]
+                return AIMessage(content=json.dumps(dict(commands=[], objectives=[objective])))
+        monkeypatch.setattr(orchestrator, 'get_llm', lambda **_: RepairUnderstanding())
+        repaired = run_conversation(packaging, 'lookahead-ledger', runner=runner)
+        assert any(e['type']=='dialogue_protocol_retry' for e in repaired['events'])
+        assert any(e['type']=='dialogue_understood' and e['attempt']==2 for e in repaired['events'])
+        assert repaired.get('error') is None
+        assert repaired['budget']['limits']['max_context_chars']==16000
+        assert any(t['tool']=='continue_after_sales_case' for t in repaired['trace'])

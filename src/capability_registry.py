@@ -731,7 +731,7 @@ def _render_after_sales_case(result: object, _arguments: Mapping[str, object]) -
     autonomous = result.get("autonomous_execution") or {}
     selected_question = autonomous.get("question")
     if (
-        autonomous.get("action_selection_mode") == "active_clarification"
+        autonomous.get("action_selection_mode") in {"active_clarification", "lookahead"}
         and autonomous.get("status") == "WAIT_USER_INPUT"
         and isinstance(autonomous.get("selected_question_id"), str)
         and isinstance(selected_question, str)
