@@ -1,0 +1,7 @@
+{
+  "status": "FAILED_BEFORE_MODEL_CALL",
+  "code": "GRAPH_PATH_OUTSIDE_ALLOWED_ROOT",
+  "model_calls": 0,
+  "samples": 0,
+  "reason": "评测驱动将图写在 experiments 内，PG 配置只允许 research/graphs。修复驱动目录后使用新 run-02；保留本次启动产物。"
+}

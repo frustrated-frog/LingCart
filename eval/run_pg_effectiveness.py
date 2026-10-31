@@ -58,20 +58,25 @@ def run(*, live=False, output=None):
     if list(test_cases) != plan['test_cases'] or contract_template.repeats != plan['test_repeats']:
         raise ValueError('冻结计划与任务集或重复次数不一致')
     graph = ProceduralGraph.from_path(ROOT / plan['seed_graph'])
+    # 同时验证实际机制装配，避免只通过 JSON 校验却无法启动。
+    get_registry().register_profile(graph_profile(graph, ROOT / plan['seed_graph'], online_profile=spec.online_profile))
     if not live:
         return dict(status='VALIDATED', model_calls=0, test_samples=len(test_cases) * plan['test_repeats'] * 3,
                     dataset_sha256=fingerprint(dataset), seed_sha256=graph.fingerprint)
     if output is None or output.exists() or not output.resolve().is_relative_to(EXPERIMENT):
         raise ValueError('live 输出必须为本实验目录内尚不存在的目录')
+    graph_output = ROOT / 'research/graphs' / plan['experiment_id'] / output.name
+    graph_output.mkdir(parents=True, exist_ok=False)
     output.mkdir(parents=True)
     write_artifact(output / 'frozen-inputs.json', dict(plan=plan, evolution=spec.model_dump(mode='json'),
         contract=contract_template.model_dump(mode='json'), dataset_sha256=fingerprint(dataset),
+        graph_output=graph_output.relative_to(ROOT).as_posix(),
         driver_sha256=__import__('hashlib').sha256(Path(__file__).read_bytes()).hexdigest()))
     profiles = {}
 
     def profile(current):
         if current.fingerprint not in profiles:
-            path = output / 'graphs' / f'{current.fingerprint}.json'
+            path = graph_output / f'{current.fingerprint}.json'
             write_artifact(path, current.model_dump(mode='json'))
             item = graph_profile(current, path, online_profile=spec.online_profile)
             write_artifact(path.with_name(f'{current.fingerprint}-profile.json'), item.model_dump(mode='json'))
