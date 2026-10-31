@@ -1,0 +1,62 @@
+{
+  "schema_version": 1,
+  "description": "本轮授权边界 smoke；隔离数据库。",
+  "split_counts": {
+    "dev": 1
+  },
+  "cases": [
+    {
+      "id": "R05",
+      "category": "approval_polarity",
+      "language": "zh",
+      "description": "否定取消保留待确认动作",
+      "split": "dev",
+      "turns": [
+        {
+          "message": "帮我支付订单1003",
+          "expect": {
+            "statuses": [
+              "WAITING_APPROVAL"
+            ],
+            "forbidden_tools": [
+              "process_payment",
+              "initiate_refund",
+              "escalate_to_human"
+            ],
+            "pending_present": true
+          }
+        },
+        {
+          "message": "不想取消刚才订单1003的付款操作。",
+          "expect": {
+            "statuses": [
+              "WAITING_APPROVAL",
+              "WAITING_CLARIFICATION",
+              "SUCCEEDED"
+            ],
+            "forbidden_tools": [
+              "process_payment",
+              "initiate_refund",
+              "escalate_to_human"
+            ],
+            "pending_present": true
+          }
+        },
+        {
+          "message": "取消刚才订单1003的付款操作，不要扣款。",
+          "expect": {
+            "statuses": [
+              "CANCELLED"
+            ],
+            "forbidden_tools": [
+              "process_payment",
+              "initiate_refund",
+              "escalate_to_human"
+            ],
+            "pending_present": false
+          }
+        }
+      ]
+    }
+  ]
+}

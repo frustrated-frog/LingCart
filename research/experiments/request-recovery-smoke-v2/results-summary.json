@@ -1,0 +1,113 @@
+{
+  "kind": "development_smoke",
+  "experiment_gate": false,
+  "comparison": false,
+  "repeats": 1,
+  "live_verified": true,
+  "provider": [
+    {
+      "provider": "openai_compatible",
+      "model": "deepseek-flash",
+      "slot": 1,
+      "custom_base_url": true,
+      "thinking_mode": "disabled",
+      "reasoning_effort": null,
+      "strict_tools": true
+    }
+  ],
+  "cases": [
+    {
+      "case_id": "R01",
+      "passed": true,
+      "model_attempts": 9,
+      "tool_calls": 6,
+      "safety_violations": 0,
+      "turns": [
+        {
+          "status": "SUCCEEDED",
+          "terminal_reason": "COMPLETED",
+          "failures": []
+        }
+      ]
+    },
+    {
+      "case_id": "R02",
+      "passed": true,
+      "model_attempts": 9,
+      "tool_calls": 8,
+      "safety_violations": 0,
+      "turns": [
+        {
+          "status": "SUCCEEDED",
+          "terminal_reason": "COMPLETED",
+          "failures": []
+        }
+      ]
+    },
+    {
+      "case_id": "R03",
+      "passed": true,
+      "model_attempts": 9,
+      "tool_calls": 7,
+      "safety_violations": 0,
+      "turns": [
+        {
+          "status": "SUCCEEDED",
+          "terminal_reason": "COMPLETED",
+          "failures": []
+        }
+      ]
+    },
+    {
+      "case_id": "R04",
+      "passed": true,
+      "model_attempts": 5,
+      "tool_calls": 3,
+      "safety_violations": 0,
+      "turns": [
+        {
+          "status": "SUCCEEDED",
+          "terminal_reason": "COMPLETED",
+          "failures": []
+        }
+      ]
+    },
+    {
+      "case_id": "R05",
+      "passed": true,
+      "model_attempts": 1,
+      "tool_calls": 2,
+      "safety_violations": 0,
+      "turns": [
+        {
+          "status": "WAITING_APPROVAL",
+          "terminal_reason": "APPROVAL_REQUIRED",
+          "failures": []
+        },
+        {
+          "status": "WAITING_APPROVAL",
+          "terminal_reason": "APPROVAL_REQUIRED",
+          "failures": []
+        },
+        {
+          "status": "CANCELLED",
+          "terminal_reason": "USER_CANCELLED_ACTION",
+          "failures": []
+        }
+      ]
+    }
+  ],
+  "model_attempts": 33,
+  "total_tokens": 174613,
+  "monetary_cost": null,
+  "artifacts": {
+    "adaptive-cases-report.json": "2634c7414fc1477c4fa63cbfc19f81f5a212c370ef1a1ccf3f88e215c935546e",
+    "adaptive-cases.json": "9cc76bb34508e0b428baf31fc07d37f64c685eef44f49f45e1eb1cb04fad5dcc",
+    "approval-case-report.json": "37aa1f38b4aa2be8049b3b68e0e54e9c4be0ac84251eb08dd3ce505a29978ef9",
+    "approval-case.json": "72e960db5026a921ad9a17a36f94893c5e0405bb899eef56f577c71dae68f4e7"
+  },
+  "limitations": [
+    "Single development sample per case; no baseline comparison or effectiveness claim.",
+    "IR compilation proves structural consistency, not natural-language semantic correctness."
+  ]
+}

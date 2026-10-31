@@ -1,0 +1,210 @@
+{
+  "schema_version": 1,
+  "suite": "adaptive",
+  "description": "本轮修复开发集 smoke；单次运行，不支持效果比较。",
+  "split_counts": {
+    "dev": 4
+  },
+  "cases": [
+    {
+      "id": "R01",
+      "category": "quantity",
+      "language": "zh",
+      "description": "单目标多款推荐与完整交付",
+      "split": "dev",
+      "turns": [
+        {
+          "message": "帮我找两款不同的耳机，每款不超过500元。两款都要列出，分别核验库存和价格，不用付款。",
+          "expect": {
+            "statuses": [
+              "SUCCEEDED"
+            ],
+            "forbidden_tools": [
+              "process_payment",
+              "initiate_refund",
+              "escalate_to_human"
+            ]
+          }
+        }
+      ],
+      "adaptive_expect": {
+        "objectives": [
+          {
+            "kind": "recommend",
+            "quantity": 2
+          }
+        ],
+        "product_constraints": [
+          {
+            "description": "price lte 500",
+            "source_quote": "500",
+            "field": "price",
+            "op": "lte",
+            "value": 500
+          }
+        ]
+      }
+    },
+    {
+      "id": "R02",
+      "category": "scope",
+      "language": "zh",
+      "description": "两品类各自预算不串用",
+      "split": "dev",
+      "turns": [
+        {
+          "message": "耳机给我推荐一款，预算500元；键盘另选一款，预算300元。两个预算分别算，不要合并。",
+          "expect": {
+            "statuses": [
+              "SUCCEEDED"
+            ],
+            "forbidden_tools": [
+              "process_payment",
+              "initiate_refund",
+              "escalate_to_human"
+            ]
+          }
+        }
+      ],
+      "adaptive_expect": {
+        "objectives": [
+          {
+            "kind": "recommend"
+          }
+        ],
+        "minimum_recommendations": 2,
+        "recommendation_targets": [
+          [
+            {
+              "description": "category eq 耳机",
+              "source_quote": "耳机",
+              "field": "category",
+              "op": "eq",
+              "value": "耳机"
+            },
+            {
+              "description": "price lte 500",
+              "source_quote": "500",
+              "field": "price",
+              "op": "lte",
+              "value": 500
+            }
+          ],
+          [
+            {
+              "description": "category eq 键盘",
+              "source_quote": "键盘",
+              "field": "category",
+              "op": "eq",
+              "value": "键盘"
+            },
+            {
+              "description": "price lte 300",
+              "source_quote": "300",
+              "field": "price",
+              "op": "lte",
+              "value": 300
+            }
+          ]
+        ]
+      }
+    },
+    {
+      "id": "R03",
+      "category": "compound",
+      "language": "zh",
+      "description": "推荐及两个不同订单服务",
+      "split": "dev",
+      "turns": [
+        {
+          "message": "选一款500元以内的耳机，同时告诉我订单1001的状态和订单1002的物流进展。只查询，不做支付退款。",
+          "expect": {
+            "statuses": [
+              "SUCCEEDED"
+            ],
+            "forbidden_tools": [
+              "process_payment",
+              "initiate_refund",
+              "escalate_to_human"
+            ]
+          }
+        }
+      ],
+      "adaptive_expect": {
+        "objectives": [
+          {
+            "kind": "recommend"
+          },
+          {
+            "kind": "get_order_status",
+            "order_id": 1001
+          },
+          {
+            "kind": "track_shipment",
+            "order_id": 1002
+          }
+        ],
+        "product_constraints": [
+          {
+            "description": "price lte 500",
+            "source_quote": "500",
+            "field": "price",
+            "op": "lte",
+            "value": 500
+          }
+        ]
+      }
+    },
+    {
+      "id": "R04",
+      "category": "history",
+      "language": "zh",
+      "description": "追问继承品类并收紧预算",
+      "split": "dev",
+      "turns": [
+        {
+          "message": "还是刚才那类商品，预算改成400元以内，给我推荐一款。",
+          "expect": {
+            "statuses": [
+              "SUCCEEDED"
+            ],
+            "forbidden_tools": [
+              "process_payment",
+              "initiate_refund",
+              "escalate_to_human"
+            ]
+          },
+          "history": [
+            {
+              "role": "user",
+              "content": "我在挑耳机，预算先定500元，推荐时必须有库存。"
+            }
+          ]
+        }
+      ],
+      "adaptive_expect": {
+        "objectives": [
+          {
+            "kind": "recommend"
+          }
+        ],
+        "product_constraints": [
+          {
+            "description": "price lte 400",
+            "source_quote": "400",
+            "field": "price",
+            "op": "lte",
+            "value": 400
+          },
+          {
+            "description": "category eq 耳机",
+            "source_quote": "耳机",
+            "field": "category",
+            "op": "eq",
+            "value": "耳机"
+          }
+        ]
+      }
+    }
+  ]
+}
