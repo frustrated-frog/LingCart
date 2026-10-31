@@ -109,6 +109,11 @@ def extract_contract(context, request, history, *, previous=None, change_text=No
                                        else str(error))[:2000]
             continue
         context.snapshot['semantic_extraction'] = dict(basis_sha256=basis, contract=deepcopy(contract), model_cursor=context.model_cursor)
+        if any(row['requirement']['restriction'] for row in contract['requirements']):
+            # 已提取的禁止事项先收窄权限，即使业务目标随后需要澄清也不能丢失。
+            # 放宽或撤销仍须等待整份修订通过接受阶段。
+            from src.execution_boundaries import apply_semantic_boundaries
+            apply_semantic_boundaries(context, contract, restrict_only=True)
         context.record('request_semantics_extracted', contract=contract, basis_sha256=basis)
         return contract
     raise AssertionError('Unreachable extraction state')

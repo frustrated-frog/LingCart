@@ -70,17 +70,20 @@ def apply_dialogue_boundaries(context, changes, request, history=None):
     context.record('execution_boundaries_updated', boundaries=active, changes=[BoundaryChange.model_validate(c).model_dump() for c in changes])
 
 
-def apply_semantic_boundaries(context, contract):
+def apply_semantic_boundaries(context, contract, *, restrict_only=False):
     from src.request_semantics import validate_contract
     validate_contract(contract)
-    active = [row for row in current_boundaries(context) if row.get('origin') != 'adaptive']
+    active = [row for row in current_boundaries(context) if restrict_only or row.get('origin') != 'adaptive']
     for row in contract['requirements']:
         restriction = row['requirement']['restriction']
         if restriction:
-            active.append(dict(restriction=restriction, source=deepcopy(row['source']), origin='adaptive',
-                               requirement_id=row['requirement']['requirement_id']))
+            boundary = dict(restriction=restriction, source=deepcopy(row['source']), origin='adaptive',
+                            requirement_id=row['requirement']['requirement_id'])
+            if boundary not in active:
+                active.append(boundary)
     context.snapshot['execution_boundaries'] = active
-    context.record('execution_boundaries_updated', boundaries=active, semantics_sha256=contract['sha256'])
+    context.record('execution_boundaries_updated', boundaries=active, semantics_sha256=contract['sha256'],
+                   restrict_only=restrict_only)
 
 
 def require_allowed(context, name, spec):

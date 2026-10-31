@@ -389,3 +389,88 @@ def test_invalid_schema_feedback_keeps_paths_without_echoing_model_input(monkeyp
     assert feedback[0]['loc'] == ['changes', 0, 'requirement', 'description']
     assert 'input' not in feedback[0]
     assert any(event['type'] == 'request_semantics_rejected' for event in context.events)
+
+
+def test_auditor_sees_separate_context_and_binds_its_identity(monkeypatch):
+    from src import request_audit
+    from src.constraint_bindings import fingerprint
+    model(monkeypatch, search(first=True), recommendation)
+    semantic_model(monkeypatch, extracted(restriction=True))
+    delegate = request_audit.get_llm()
+    inputs = []
+    class ObserveAudit:
+        def invoke(self, messages):
+            inputs.append(json.loads(messages[-1].content))
+            return delegate.invoke(messages)
+    monkeypatch.setattr(request_audit, 'get_llm', lambda **_: ObserveAudit())
+    result = run_conversation('推荐预算500的耳机，不要支付', 'audit-sidecar', runner=run_adaptive)
+    assert result['status'] == 'SUCCEEDED', result
+    assert inputs[0]['feedback']['semantic_context'][0]['restriction'] == 'NO_PAYMENT'
+    state = RunStore().run(result['run_id'])['checkpoint']['adaptive']
+    before = request_audit.audit_basis_fingerprint(state, None, 'goal')
+    contract = deepcopy(state['request_semantics'])
+    contract['requirements'][-1]['requirement']['description'] = '修改上下文描述'
+    contract['sha256'] = fingerprint({key: value for key, value in contract.items() if key != 'sha256'})
+    state['request_semantics'] = contract
+    assert request_audit.audit_basis_fingerprint(state, None, 'goal') != before
+    with pytest.raises(AgentError) as error:
+        request_audit.require_approved(state)
+    assert error.value.code == 'REQUEST_AUDIT_BASIS_MISMATCH'
+
+
+def test_query_clarification_still_persists_explicit_no_payment(monkeypatch):
+    model(monkeypatch, search(first=True))
+    response = extracted(restriction=True)
+    response['changes'].append(dict(operation='ADD', requirement=dict(requirement_id='uncertain', kind='UNKNOWN',
+        description='预算范围未明确', source_quote='预算范围还没想好')))
+    semantic_model(monkeypatch, response)
+    first = run_conversation('推荐预算500的耳机，不要支付，预算范围还没想好', 'uncertain-no-pay', runner=run_adaptive)
+    assert first['status'] == 'WAITING_CLARIFICATION'
+    assert first['execution_boundaries'][0]['restriction'] == 'NO_PAYMENT'
+    second = run_conversation('帮我支付订单1003', 'uncertain-no-pay', runner=run_adaptive)
+    assert second['terminal_reason'] == 'EXECUTION_BOUNDARY_VIOLATION', second
+    assert second['pending_action'] is None
+    assert tools.get_payment_status(1003)['status'] == 'pending'
+
+
+def test_candidate_revision_cannot_release_prior_boundary_before_acceptance():
+    from src.execution_boundaries import apply_semantic_boundaries, current_boundaries
+    from src.request_semantics import apply_extraction
+    request = '推荐预算500的耳机，不要支付'
+    initial = apply_extraction(extracted(restriction=True), request)
+    revised = apply_extraction(dict(changes=[dict(operation='PRESERVE', previous_id=i) for i in ('ear', 'budget')] + [
+        dict(operation='RETRACT', previous_id='no_pay', source_quote='解除支付限制')]),
+        '解除支付限制', [HumanMessage(content=request)], previous=initial)
+    context = RunRuntime('candidate-restriction', BudgetLimits())
+    with runtime_scope(context):
+        apply_semantic_boundaries(context, initial)
+        apply_semantic_boundaries(context, revised, restrict_only=True)
+        assert current_boundaries(context)[0]['restriction'] == 'NO_PAYMENT'
+        apply_semantic_boundaries(context, revised)
+        assert current_boundaries(context) == []
+
+
+def test_misaligned_audit_citation_repairs_auditor_without_rewriting_goal(monkeypatch):
+    from src import request_audit
+    actor = model(monkeypatch, search(first=True), recommendation)
+    semantic = semantic_model(monkeypatch, extracted())
+    delegate = request_audit.get_llm()
+    audit_calls = []
+    class MisquotedAudit:
+        def invoke(self, messages):
+            payload = json.loads(messages[-1].content)
+            audit_calls.append(payload)
+            response = delegate.invoke(messages)
+            if len(audit_calls) == 1:
+                wrong = json.loads(response.content)
+                wrong['requirements'][0]['source_quote'] = '预算500'
+                return AIMessage(content=json.dumps(wrong, ensure_ascii=False))
+            return response
+    monkeypatch.setattr(request_audit, 'get_llm', lambda **_: MisquotedAudit())
+    result = run_conversation('推荐预算500的耳机', 'audit-citation', runner=run_adaptive)
+    assert result['status'] == 'SUCCEEDED', result
+    assert len(actor.inputs) == 2 and len(semantic.inputs) == 1
+    assert len(audit_calls) == 3  # 两次目标审查，一次完成审查。
+    assert '审查原文与执行来源不对应' in audit_calls[1]['feedback']['audit_format_error']
+    assert not any(event['type'] == 'decision_rejected' for event in result['events'])
+    assert any(event['type'] == 'audit_protocol_retry' for event in result['events'])

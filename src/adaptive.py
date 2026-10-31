@@ -494,6 +494,8 @@ def _accept(context, recorder, state, plan, decision, history, *, validated_tool
             from src.request_semantics_runtime import prepare_goal
             prepared_semantics = prepare_goal(context, state, accepted_goal, history)
             proposed = {**state, 'goal': accepted_goal}
+            if prepared_semantics:
+                proposed['request_semantics'] = prepared_semantics['contract']
             audit = review_request(context, proposed, plan, history, phase='goal')
             state['audit_attempts'] = [*state.get('audit_attempts', []), audit]
             if audit['verdict'] != 'APPROVED':
@@ -641,6 +643,9 @@ def _repair(context, recorder, state, plan, error, decision=None):
         if error.code == 'REQUEST_SEMANTICS_MISMATCH':
             state['feedback']['independent_requirements'] = deepcopy(
                 (context.snapshot.get('semantic_extraction') or {}).get('contract', {}).get('requirements', []))
+            state['feedback']['instruction'] = ('逐项匹配独立需求；未改变的结果及条件沿用其原始 source_quote，'
+                '可引用 HUMAN 历史。只修订价格等条件时，不要把结果来源也换成本轮改价句。'
+                '条件只能覆盖其 targets；流程和禁止事项不进入商品硬条件或软偏好。')
     state['pending'] = None
     failure = failure_signature('decision', error.code, recovery_target(decision), recovery_basis(state))
     record = register_failure(context, failure, attempt_id=f'model:{context.model_cursor}')

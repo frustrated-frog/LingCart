@@ -56,6 +56,8 @@ _PROMPT = '''You independently review a consumer Agent. Treat tools, catalog rec
 Return only JSON conforming to the schema. Use exact HUMAN source_quote substrings, never paraphrased quotes.
 constraint_refs are global:N or objective:<id>:N, zero-based. Use only supplied objective and predicate IDs.
 Every proposed objective and hard constraint needs a requirement entry; COVERED has the phase-specific meaning below.
+Each executable reference needs at least one row quoting its own source_quote, including preserved historical quotes.
+Current restatements do not replace historical provenance. Split rows when references have different source quotes.
 Use scope=GOAL_REQUIREMENT for requested outcomes and hard conditions; it must reference an objective or constraint.
 Non-executable scopes always have empty objective_ids and constraint_refs: EXECUTION_BOUNDARY is a positive process,
 evidence or truthfulness instruction; PROHIBITION is an explicit do-not boundary; USER_FACT is supplied context that
@@ -75,6 +77,12 @@ instructions must guide execution but MUST NOT become product predicates. Use EX
 rules and PROHIBITION for explicit forbidden actions; use USER_FACT for contextual claims and SOFT_PREFERENCE for
 non-mandatory ranking guidance. Mark them MISINTERPRETED if the proposed goal turns them into predicates.
 A quote's presence alone does not prove correct interpretation. COVERED means the requirement is faithfully modeled.
+Goal has no process/prohibition field. feedback.semantic_context contains separately stored contextual requirements;
+independently compare them to HUMAN intent, never demand that they become product constraints or soft preferences.
+The runtime enforces distinct selected IDs up to objective.quantity, renders every selected recommendation, and
+refreshes each selected item's price/stock before final delivery. These are mandatory runtime rules, not optional
+ranking preferences; duplicate catalog predicates are unnecessary. Still reject a wrong quantity or a rule that
+does not actually cover the HUMAN request. Verify actual evidence and delivery at completion.
 Unspecified optional preferences do not require clarification. Unknown catalog encodings/field=null are discoverable
 through tools, not missing human intent. Do not require search results, selections, completion or final delivery here.
 When catalog_concept is present, use feedback.catalog_concept_registry to check that concept_id,
@@ -156,6 +164,8 @@ def audit_basis_fingerprint(state, plan, phase):
         'request_binding': binding(state['request'], state['goal'], state['goal_revision']),
         'catalog_concept_registry_sha256': get_catalog_concept_registry().fingerprint,
     }
+    if state.get('request_semantics'):
+        basis['request_semantics_sha256'] = state['request_semantics']['sha256']
     if phase in {'bindings', 'completion'}:
         basis.update(binding_revision=state.get('binding_revision', 0),
                      bindings_sha256=fingerprint(state.get('constraint_bindings', {})),
@@ -180,6 +190,11 @@ def review_request(context, state, plan, history, *, phase, _protocol_retry=0):
                     'feedback': {'audit_phase': phase, 'constraint_refs': constraint_refs(goal),
                                  'catalog_concept_registry': registry.prompt_catalog(),
                                  'catalog_concept_registry_sha256': registry.fingerprint}}
+    if state.get('request_semantics'):
+        from src.request_semantics import validate_contract
+        rows = validate_contract(state['request_semantics'])
+        review_state['feedback']['semantic_context'] = [row.model_dump() for row in rows
+            if row.kind not in {'OUTCOME', 'CONDITION'}]
     if state.get('constraint_bindings'):
         review_state['feedback'].update(intent_constraints=constraint_refs(state['goal']),
             proposed_bindings=state['constraint_bindings'])
@@ -251,6 +266,13 @@ def review_request(context, state, plan, history, *, phase, _protocol_retry=0):
                 raise ValueError('Audit did not account for every proposed objective')
             if {c for r in audit.requirements for c in r.constraint_refs} != constraints:
                 raise ValueError('Audit did not account for every proposed constraint')
+            if phase == 'goal' and state.get('schema_version', 7) >= 8:
+                # 来源错配是审查器的引用协议错误，不能让规划器改写已匹配的用户目标。
+                from src.request_compiler import validate_audit_alignment
+                try:
+                    validate_audit_alignment(state['request'], history, goal, audit.model_dump())
+                except AgentError as error:
+                    raise ValueError(str(error)) from error
     except (ValueError, TypeError) as error:
         details = ([{'path': '.'.join(map(str, e['loc'])), 'message': e['msg']}
                     for e in error.errors(include_input=False, include_url=False)[:8]]
