@@ -152,3 +152,21 @@ def test_independent_extra_outcome_cannot_cover_a_missing_planned_goal(database,
     assert len(model.inputs) == 1  # 规划修复复用独立提取结果，不重复计费。
     with tools._session() as session:
         assert not session.scalars(select(AfterSalesCase)).all()
+
+
+def test_model_schema_leaves_fixed_capability_metadata_to_host():
+    from src.dialogue_understanding import _prompt
+    prompt = _prompt(MESSAGE, [], None, None, None)
+    schema = json.loads(prompt.split('\nSchema:\n')[1].split('\nConversation input:\n')[0])
+    fields = schema['$defs']['BusinessObjective']['properties']
+    assert 'target_type' not in fields
+    assert set(fields['evidence_requirement']['enum']) == {'MODEL_KNOWLEDGE', 'REALTIME_EXTERNAL'}
+
+
+@pytest.mark.parametrize('metadata', [dict(target_type='order'), dict(evidence_requirement='AFTER_SALES_CASE')])
+def test_conflicting_legacy_capability_metadata_still_rejected(metadata):
+    from src.capability_registry import get_capability_registry
+    from src.errors import AgentError
+    with pytest.raises(AgentError, match='target_type|证据类型'):
+        get_capability_registry().validate_arguments(dict(
+            kind='AFTER_SALES_CASE', order_id=1001, reason_code='NOT_AS_DESCRIBED', **metadata))
