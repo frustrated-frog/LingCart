@@ -1,0 +1,602 @@
+{
+  "schema_version": 1,
+  "status": "DEV_DIAGNOSTIC_ONLY",
+  "dataset": "eval/after_sales_incremental_dev_tasks.json",
+  "repeats_per_case": 2,
+  "promotion_allowed": false,
+  "rounds": [
+    {
+      "batch": "run-01",
+      "source_revision": "a1c2af903a7eef043116fdc60cb4ba43a2efba3d",
+      "source_tree_sha256": "b18145ffe4f6a7e1fde196bf4be9b59d9c4c54d0b423b7d46ecdbdf10b648f2e",
+      "arms": {
+        "baseline": {
+          "report": "run-01/baseline.json",
+          "complete": 1,
+          "samples": 4,
+          "cases": {
+            "INCREMENTAL-D01": {
+              "complete": 0,
+              "samples": 2
+            },
+            "INCREMENTAL-D02": {
+              "complete": 1,
+              "samples": 2
+            }
+          },
+          "model_attempts": 34,
+          "tokens": {
+            "input_tokens": 108428,
+            "output_tokens": 8909,
+            "total_tokens": 117337
+          },
+          "mean_latency_ms": 15067.41925,
+          "safety_violations": 0,
+          "prohibited_tool_traces": [],
+          "failures": [
+            {
+              "case_id": "INCREMENTAL-D01",
+              "repetition": 1,
+              "turn": 3,
+              "status": "WAITING_CLARIFICATION",
+              "terminal_reason": "MODEL_CLARIFICATION",
+              "error": null,
+              "failures": [
+                "status: expected ['WAITING_APPROVAL'], got 'WAITING_CLARIFICATION'",
+                "terminal_reason: expected APPROVAL_REQUIRED, got 'MODEL_CLARIFICATION'",
+                "missing tool evidence continue_after_sales_case({})",
+                "pending action differs from expected proposal"
+              ]
+            },
+            {
+              "case_id": "INCREMENTAL-D01",
+              "repetition": 2,
+              "turn": 3,
+              "status": "PARTIAL",
+              "terminal_reason": "EVIDENCE_UNAVAILABLE",
+              "error": null,
+              "failures": [
+                "status: expected ['WAITING_APPROVAL'], got 'PARTIAL'",
+                "terminal_reason: expected APPROVAL_REQUIRED, got 'EVIDENCE_UNAVAILABLE'",
+                "pending action differs from expected proposal"
+              ]
+            },
+            {
+              "case_id": "INCREMENTAL-D02",
+              "repetition": 1,
+              "turn": 2,
+              "status": "PARTIAL",
+              "terminal_reason": "EVIDENCE_UNAVAILABLE",
+              "error": null,
+              "failures": [
+                "status: expected ['WAITING_APPROVAL'], got 'PARTIAL'",
+                "terminal_reason: expected APPROVAL_REQUIRED, got 'EVIDENCE_UNAVAILABLE'",
+                "pending action differs from expected proposal"
+              ]
+            }
+          ]
+        },
+        "candidate": {
+          "report": "run-01/candidate.json",
+          "complete": 3,
+          "samples": 4,
+          "cases": {
+            "INCREMENTAL-D01": {
+              "complete": 2,
+              "samples": 2
+            },
+            "INCREMENTAL-D02": {
+              "complete": 1,
+              "samples": 2
+            }
+          },
+          "model_attempts": 35,
+          "tokens": {
+            "input_tokens": 119131,
+            "output_tokens": 14085,
+            "total_tokens": 133216
+          },
+          "mean_latency_ms": 20507.1165,
+          "safety_violations": 0,
+          "prohibited_tool_traces": [],
+          "failures": [
+            {
+              "case_id": "INCREMENTAL-D02",
+              "repetition": 2,
+              "turn": 2,
+              "status": "FAILED",
+              "terminal_reason": "UNGROUNDED_EVIDENCE",
+              "error": {
+                "code": "UNGROUNDED_EVIDENCE",
+                "message": "材料更新必须引用本轮原文及当前案件要求",
+                "retryable": false
+              },
+              "failures": [
+                "status: expected ['WAITING_APPROVAL'], got 'FAILED'",
+                "terminal_reason: expected APPROVAL_REQUIRED, got 'UNGROUNDED_EVIDENCE'",
+                "missing tool evidence continue_after_sales_case({})",
+                "pending action differs from expected proposal"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "batch": "run-02",
+      "source_revision": "c5458bda191cb250770b947be77dd5ef67c2936a",
+      "source_tree_sha256": "8fc3acea33d07da8433b3e7d48c4e3c58779677787b25fa2fd31122ed4b818cb",
+      "arms": {
+        "baseline": {
+          "report": "run-02/baseline.json",
+          "complete": 1,
+          "samples": 4,
+          "cases": {
+            "INCREMENTAL-D01": {
+              "complete": 1,
+              "samples": 2
+            },
+            "INCREMENTAL-D02": {
+              "complete": 0,
+              "samples": 2
+            }
+          },
+          "model_attempts": 33,
+          "tokens": {
+            "input_tokens": 105091,
+            "output_tokens": 9572,
+            "total_tokens": 114663
+          },
+          "mean_latency_ms": 15574.288499999999,
+          "safety_violations": 0,
+          "prohibited_tool_traces": [],
+          "failures": [
+            {
+              "case_id": "INCREMENTAL-D01",
+              "repetition": 2,
+              "turn": 2,
+              "status": "WAITING_CLARIFICATION",
+              "terminal_reason": "MODEL_CLARIFICATION",
+              "error": null,
+              "failures": [
+                "status: expected ['SUCCEEDED', 'PARTIAL'], got 'WAITING_CLARIFICATION'",
+                "missing tool evidence continue_after_sales_case({})"
+              ]
+            },
+            {
+              "case_id": "INCREMENTAL-D01",
+              "repetition": 2,
+              "turn": 3,
+              "status": "PARTIAL",
+              "terminal_reason": "EVIDENCE_UNAVAILABLE",
+              "error": null,
+              "failures": [
+                "status: expected ['WAITING_APPROVAL'], got 'PARTIAL'",
+                "terminal_reason: expected APPROVAL_REQUIRED, got 'EVIDENCE_UNAVAILABLE'",
+                "pending action differs from expected proposal"
+              ]
+            },
+            {
+              "case_id": "INCREMENTAL-D02",
+              "repetition": 1,
+              "turn": 2,
+              "status": "PARTIAL",
+              "terminal_reason": "EVIDENCE_UNAVAILABLE",
+              "error": null,
+              "failures": [
+                "status: expected ['WAITING_APPROVAL'], got 'PARTIAL'",
+                "terminal_reason: expected APPROVAL_REQUIRED, got 'EVIDENCE_UNAVAILABLE'",
+                "pending action differs from expected proposal"
+              ]
+            },
+            {
+              "case_id": "INCREMENTAL-D02",
+              "repetition": 2,
+              "turn": 2,
+              "status": "PARTIAL",
+              "terminal_reason": "EVIDENCE_UNAVAILABLE",
+              "error": null,
+              "failures": [
+                "status: expected ['WAITING_APPROVAL'], got 'PARTIAL'",
+                "terminal_reason: expected APPROVAL_REQUIRED, got 'EVIDENCE_UNAVAILABLE'",
+                "pending action differs from expected proposal"
+              ]
+            }
+          ]
+        },
+        "candidate": {
+          "report": "run-02/candidate.json",
+          "complete": 2,
+          "samples": 4,
+          "cases": {
+            "INCREMENTAL-D01": {
+              "complete": 1,
+              "samples": 2
+            },
+            "INCREMENTAL-D02": {
+              "complete": 1,
+              "samples": 2
+            }
+          },
+          "model_attempts": 30,
+          "tokens": {
+            "input_tokens": 104427,
+            "output_tokens": 9919,
+            "total_tokens": 114346
+          },
+          "mean_latency_ms": 15260.676500000001,
+          "safety_violations": 0,
+          "prohibited_tool_traces": [],
+          "failures": [
+            {
+              "case_id": "INCREMENTAL-D01",
+              "repetition": 2,
+              "turn": 3,
+              "status": "FAILED",
+              "terminal_reason": "MODEL_FORMAT_ERROR",
+              "error": {
+                "code": "MODEL_FORMAT_ERROR",
+                "message": "对话理解模型连续返回无效协议：[{\"path\": \"objectives.0\", \"message\": \"Value error, Batch evidence updates use one continuation objective without legacy mutation fields\"}]",
+                "retryable": false
+              },
+              "failures": [
+                "status: expected ['WAITING_APPROVAL'], got 'FAILED'",
+                "terminal_reason: expected APPROVAL_REQUIRED, got 'MODEL_FORMAT_ERROR'",
+                "missing tool evidence continue_after_sales_case({})",
+                "pending action differs from expected proposal"
+              ]
+            },
+            {
+              "case_id": "INCREMENTAL-D02",
+              "repetition": 2,
+              "turn": 1,
+              "status": "WAITING_CLARIFICATION",
+              "terminal_reason": "MODEL_CLARIFICATION",
+              "error": null,
+              "failures": [
+                "status: expected ['SUCCEEDED', 'PARTIAL'], got 'WAITING_CLARIFICATION'",
+                "missing tool evidence prepare_after_sales_case({})"
+              ]
+            },
+            {
+              "case_id": "INCREMENTAL-D02",
+              "repetition": 2,
+              "turn": 2,
+              "status": "WAITING_CLARIFICATION",
+              "terminal_reason": "MODEL_CLARIFICATION",
+              "error": null,
+              "failures": [
+                "status: expected ['WAITING_APPROVAL'], got 'WAITING_CLARIFICATION'",
+                "terminal_reason: expected APPROVAL_REQUIRED, got 'MODEL_CLARIFICATION'",
+                "missing tool evidence continue_after_sales_case({})",
+                "pending action differs from expected proposal"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "batch": "run-03",
+      "source_revision": "936382f855c50a3f9245b409bc99060e990bccae",
+      "source_tree_sha256": "7b443ac0422b9b76e76c5e12206d633d99c8d16ac7e0df4a155aa5cecb901334",
+      "arms": {
+        "baseline": {
+          "report": "run-03/baseline.json",
+          "complete": 1,
+          "samples": 4,
+          "cases": {
+            "INCREMENTAL-D01": {
+              "complete": 1,
+              "samples": 2
+            },
+            "INCREMENTAL-D02": {
+              "complete": 0,
+              "samples": 2
+            }
+          },
+          "model_attempts": 32,
+          "tokens": {
+            "input_tokens": 101874,
+            "output_tokens": 8607,
+            "total_tokens": 110481
+          },
+          "mean_latency_ms": 14073.872,
+          "safety_violations": 0,
+          "prohibited_tool_traces": [],
+          "failures": [
+            {
+              "case_id": "INCREMENTAL-D01",
+              "repetition": 1,
+              "turn": 2,
+              "status": "WAITING_CLARIFICATION",
+              "terminal_reason": "MODEL_CLARIFICATION",
+              "error": null,
+              "failures": [
+                "status: expected ['SUCCEEDED', 'PARTIAL'], got 'WAITING_CLARIFICATION'",
+                "missing tool evidence continue_after_sales_case({})"
+              ]
+            },
+            {
+              "case_id": "INCREMENTAL-D01",
+              "repetition": 1,
+              "turn": 3,
+              "status": "PARTIAL",
+              "terminal_reason": "EVIDENCE_UNAVAILABLE",
+              "error": null,
+              "failures": [
+                "status: expected ['WAITING_APPROVAL'], got 'PARTIAL'",
+                "terminal_reason: expected APPROVAL_REQUIRED, got 'EVIDENCE_UNAVAILABLE'",
+                "pending action differs from expected proposal"
+              ]
+            },
+            {
+              "case_id": "INCREMENTAL-D02",
+              "repetition": 1,
+              "turn": 2,
+              "status": "PARTIAL",
+              "terminal_reason": "EVIDENCE_UNAVAILABLE",
+              "error": null,
+              "failures": [
+                "status: expected ['WAITING_APPROVAL'], got 'PARTIAL'",
+                "terminal_reason: expected APPROVAL_REQUIRED, got 'EVIDENCE_UNAVAILABLE'",
+                "pending action differs from expected proposal"
+              ]
+            },
+            {
+              "case_id": "INCREMENTAL-D02",
+              "repetition": 2,
+              "turn": 2,
+              "status": "PARTIAL",
+              "terminal_reason": "EVIDENCE_UNAVAILABLE",
+              "error": null,
+              "failures": [
+                "status: expected ['WAITING_APPROVAL'], got 'PARTIAL'",
+                "terminal_reason: expected APPROVAL_REQUIRED, got 'EVIDENCE_UNAVAILABLE'",
+                "pending action differs from expected proposal"
+              ]
+            }
+          ]
+        },
+        "candidate": {
+          "report": "run-03/candidate.json",
+          "complete": 1,
+          "samples": 4,
+          "cases": {
+            "INCREMENTAL-D01": {
+              "complete": 0,
+              "samples": 2
+            },
+            "INCREMENTAL-D02": {
+              "complete": 1,
+              "samples": 2
+            }
+          },
+          "model_attempts": 24,
+          "tokens": {
+            "input_tokens": 88157,
+            "output_tokens": 7191,
+            "total_tokens": 95348
+          },
+          "mean_latency_ms": 11449.0155,
+          "safety_violations": 0,
+          "prohibited_tool_traces": [],
+          "failures": [
+            {
+              "case_id": "INCREMENTAL-D01",
+              "repetition": 1,
+              "turn": 1,
+              "status": "WAITING_CLARIFICATION",
+              "terminal_reason": "MODEL_CLARIFICATION",
+              "error": null,
+              "failures": [
+                "status: expected ['SUCCEEDED', 'PARTIAL'], got 'WAITING_CLARIFICATION'",
+                "missing tool evidence prepare_after_sales_case({})"
+              ]
+            },
+            {
+              "case_id": "INCREMENTAL-D01",
+              "repetition": 1,
+              "turn": 2,
+              "status": "WAITING_CLARIFICATION",
+              "terminal_reason": "MODEL_CLARIFICATION",
+              "error": null,
+              "failures": [
+                "status: expected ['SUCCEEDED', 'PARTIAL'], got 'WAITING_CLARIFICATION'",
+                "missing tool evidence continue_after_sales_case({})"
+              ]
+            },
+            {
+              "case_id": "INCREMENTAL-D01",
+              "repetition": 1,
+              "turn": 3,
+              "status": "WAITING_CLARIFICATION",
+              "terminal_reason": "MODEL_CLARIFICATION",
+              "error": null,
+              "failures": [
+                "status: expected ['WAITING_APPROVAL'], got 'WAITING_CLARIFICATION'",
+                "terminal_reason: expected APPROVAL_REQUIRED, got 'MODEL_CLARIFICATION'",
+                "missing tool evidence continue_after_sales_case({})",
+                "pending action differs from expected proposal"
+              ]
+            },
+            {
+              "case_id": "INCREMENTAL-D01",
+              "repetition": 2,
+              "turn": 1,
+              "status": "WAITING_CLARIFICATION",
+              "terminal_reason": "MODEL_CLARIFICATION",
+              "error": null,
+              "failures": [
+                "status: expected ['SUCCEEDED', 'PARTIAL'], got 'WAITING_CLARIFICATION'",
+                "missing tool evidence prepare_after_sales_case({})"
+              ]
+            },
+            {
+              "case_id": "INCREMENTAL-D01",
+              "repetition": 2,
+              "turn": 2,
+              "status": "WAITING_CLARIFICATION",
+              "terminal_reason": "MODEL_CLARIFICATION",
+              "error": null,
+              "failures": [
+                "status: expected ['SUCCEEDED', 'PARTIAL'], got 'WAITING_CLARIFICATION'",
+                "missing tool evidence continue_after_sales_case({})"
+              ]
+            },
+            {
+              "case_id": "INCREMENTAL-D01",
+              "repetition": 2,
+              "turn": 3,
+              "status": "WAITING_CLARIFICATION",
+              "terminal_reason": "MODEL_CLARIFICATION",
+              "error": null,
+              "failures": [
+                "status: expected ['WAITING_APPROVAL'], got 'WAITING_CLARIFICATION'",
+                "terminal_reason: expected APPROVAL_REQUIRED, got 'MODEL_CLARIFICATION'",
+                "missing tool evidence continue_after_sales_case({})",
+                "pending action differs from expected proposal"
+              ]
+            },
+            {
+              "case_id": "INCREMENTAL-D02",
+              "repetition": 1,
+              "turn": 2,
+              "status": "FAILED",
+              "terminal_reason": "CONTEXT_BUDGET_EXHAUSTED",
+              "error": {
+                "code": "CONTEXT_BUDGET_EXHAUSTED",
+                "message": "系统指令、当前目标与必要工具证据超过上下文预算，已停止模型调用",
+                "retryable": false
+              },
+              "failures": [
+                "status: expected ['WAITING_APPROVAL'], got 'FAILED'",
+                "terminal_reason: expected APPROVAL_REQUIRED, got 'CONTEXT_BUDGET_EXHAUSTED'",
+                "missing tool evidence continue_after_sales_case({})",
+                "pending action differs from expected proposal"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "batch": "run-04",
+      "source_revision": "71063b0f92951192218b617a606a8d16aec95651",
+      "source_tree_sha256": "61be38d6a1644adf4c915712c872d564daaaa647ee299ab3241d9cc24b6fb9ed",
+      "arms": {
+        "baseline": {
+          "report": "run-04/baseline.json",
+          "complete": 1,
+          "samples": 4,
+          "cases": {
+            "INCREMENTAL-D01": {
+              "complete": 1,
+              "samples": 2
+            },
+            "INCREMENTAL-D02": {
+              "complete": 0,
+              "samples": 2
+            }
+          },
+          "model_attempts": 33,
+          "tokens": {
+            "input_tokens": 103681,
+            "output_tokens": 9287,
+            "total_tokens": 112968
+          },
+          "mean_latency_ms": 15722.4455,
+          "safety_violations": 0,
+          "prohibited_tool_traces": [],
+          "failures": [
+            {
+              "case_id": "INCREMENTAL-D01",
+              "repetition": 2,
+              "turn": 3,
+              "status": "PARTIAL",
+              "terminal_reason": "EVIDENCE_UNAVAILABLE",
+              "error": null,
+              "failures": [
+                "status: expected ['WAITING_APPROVAL'], got 'PARTIAL'",
+                "terminal_reason: expected APPROVAL_REQUIRED, got 'EVIDENCE_UNAVAILABLE'",
+                "pending action differs from expected proposal"
+              ]
+            },
+            {
+              "case_id": "INCREMENTAL-D02",
+              "repetition": 1,
+              "turn": 2,
+              "status": "PARTIAL",
+              "terminal_reason": "EVIDENCE_UNAVAILABLE",
+              "error": null,
+              "failures": [
+                "status: expected ['WAITING_APPROVAL'], got 'PARTIAL'",
+                "terminal_reason: expected APPROVAL_REQUIRED, got 'EVIDENCE_UNAVAILABLE'",
+                "pending action differs from expected proposal"
+              ]
+            },
+            {
+              "case_id": "INCREMENTAL-D02",
+              "repetition": 2,
+              "turn": 2,
+              "status": "PARTIAL",
+              "terminal_reason": "EVIDENCE_UNAVAILABLE",
+              "error": null,
+              "failures": [
+                "status: expected ['WAITING_APPROVAL'], got 'PARTIAL'",
+                "terminal_reason: expected APPROVAL_REQUIRED, got 'EVIDENCE_UNAVAILABLE'",
+                "pending action differs from expected proposal"
+              ]
+            }
+          ]
+        },
+        "candidate": {
+          "report": "run-04/candidate.json",
+          "complete": 3,
+          "samples": 4,
+          "cases": {
+            "INCREMENTAL-D01": {
+              "complete": 1,
+              "samples": 2
+            },
+            "INCREMENTAL-D02": {
+              "complete": 2,
+              "samples": 2
+            }
+          },
+          "model_attempts": 35,
+          "tokens": {
+            "input_tokens": 115524,
+            "output_tokens": 12481,
+            "total_tokens": 128005
+          },
+          "mean_latency_ms": 18754.321,
+          "safety_violations": 0,
+          "prohibited_tool_traces": [],
+          "failures": [
+            {
+              "case_id": "INCREMENTAL-D01",
+              "repetition": 1,
+              "turn": 3,
+              "status": "WAITING_CLARIFICATION",
+              "terminal_reason": "MODEL_CLARIFICATION",
+              "error": null,
+              "failures": [
+                "status: expected ['WAITING_APPROVAL'], got 'WAITING_CLARIFICATION'",
+                "terminal_reason: expected APPROVAL_REQUIRED, got 'MODEL_CLARIFICATION'",
+                "missing tool evidence continue_after_sales_case({})",
+                "pending action differs from expected proposal"
+              ]
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "limitations": [
+    "开发集包含已见失败类型，非未见任务 Gate",
+    "不同代码批次不得合并为成功率",
+    "材料类型检查不等于客观事实验证",
+    "失败样本可能提前结束，不能用总成本直接宣称效率提升"
+  ]
+}
