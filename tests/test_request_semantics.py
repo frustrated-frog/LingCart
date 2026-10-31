@@ -117,3 +117,19 @@ def test_saved_contract_tampering_is_rejected_before_compilation():
     contract['requirements'][0]['requirement']['outcome']['quantity'] = 1
     with pytest.raises(AgentError, match='指纹'):
         compare_goal(contract, goal(), REQUEST)
+
+
+def test_constraint_quote_can_be_narrower_without_changing_meaning():
+    candidate = goal()
+    candidate['objectives'][0]['hard_constraints'][0]['source_quote'] = '500元以内'
+    assert compare_goal(initial(), candidate, REQUEST)['headphones'] == 'ear'
+
+
+def test_rehashed_source_offsets_cannot_mislead_the_inspector():
+    from src.constraint_bindings import fingerprint
+    contract = initial()
+    contract['requirements'][0]['source']['start'] += 1
+    contract['requirements'][0]['source']['end'] += 1
+    contract['sha256'] = fingerprint({k: v for k, v in contract.items() if k != 'sha256'})
+    with pytest.raises(AgentError, match='来源发生变化'):
+        compare_goal(contract, goal(), REQUEST)

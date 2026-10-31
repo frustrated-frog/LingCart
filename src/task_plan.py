@@ -584,6 +584,11 @@ def execute_plan(intake, run_id, *, plan=None, source="deterministic", incomplet
                                 "message": f"售后案件 {observation['case_id']} 已经提交，无需重复操作。"
                             }
                         elif outcome == "ELIGIBLE":
+                            from src.execution_boundaries import require_allowed
+                            from src.runtime import tool_spec
+                            from src import tools as business_tools
+                            require_allowed(context, 'submit_after_sales_case',
+                                            tool_spec('submit_after_sales_case', business_tools.submit_after_sales_case))
                             args = {
                                 "case_id": observation["case_id"],
                                 "expected_revision": observation["revision"],
@@ -642,6 +647,11 @@ def execute_plan(intake, run_id, *, plan=None, source="deterministic", incomplet
                         continue
                     eligible = observation.get("eligible") if step.tool == "prepare_refund" else observation.get("status") == "pending"
                     if eligible:
+                        from src.execution_boundaries import require_allowed
+                        from src.runtime import tool_spec
+                        from src import tools as business_tools
+                        action_tool = 'initiate_refund' if step.tool == 'prepare_refund' else 'process_payment'
+                        require_allowed(context, action_tool, tool_spec(action_tool, getattr(business_tools, action_tool)))
                         pending = dict(type="INITIATE_REFUND" if step.tool == "prepare_refund" else "PROCESS_PAYMENT",
                                        order_id=step.args["order_id"], requires_approval=True)
                         if step.tool == "prepare_refund":

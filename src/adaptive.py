@@ -342,6 +342,8 @@ def _present(context, recorder, intake, state, plan, *, reason, message, error=N
                           binding_transaction=deepcopy(state.get('binding_tx')))
     result['request_audit'] = deepcopy(state.get('request_audit'))
     result['request_ir'] = deepcopy(state.get('request_ir'))
+    result['request_semantics'] = deepcopy(state.get('request_semantics'))
+    result['semantic_revision'] = deepcopy(state.get('semantic_revision'))
     result['binding_audit'] = deepcopy(state.get('binding_audit'))
     result['completion_audit'] = deepcopy(state.get('completion_audit'))
     result['liveplan'] = deepcopy(state.get('liveplan'))
@@ -363,6 +365,8 @@ def _present_dialogue(context, recorder, intake, state, plan, decision):
     result = _finish(recorder, intake, context.run_id, 'intake', [], reply=decision.message,
                      status=status, terminal_reason=reason, error=error)
     result.update(route='CONVERSATIONAL' if status == 'SUCCEEDED' else 'UNSUPPORTED',
+                  request_semantics=deepcopy(state.get('request_semantics')),
+                  semantic_revision=deepcopy(state.get('semantic_revision')),
                   understanding={'commands': [command.model_dump() for command in decision.commands],
                                  'objectives': [], 'reason': decision.reason})
     return result
@@ -462,6 +466,9 @@ def _accept(context, recorder, state, plan, decision, history, *, validated_tool
                 if decision.commands:
                     from src.dialogue_understanding import validate_command_grounding
                     validate_command_grounding(decision.commands, state['request'], history)
+                if decision.action == 'respond':
+                    from src.request_semantics_runtime import revise_without_execution
+                    revise_without_execution(context, state, history)
                 state['pending'] = dict(decision=decision.model_dump(), step_id=None,
                                         pg_review_id=(pg_review or {}).get('review_id'))
                 state['model_cursor'] = context.model_cursor
@@ -484,6 +491,8 @@ def _accept(context, recorder, state, plan, decision, history, *, validated_tool
         if decision.action != 'clarify':
             from src.request_audit import review_request
             from src.request_ir import project_adaptive_request_ir
+            from src.request_semantics_runtime import prepare_goal
+            prepared_semantics = prepare_goal(context, state, accepted_goal, history)
             proposed = {**state, 'goal': accepted_goal}
             audit = review_request(context, proposed, plan, history, phase='goal')
             state['audit_attempts'] = [*state.get('audit_attempts', []), audit]
@@ -505,6 +514,9 @@ def _accept(context, recorder, state, plan, decision, history, *, validated_tool
             state.pop('audit_format_feedback', None)
         state['goal'] = accepted_goal
         state['objective_ledger'] = new_ledger(state['goal'])
+        if decision.action != 'clarify':
+            from src.request_semantics_runtime import accept_goal
+            accept_goal(context, state, prepared_semantics)
         plan.goals = [o['id'] for o in state['goal']['objectives']]
     elif decision.goal is not None:
         normalized_goal, _ = _normalize_goal_catalog_aliases(decision.goal, state['request'], history)
@@ -626,6 +638,9 @@ def _repair(context, recorder, state, plan, error, decision=None):
         if error.code == 'AUDIT_FORMAT_ERROR':
             state['audit_format_feedback'] = dict(phase=getattr(error, 'audit_phase', None), message=str(error))
             state['feedback']['instruction'] = '审查响应格式无效不代表原提案被语义否定。可重提同一目标或映射，让审查模型修正协议；不要为此改变用户原意。'
+        if error.code == 'REQUEST_SEMANTICS_MISMATCH':
+            state['feedback']['independent_requirements'] = deepcopy(
+                (context.snapshot.get('semantic_extraction') or {}).get('contract', {}).get('requirements', []))
     state['pending'] = None
     failure = failure_signature('decision', error.code, recovery_target(decision), recovery_basis(state))
     record = register_failure(context, failure, attempt_id=f'model:{context.model_cursor}')
@@ -785,7 +800,8 @@ def _run(context, user_message, history, pending_action):
     # Fresh open-set turns first use the same capability protocol as Auto.
     # High-recall shopping hints stay in the deeper Adaptive shopping loop;
     # hints are never themselves permission to execute a capability.
-    if (not saved and not pending_action and intake.execution_mode == LLM_REQUIRED
+    continuing_semantics = bool((context.snapshot.get('conversation') or {}).get('request_semantics'))
+    if (not saved and not continuing_semantics and not pending_action and intake.execution_mode == LLM_REQUIRED
             and not (set(intake.route_hints) & shopping_hints)):
         from src.dialogue_understanding import understand_turn
         from src.llm import get_llm
@@ -815,10 +831,10 @@ def _run(context, user_message, history, pending_action):
     recorder = TraceRecorder(context.run_id)
     revision = context.snapshot.get('goal_revision', 0)
     if saved:
-        if saved.get('schema_version') not in {4, 5, 6, 7}:
+        if saved.get('schema_version') not in {4, 5, 6, 7, 8}:
             raise AgentError('ADAPTIVE_CHECKPOINT_INCOMPATIBLE', '旧检查点缺少独立需求审查记录，不能安全恢复，请新建任务；已完成操作记录保留', retryable=False)
         state = deepcopy(saved)
-        state.update(schema_version=7)
+        state.update(schema_version=max(7, state['schema_version']))
         state.setdefault('constraint_bindings', {})
         state.setdefault('binding_revision', 0)
         state.setdefault('binding_audit', None)
@@ -840,6 +856,12 @@ def _run(context, user_message, history, pending_action):
         if revision == state['goal_revision'] and user_message != state['request']:
             raise AgentError('CHECKPOINT_CONFLICT', '恢复请求与已保存目标不一致', retryable=False)
         if revision != state['goal_revision']:
+            state.update(previous_semantics=deepcopy(state.get('request_semantics')),
+                         previous_objectives=deepcopy(state.get('semantic_objectives', {})),
+                         previous_ledger=deepcopy(state.get('objective_ledger', [])),
+                         change_text='\n'.join(context.snapshot.get('steering', [])[state.get('steering_count', 0):]),
+                         steering_count=len(context.snapshot.get('steering', [])),
+                         request_semantics=None, semantic_objectives={}, semantic_revision=None)
             _discard_native_queue(context, state, 'USER_CONSTRAINT_CHANGED')
             for step in plan.steps:
                 if step.status == 'PENDING':
@@ -863,7 +885,9 @@ def _run(context, user_message, history, pending_action):
         context.model_cursor = state['model_cursor']
     else:
         plan = TaskPlan([], [])
-        state = dict(schema_version=7, version=1, replans=0, goal_revision=revision, request=user_message,
+        state = dict(schema_version=8, version=1, replans=0, goal_revision=revision, request=user_message,
+                     request_semantics=None, semantic_objectives={}, semantic_revision=None,
+                     steering_count=len(context.snapshot.get('steering', [])),
                      goal=None, next_steps=None, working_memory=None, journal=[], pending=None,
                      objective_ledger=[], feedback=None, repair_count=0, request_audit=None,
                      request_ir=None,
@@ -918,7 +942,13 @@ def _run(context, user_message, history, pending_action):
                             validated_tool=validated_tool, pg_review=pg_review)
                     apply_controls(context)
                 except AgentError as error:
+                    if error.code in {'REQUEST_SEMANTICS_UNCERTAIN', 'SEMANTIC_EXTRACTION_INVALID'}:
+                        state['model_cursor'] = context.model_cursor
+                        _save(context, state, plan)
+                        return _present(context, recorder, intake, state, plan,
+                            reason=error.code, message=str(error))
                     if error.code in {'MODEL_FORMAT_ERROR', 'UNKNOWN_TOOL', 'INVALID_TOOL_ARGUMENTS', 'REQUEST_AUDIT_REJECTED', 'AUDIT_FORMAT_ERROR', 'REQUEST_IR_COMPILE_ERROR',
+                                      'REQUEST_SEMANTICS_MISMATCH',
                                       'INVALID_CONSTRAINT_BINDING', 'UNREAD_BINDING_EVIDENCE', 'UNOBSERVED_BINDING_FIELD', 'BINDING_AUDIT_REJECTED'}:
                         _repair(context, recorder, state, plan, error, decision)
                         continue
@@ -940,6 +970,8 @@ def _run(context, user_message, history, pending_action):
                         raise AgentError('NO_PROGRESS_FAILURE_LOOP', '同一决策重复失败，已停止无进展恢复', retryable=False)
                     continue
             pending = state['pending']
+            from src.request_semantics_runtime import validate_accepted
+            validate_accepted(state, history)
             if state.get('goal') and (state.get('request_ir') or {}).get('version') == 'request-ir/v2':
                 from src.request_compiler import validate_adaptive_compilation
                 validate_adaptive_compilation(state['request_ir'], state['goal'], state['request'], history)

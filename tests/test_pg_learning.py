@@ -5,6 +5,8 @@ from pathlib import Path
 from langchain_core.messages import AIMessage
 import pytest
 
+pytestmark = pytest.mark.usefixtures("scripted_semantic_contract")
+
 from src.pg_learning import EvolutionSpec, evolve, validate_report
 from src.procedural_graph import canonical
 from tests.test_procedural_graph import graph

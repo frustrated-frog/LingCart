@@ -145,6 +145,9 @@ class ChatResponse(BaseModel):
     harness: dict = Field(default_factory=dict)
     plan: dict | None = None
     request_ir: dict | None = None
+    request_semantics: dict | None = None
+    semantic_revision: dict | None = None
+    execution_boundaries: list[dict] = Field(default_factory=list)
     pending_action: dict | None = None
     pending_clarification: dict | None = None
     error: dict | None = None
@@ -282,6 +285,9 @@ def _response(session_id, result):
         harness=result.get("harness") or {},
         plan=result.get("plan"),
         request_ir=result.get("request_ir"),
+        request_semantics=result.get("request_semantics"),
+        semantic_revision=result.get("semantic_revision"),
+        execution_boundaries=result.get("execution_boundaries") or [],
         pending_action=result.get("pending_action"),
         pending_clarification=result.get("pending_clarification"),
         error=result.get("error"),

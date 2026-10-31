@@ -345,4 +345,11 @@ def project_dialogue_request_ir(
                     source=locate_source_span(row["source_quote"], request, history),
                     objective_ids=[objective_id],
                 ))
+    for index, boundary in enumerate(payload.get('execution_boundaries', [])):
+        requirements.append(SemanticRequirement(
+            requirement_id=f'boundary:{index}',
+            kind='PROHIBITION' if boundary.get('operation', 'DENY') == 'DENY' else 'EXECUTION_BOUNDARY',
+            description=f"{boundary.get('operation', 'DENY')} {boundary['restriction']}",
+            source=locate_source_span(boundary['source_quote'], request),
+        ))
     return UserRequestIR(requirements=requirements)

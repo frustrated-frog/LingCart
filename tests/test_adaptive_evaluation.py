@@ -1,5 +1,7 @@
 import json
 import pytest
+
+pytestmark = pytest.mark.usefixtures("scripted_semantic_contract")
 from langchain_core.messages import AIMessage
 from eval import run_adaptive_eval as specialized
 from eval import run_live_eval as live

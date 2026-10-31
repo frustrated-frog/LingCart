@@ -255,6 +255,8 @@ def _execute_understanding(
             audit = None
     else:
         audit = None
+    from src.execution_boundaries import apply_dialogue_boundaries
+    apply_dialogue_boundaries(current_runtime(), understanding.execution_boundaries, user_message, history)
     kinds = command_kinds(understanding)
     payload = understanding.model_dump()
     from src.request_ir import project_dialogue_request_ir
@@ -340,7 +342,7 @@ def _execute_understanding(
         result = _simple_result(
             intake,
             run_id,
-            reply=render_direct_commands(understanding.commands),
+            reply=render_direct_commands(understanding.commands) or '已更新本会话的执行限制。支付或退款仍需单独确认。',
             agent="intake",
             route="CONVERSATIONAL",
             status="SUCCEEDED",

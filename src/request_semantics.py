@@ -1,7 +1,6 @@
 """独立需求契约及显式修订；只解释 HUMAN 原文，不授予工具权限。"""
 from __future__ import annotations
 
-from copy import deepcopy
 from typing import Literal
 
 from pydantic import Field, model_validator
@@ -9,7 +8,7 @@ from pydantic import Field, model_validator
 from src.adaptive_decision import Constraint, StrictModel
 from src.constraint_bindings import fingerprint
 from src.errors import AgentError
-from src.request_ir import locate_source_span
+from src.request_ir import SourceSpan, locate_source_span
 
 
 class OutcomeSpec(StrictModel):
@@ -95,6 +94,10 @@ def validate_contract(contract):
     if contract.get('sha256') != fingerprint(body):
         reject('持久化语义契约指纹不一致')
     rows = [IntentRequirement.model_validate(row['requirement']) for row in contract['requirements']]
+    for stored, row in zip(contract['requirements'], rows):
+        source = SourceSpan.model_validate(stored['source'])
+        if source.text != row.source_quote:
+            reject('保存的原文范围与需求引用不一致')
     ids = [row.requirement_id for row in rows]
     if len(set(ids)) != len(ids):
         reject('需求身份重复')
@@ -118,7 +121,7 @@ def apply_extraction(extraction, request, history=None, *, previous=None, change
             if identity not in old or identity in seen:
                 reject('旧需求必须逐项且仅处理一次')
             seen.add(identity)
-        if change.operation in {'REPLACE', 'RETRACT'}:
+        if change.source_quote is not None:
             # STEER 的完整请求含旧文本；只有本次追加的原文可以授权修订。
             locate_source_span(change.source_quote, change_text if change_text is not None else request)
         if change.operation == 'PRESERVE':
@@ -151,9 +154,25 @@ def apply_extraction(extraction, request, history=None, *, previous=None, change
     return contract
 
 
-def _predicate_identity(predicate):
+def _predicate_identity(predicate, request, history):
     if predicate.get('catalog_concept'):
-        return ('concept', fingerprint(predicate['catalog_concept']))
+        from src.catalog_concepts import CatalogConceptRef, get_catalog_concept_registry
+        encoded = get_catalog_concept_registry().encode(CatalogConceptRef.model_validate(predicate['catalog_concept']))
+        predicate = {**predicate, 'field': encoded.field, 'op': encoded.op, 'value': encoded.value}
+    elif predicate.get('field') == 'category':
+        from src.capability_registry import get_capability_registry
+        from src.request_ir import _human_sources
+        values = predicate['value'] if isinstance(predicate['value'], list) else [predicate['value']]
+        normalized = []
+        for value in values:
+            if not isinstance(value, str):
+                normalized.append(value)
+                continue
+            args, _ = get_capability_registry().normalize_arguments(dict(
+                id='semantic-category', kind='PRODUCT_SEARCH', source_quote=predicate['source_quote'], category=value),
+                tuple(text for _, _, text in _human_sources(request, history)))
+            normalized.append(args['category'])
+        predicate = {**predicate, 'value': normalized if isinstance(predicate['value'], list) else normalized[0]}
     return ('predicate', fingerprint({key: predicate.get(key) for key in ('field', 'op', 'value')}))
 
 
@@ -164,8 +183,8 @@ def compare_goal(contract, goal, request, history=None):
     rows = validate_contract(contract)
     for stored, row in zip(contract['requirements'], rows):
         span = locate_source_span(row.source_quote, request, history)
-        # 跨轮时索引可变化；完整 HUMAN 内容的摘要必须仍然相同。
-        if span.source_sha256 != stored['source']['source_sha256']:
+        # 修订阶段已重新绑定原文；执行/恢复阶段禁止来源偏移漂移。
+        if span.model_dump() != stored['source']:
             reject('需求原文来源发生变化')
     if any(row.kind == 'UNKNOWN' for row in rows):
         reject('存在需要用户澄清的条件', code='REQUEST_SEMANTICS_UNCERTAIN')
@@ -193,14 +212,20 @@ def compare_goal(contract, goal, request, history=None):
             for target in row.targets:
                 if next(item for item in outcomes if item.requirement_id == target).outcome.kind != 'recommend':
                     reject('商品条件不能约束非推荐目标')
-                expected_conditions.append((mapping[target], _predicate_identity(row.predicate.model_dump()), row.source_quote))
+                expected_conditions.append((mapping[target], _predicate_identity(row.predicate.model_dump(), request, history),
+                                            locate_source_span(row.source_quote, request, history)))
     actual_conditions = []
     for objective in goal['objectives']:
         constraints = [*goal['hard_constraints'], *objective['hard_constraints']] if objective['kind'] == 'recommend' else []
         for constraint in constraints:
-            actual_conditions.append((objective['id'], _predicate_identity(constraint), constraint['source_quote']))
+            actual_conditions.append((objective['id'], _predicate_identity(constraint, request, history),
+                                      locate_source_span(constraint['source_quote'], request, history)))
     # 保留来源和作用范围；重复条件不额外改变语义。
-    if set(expected_conditions) != set(actual_conditions):
+    def matches(left, right):
+        return (left[:2] == right[:2] and left[2].source_sha256 == right[2].source_sha256
+                and max(left[2].start, right[2].start) < min(left[2].end, right[2].end))
+    if (any(not any(matches(row, item) for item in actual_conditions) for row in expected_conditions)
+            or any(not any(matches(row, item) for item in expected_conditions) for row in actual_conditions)):
         reject('条件遗漏、新增或作用范围/比较值不一致')
     return mapping
 

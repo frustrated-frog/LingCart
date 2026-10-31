@@ -701,6 +701,8 @@ class ToolExecutor:
             self._fail(AgentError(ErrorCode.INVALID_TOOL_ARGUMENTS, str(exc), retryable=False), name, args)
         context = current_runtime()
         context = context if context and context.run_id == self.recorder.run_id else None
+        from src.execution_boundaries import require_allowed
+        require_allowed(context, name, spec)
         if context:
             context.hooks.emit(context, 'before_tool', {'tool': name, 'args': args, 'policy': policy})
         if spec.preflight:

@@ -20,6 +20,7 @@ from src.catalog_concepts import get_catalog_concept_registry
 from src.catalog_metadata import CATALOG_FACETS_DEPENDENCY
 from src.capability_registry import get_capability_registry
 from src.errors import AgentError
+from src.execution_boundaries import BoundaryChange
 from src.grounding import number_is_grounded
 from src.intake import (
     CLARIFICATION_REQUIRED,
@@ -139,10 +140,11 @@ class TurnUnderstanding(StrictModel):
     reason: str = Field("", max_length=800)
     commands: list[DialogueCommand] = Field(default_factory=list, max_length=8)
     objectives: list[BusinessObjective] = Field(default_factory=list, max_length=8)
+    execution_boundaries: list[BoundaryChange] = Field(default_factory=list, max_length=8)
 
     @model_validator(mode="after")
     def nonempty_and_consistent(self):
-        if not self.commands and not self.objectives:
+        if not self.commands and not self.objectives and not self.execution_boundaries:
             raise ValueError("Declare at least one command or objective")
         if len({objective.id for objective in self.objectives}) != len(self.objectives):
             raise ValueError("Objective IDs must be unique")
@@ -165,31 +167,28 @@ class TurnUnderstanding(StrictModel):
         return self
 
 
-_PROMPT = """Return schema-valid JSON for latest HUMAN; never answer, call tools or invent. Preserve independent outcomes,
-negation, correction and scope. source_quote is the smallest exact HUMAN substring; history grounds direct follow-ups
-with uncorrected constraints; optional preferences never block; never inherit unrelated stale intent.
-
-Commands: GREETING, IDENTITY, CAPABILITIES, ACKNOWLEDGEMENT; CLARIFY only for consequential ambiguity; HUMAN_HANDOFF
-only when explicit; CONFIRM_PENDING/CANCEL_PENDING only for the shown action; UNSUPPORTED only for an unregistered,
-inaccessible or unsafe action. Stable text work is GENERAL_ANSWER; current unsupported evidence is REALTIME_EXTERNAL.
-
-Use registered kinds/fields; ground entities in HUMAN text/history; omit unrelated empty fields. AFTER_SALES_CASE uses
-one objective per order item; facts and no-submit boundaries are not extra goals. For PRODUCT_SEARCH/DISCOVERY, copy an
-explicit requested count to quantity and otherwise omit it.
-CATALOG_QUERY is the complete structured catalog AST. Give every scope/filter/order/partition/selector/metric/
-projection requirement a unique ID and exact quote. PREVIOUS_RESULT_SET is only for an explicit or elliptical prior-set
-reference: POPULATION continues its parent query, DELIVERED means only rows already shown. A newly named category without
-such a reference uses CATALOG. ARGMIN/ARGMAX never use ordering, limit or page. PRODUCT_SEARCH is literal lookup;
-PRODUCT_DISCOVERY is under-specified exploration, not a structured view.
-
-CONSTRAINT_PLAN: 2+ known finite goals with shared/cross-goal constraints or explicit optimization; otherwise CLARIFY.
-Declare every goal,
-quantity and scope; never preselect. CATALOG domains use query+selector ALL, without metrics/partition. Shared budget =
-one AGGREGATE SUM over affected goals; the solver selects/verifies. Shape: {version,goals:[{requirement_id,source_quote,
-goal_id,quantity,domain:{requirement_id,source_quote,provider,parameters}}],constraints,optimization?}. Kinds:
-AGGREGATE {scope_goal_ids,attribute,function,operator,value}, COMPARISON {left,right,operator}, ALL_DIFFERENT
-{scope_goal_ids,attribute}. Every requirement has ID/quote. optimization is object or null; without an explicit HUMAN
-preference omit/null, never []/{}. SYSTEM_TIME reads the clock; CALCULATE only evaluates a literal expression.
+_PROMPT = """Return JSON for latest HUMAN, not answers/tools. Preserve outcomes, negation, corrections and scope.
+Use smallest exact HUMAN source_quote; history grounds direct follow-ups with uncorrected constraints, never unrelated intent.
+Ground entities in HUMAN/history; omit unrelated empty fields; optional preferences never block.
+execution_boundaries:[{restriction:READ_ONLY|NO_PAYMENT|NO_REFUND|NO_SUBMISSION,operation:DENY|RETRACT,source_quote}].
+READ_ONLY=no writes; NO_SUBMISSION=no submit/pay/refund. Current HUMAN quote required. RETRACT needs explicit release;
+new goals/omissions never release restrictions or grant approval.
+Commands: GREETING/IDENTITY/CAPABILITIES/ACKNOWLEDGEMENT; CLARIFY for material ambiguity; HUMAN_HANDOFF only explicit;
+CONFIRM_PENDING/CANCEL_PENDING only shown action; UNSUPPORTED for unregistered/inaccessible/unsafe action.
+Stable text=GENERAL_ANSWER; unsupported current facts=REALTIME_EXTERNAL. Use registered kinds/fields.
+AFTER_SALES_CASE: one objective per order item; facts/no-submit rules are not extra goals.
+PRODUCT_SEARCH=literal lookup; PRODUCT_DISCOVERY=exploration. Copy explicit count to quantity, otherwise omit.
+CATALOG_QUERY: complete AST; each scope/filter/order/partition/selector/metric/projection needs ID/quote.
+PREVIOUS_RESULT_SET requires prior-set reference (explicit/elliptical): POPULATION=parent population,
+DELIVERED=shown rows. New category without that reference uses CATALOG. ARGMIN/ARGMAX never ordering/limit/page.
+CONSTRAINT_PLAN: 2+ finite goals with shared/cross-goal conditions or explicit optimization; otherwise CLARIFY.
+Declare all quantities/scopes, never preselect. CATALOG domains=query+selector ALL, no metrics/partition.
+Shared budget=AGGREGATE SUM over affected goals. Solver selects/verifies. Shape:
+{version,goals:[{requirement_id,source_quote,goal_id,quantity,domain:{requirement_id,source_quote,provider,parameters}}],
+constraints,optimization?}. Each requirement needs ID/quote. Kinds: AGGREGATE{scope_goal_ids,attribute,function,operator,value},
+COMPARISON{left,right,operator}, ALL_DIFFERENT{scope_goal_ids,attribute}.
+optimization=object or null; omit/null without explicit preference, never []/{}.
+SYSTEM_TIME reads clock; CALCULATE evaluates literal expression.
 """
 
 _CASE_FIRST_EVIDENCE_BOUNDARY_PROMPT = """
@@ -399,6 +398,11 @@ def _evidence_intake_mode() -> str:
 
 def _validate_grounding(understanding: TurnUnderstanding, user_message: str, history: list | None) -> None:
     sources = _human_sources(user_message, history)
+    from src.request_ir import locate_source_span
+    if len({change.restriction for change in understanding.execution_boundaries}) != len(understanding.execution_boundaries):
+        raise AgentError('EXECUTION_BOUNDARY_CONFLICT', '同一轮不能重复或冲突声明执行限制', retryable=False)
+    for change in understanding.execution_boundaries:
+        locate_source_span(change.source_quote, user_message)
     registry = get_capability_registry()
     evidence_intake_mode = _evidence_intake_mode()
     if any(objective.evidence_context_quotes for objective in understanding.objectives):
@@ -528,6 +532,11 @@ def _prompt(user_message: str, history: list | None, pending_action: dict | None
         "pending_action": pending,
         "latest_human_message": user_message,
     }
+    if current_runtime():
+        from src.execution_boundaries import current_boundaries
+        boundaries = current_boundaries(current_runtime())
+        if boundaries:
+            payload['active_execution_boundaries'] = [dict(restriction=row['restriction'], source_quote=row['source']['text']) for row in boundaries]
     from src.after_sales.context import current_case_context
     session_cases = current_case_context()
     payload["session_cases"] = [
@@ -594,6 +603,10 @@ def _prompt(user_message: str, history: list | None, pending_action: dict | None
     readiness_ledger = evidence_intake_mode == "readiness_ledger"
     repair = "\nPrevious output was invalid. Correct it using this error: " + error if error else ""
     schema = constrain_catalog_query_schema(TurnUnderstanding.model_json_schema())
+    # 简短固定协议已在上文完整列明；避免为每轮重复展开同一边界枚举。
+    # 真实返回仍由 BoundaryChange 的完整 Pydantic schema 校验。
+    schema['properties']['execution_boundaries'] = {'type': 'array', 'items': {'type': 'object'}}
+    (schema.get('$defs') or {}).pop('BoundaryChange', None)
     objective_properties = (
         ((schema.get("$defs") or {}).get("BusinessObjective") or {}).get("properties", {})
     )

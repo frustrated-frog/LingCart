@@ -182,7 +182,8 @@ def environment_manifest(dataset, execution_mode, dataset_path=DATASET):
         revision = None
     prompt_files = sorted(set(['src/orchestrator.py', 'src/dialogue_understanding.py', 'src/adaptive.py', 'src/liveplan.py',
                                'src/adaptive_decision.py', 'src/adaptive_goals.py', 'src/request_audit.py',
-                               'src/catalog_concepts.py', 'src/constraint_bindings.py', 'src/native_protocol.py'] +
+                               'src/catalog_concepts.py', 'src/constraint_bindings.py', 'src/native_protocol.py',
+                               'src/request_semantics_runtime.py'] +
                              [str(p.relative_to(ROOT)) for p in (ROOT / 'src/agents').glob('*.py')]))
     evaluator_files = [ROOT / name for name in ('eval/run_live_eval.py', 'eval/run_task_eval.py',
                                                 'eval/adaptive_checks.py', 'eval/experiment_contract.py')]

@@ -125,6 +125,10 @@ class ContextEngine:
             payload['feedback']['recovery'] = {key: recovery[key] for key in ('occurrence', 'recovery_action')}
         from src.runtime import current_runtime
         runtime = current_runtime()
+        if runtime and state.get('goal') is None:
+            prior = state.get('previous_semantics') or (runtime.snapshot.get('conversation') or {}).get('request_semantics')
+            if prior:
+                payload['prior_requirements'] = [deepcopy(row['requirement']) for row in prior['requirements']]
         steering = runtime.mechanisms.get('steering') if runtime else None
         if steering is not None and hasattr(steering, 'guidance'):
             guidance = steering.guidance(state)

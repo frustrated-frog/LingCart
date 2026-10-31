@@ -1,6 +1,8 @@
 import json
 
 import pytest
+
+pytestmark = pytest.mark.usefixtures("scripted_semantic_contract")
 from langchain_core.messages import AIMessage, HumanMessage
 
 from src import orchestrator, tools

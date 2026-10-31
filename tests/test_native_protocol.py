@@ -6,6 +6,8 @@ import jsonschema
 from langchain_core.messages import AIMessage
 import pytest
 
+pytestmark = pytest.mark.usefixtures("scripted_semantic_contract")
+
 from src import tools
 from src.adaptive import run_adaptive
 from src.adaptive_decision import IntentDeclaration

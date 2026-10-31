@@ -115,6 +115,13 @@ def test_negated_handoff_is_withheld_from_the_deterministic_fast_path():
     assert result.semantic_hazards == ("NEGATION_SCOPE",)
 
 
+@pytest.mark.parametrize('message', ['订单1003支付，先只查询', '仅查看订单1003付款信息', 'Only check payment for order 1003'])
+def test_restrictive_scope_is_interpreted_without_granting_write_authority(message):
+    result = analyze_request(message)
+    assert result.execution_mode == LLM_REQUIRED
+    assert 'RESTRICTION_SCOPE' in result.semantic_hazards
+
+
 def test_positive_handoff_remains_explicit_when_a_different_action_is_negated():
     result = analyze_request("订单 1003 我不想自动支付，请转人工客服")
 

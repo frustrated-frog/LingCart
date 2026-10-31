@@ -107,6 +107,7 @@ def _semantic_hazards(text: str) -> tuple[str, ...]:
         "NEGATION_SCOPE": r"(?:不要|不需要|不用|无需|(?<!分)别|并非|不是|(?<!能)不能|不想|排除|去掉|不包含|not\b|don't\b|do not\b|without\b|exclude\b|never\b)",
         "CORRECTION_SCOPE": r"(?:不是.+(?:而是|是)|改成|改为|算了|更正|actually\b|instead\b|rather than\b)",
         "EXCEPTION_SCOPE": r"(?:除了.+(?:都|之外)|除非|except\b|unless\b)",
+        "RESTRICTION_SCOPE": r"(?:仅|只|only\b)",
     }
     folded = text.casefold()
     return tuple(name for name, pattern in patterns.items() if re.search(pattern, folded, re.IGNORECASE))

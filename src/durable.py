@@ -1,6 +1,7 @@
 """One durable conversation entry point shared by HTTP and the workspace."""
 import uuid
 import json
+from copy import deepcopy
 
 from langchain_core.messages import AIMessage, HumanMessage
 
@@ -197,6 +198,12 @@ def execute_claim(claim, *, store=None, runner=None):
             memory = ConversationMemory(last_order_id=state.get("last_order_id"))
             memory.update_last_order_id(result["trace"])
             state.update(last_order_id=memory.last_order_id, pending_action=result["pending_action"])
+            semantics = context.snapshot.get('request_semantics') or (context.snapshot.get('adaptive') or {}).get('request_semantics')
+            if semantics:
+                state['request_semantics'] = deepcopy(semantics)
+            if 'execution_boundaries' in context.snapshot:
+                state['execution_boundaries'] = deepcopy(context.snapshot['execution_boundaries'])
+            result['execution_boundaries'] = deepcopy(state.get('execution_boundaries', []))
             state["clarification"] = result.get("intake") if result.get("terminal_reason") == "MISSING_ORDER_ID" else None
             catalog_artifacts = [
                 artifact for artifact in result.get("artifacts", [])

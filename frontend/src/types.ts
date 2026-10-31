@@ -184,6 +184,49 @@ export interface UserRequestIR {
   sha256: string
 }
 
+export type ExecutionRestriction = 'READ_ONLY' | 'NO_PAYMENT' | 'NO_REFUND' | 'NO_SUBMISSION'
+
+export interface ExecutionBoundary {
+  restriction: ExecutionRestriction
+  source: RequestSourceSpan
+  origin: 'adaptive' | 'dialogue'
+  requirement_id?: string
+}
+
+export interface RequestSemantics {
+  version: 'request-semantics/v1'
+  sha256: string
+  previous_sha256: string | null
+  requirements: Array<{
+    source: RequestSourceSpan
+    requirement: {
+      requirement_id: string
+      kind: 'OUTCOME' | 'CONDITION' | 'PROHIBITION' | 'EXECUTION_BOUNDARY' | 'USER_FACT' | 'SOFT_PREFERENCE' | 'UNKNOWN'
+      description: string
+      source_quote: string
+      targets: string[]
+      outcome: { kind: string; quantity: number; order_id: number | null; question: string | null; product_ids: string[] } | null
+      predicate: { field: string | null; op: string; value: unknown } | null
+      restriction: ExecutionRestriction | null
+    }
+  }>
+  revisions: Array<{
+    operation: 'PRESERVE' | 'REPLACE' | 'RETRACT' | 'ADD'
+    previous_id: string | null
+    requirement_id: string | null
+    source_quote: string | null
+  }>
+}
+
+export interface SemanticRevision {
+  preserved: string[]
+  changed: string[]
+  added: string[]
+  retracted: string[]
+  previous_sha256: string | null
+  current_sha256: string
+}
+
 export interface RunResult {
   run_id?: string
   reply?: string
@@ -195,6 +238,9 @@ export interface RunResult {
   trace?: Array<{ agent?: string; tool?: string; args?: Record<string, unknown>; result?: unknown }>
   plan?: { steps?: Array<Record<string, unknown>>; verification?: Record<string, unknown> }
   request_ir?: UserRequestIR | null
+  request_semantics?: RequestSemantics | null
+  semantic_revision?: SemanticRevision | null
+  execution_boundaries?: ExecutionBoundary[]
   budget?: Record<string, unknown>
   usage?: Record<string, number | null>
   pending_action?: PendingAction | null

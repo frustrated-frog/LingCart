@@ -5,6 +5,8 @@ from pathlib import Path
 
 from langchain_core.messages import AIMessage
 import pytest
+
+pytestmark = pytest.mark.usefixtures("scripted_semantic_contract")
 from sqlalchemy import select
 
 from src import tools
