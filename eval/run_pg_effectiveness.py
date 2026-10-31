@@ -8,7 +8,7 @@ import json
 from pathlib import Path
 
 from eval.experiment_contract import ExperimentSpec
-from eval.run_live_eval import evaluate, load_dataset, summarize
+from eval.run_live_eval import evaluate, fingerprint as evaluation_fingerprint, load_dataset, summarize
 from eval.run_pg_evolution import graph_profile
 from src.harness import get_registry, get_runner
 from src.pg_experiment import behavior_metrics, comparison
@@ -62,14 +62,14 @@ def run(*, live=False, output=None):
     get_registry().register_profile(graph_profile(graph, ROOT / plan['seed_graph'], online_profile=spec.online_profile))
     if not live:
         return dict(status='VALIDATED', model_calls=0, test_samples=len(test_cases) * plan['test_repeats'] * 3,
-                    dataset_sha256=fingerprint(dataset), seed_sha256=graph.fingerprint)
+                    dataset_sha256=evaluation_fingerprint(dataset), seed_sha256=graph.fingerprint)
     if output is None or output.exists() or not output.resolve().is_relative_to(EXPERIMENT):
         raise ValueError('live 输出必须为本实验目录内尚不存在的目录')
     graph_output = ROOT / 'research/graphs' / plan['experiment_id'] / output.name
     graph_output.mkdir(parents=True, exist_ok=False)
     output.mkdir(parents=True)
     write_artifact(output / 'frozen-inputs.json', dict(plan=plan, evolution=spec.model_dump(mode='json'),
-        contract=contract_template.model_dump(mode='json'), dataset_sha256=fingerprint(dataset),
+        contract=contract_template.model_dump(mode='json'), dataset_sha256=evaluation_fingerprint(dataset),
         graph_output=graph_output.relative_to(ROOT).as_posix(),
         driver_sha256=__import__('hashlib').sha256(Path(__file__).read_bytes()).hexdigest()))
     profiles = {}
@@ -118,7 +118,7 @@ def run(*, live=False, output=None):
         ExperimentSpec.model_validate_json(json.dumps(contract))
         contracts[arm] = contract
     frozen = dict(preset='exploratory', groups=dict(test=list(test_cases)), spec=dict(repeats=plan['test_repeats']),
-                  dataset_sha256=fingerprint(dataset), profiles=ids, contracts=contracts,
+                  dataset_sha256=evaluation_fingerprint(dataset), profiles=ids, contracts=contracts,
                   cost_guard=dict(max_extra_model_attempts_per_sample=spec.max_extra_model_attempts_per_sample))
     write_artifact(output / 'test-frozen.json', frozen)  # 在首次 test 调用前冻结动态图身份和契约。
     blocks = {arm: [] for arm in ARMS}

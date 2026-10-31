@@ -42,8 +42,11 @@ def test_aggregation_rejects_incomplete_or_incomparable_reports(defect):
 
 
 def test_default_validation_does_not_run_models():
+    from eval.run_live_eval import fingerprint, load_dataset
+    from eval.run_pg_effectiveness import ROOT
     result = run()
     assert result['model_calls'] == 0 and result['test_samples'] == 24
+    assert result['dataset_sha256'] == fingerprint(load_dataset(ROOT / 'eval/pg_effectiveness_20261031_tasks.json'))
 
 
 def test_frozen_product_constraints_are_feasible_after_two_candidates_disappear():
