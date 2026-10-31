@@ -67,6 +67,9 @@ class Models:
         payload = json.loads(messages[-1].content)
         assert 'goal' not in payload and 'objectives' not in payload
         prior = payload.get('prior_contract')
+        if not prior:
+            assert 'case_context' not in payload
+            assert '"material_scope"' not in messages[0].content
         changes = [dict(operation='PRESERVE', previous_id=row['requirement']['requirement_id'])
                    for row in (prior or {}).get('requirements', [])]
         if not prior:

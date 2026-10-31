@@ -56,6 +56,8 @@ def _compact(value):
 
 def extract_contract(context, request, history, *, previous=None, change_text=None, case_context=None):
     """输入不含目标/计划/工具证据；缓存绑定完整 HUMAN 来源和旧契约身份。"""
+    # 尚未建案时不存在可引用的材料要求身份，不能要求模型生成 material_scope。
+    case_context = case_context or None
     from src.catalog_concepts import get_catalog_concept_registry
     from src.context_budget import ContextBudgetError, _text_length
     from src.native_protocol import function, one_call, size
