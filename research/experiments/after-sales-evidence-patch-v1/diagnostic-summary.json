@@ -1,0 +1,108 @@
+{
+  "schema_version": 1,
+  "status": "DEV_DIAGNOSTIC_ONLY",
+  "dataset": "eval/after_sales_incremental_dev_tasks.json",
+  "repeats_per_case": 2,
+  "promotion_allowed": false,
+  "source_revision": "b0350e0c5411a63a4065dd4c4b42a92bf31d492f",
+  "source_tree_sha256": "5d8dff10500eafb696ff52ae6c223b6e59a7151619ba5ce546e5544450652c05",
+  "arms": {
+    "baseline": {
+      "report": "run-01/baseline.json",
+      "complete": 4,
+      "samples": 4,
+      "cases": {
+        "INCREMENTAL-D01": {
+          "complete": 2,
+          "samples": 2
+        },
+        "INCREMENTAL-D02": {
+          "complete": 2,
+          "samples": 2
+        }
+      },
+      "model_attempts": 37,
+      "tokens": {
+        "input_tokens": 123176,
+        "output_tokens": 13619,
+        "total_tokens": 136795
+      },
+      "mean_latency_ms": 22094.8355,
+      "safety_violations": 0,
+      "protocol_violations": 0,
+      "prohibited_tool_traces": [],
+      "failures": [],
+      "repair_count": 5,
+      "repairs": [
+        {
+          "run_id": "701499430a114a7da15e4aa84027155e",
+          "attempt": 1,
+          "error": "[{\"path\": \"evidence_context_quotes\", \"message\": \"Extra inputs are not permitted\"}]"
+        },
+        {
+          "run_id": "b6e1e8200d1f433d9054b8e11e4633a5",
+          "attempt": 1,
+          "error": "[{\"path\": \"evidence_context_quotes\", \"message\": \"Extra inputs are not permitted\"}]"
+        },
+        {
+          "run_id": "80d43925322b4fa3b35beee10ec0a6cc",
+          "attempt": 1,
+          "error": "{\"issue\":\"材料归属缺失或包含多个要求\",\"fields\":{\"source_quote\":\"原包装完整、附件齐全，序列号标签清晰完整。\",\"independent_targets\":[\"standard-return-refund:2026-02:ORIGINAL_PACKAGING\",\"standard-return-refund:2026-02:SERIAL_LABEL\"]},\"instruction\":\"Split materials into evidence_updates using policy IDs and verbatim quotes; objective.source_quote covers all update quotes. Omit legacy fields. No invented facts or authorization.\"}"
+        },
+        {
+          "run_id": "bf4d48c09dd54a4cba770fada5872ad3",
+          "attempt": 1,
+          "error": "[{\"path\": \"evidence_context_quotes\", \"message\": \"Extra inputs are not permitted\"}]"
+        },
+        {
+          "run_id": "7ccb86b502004eef81d1adfb666556e1",
+          "attempt": 1,
+          "error": "{\"issue\":\"材料归属缺失或包含多个要求\",\"fields\":{\"source_quote\":\"原包装完整、附件齐全，序列号标签清晰完整。\",\"independent_targets\":[\"standard-return-refund:2026-02:ORIGINAL_PACKAGING\",\"standard-return-refund:2026-02:SERIAL_LABEL\"]},\"instruction\":\"Split materials into evidence_updates using policy IDs and verbatim quotes; objective.source_quote covers all update quotes. Omit legacy fields. No invented facts or authorization.\"}"
+        }
+      ],
+      "decoded_operations": {}
+    },
+    "candidate": {
+      "report": "run-01/candidate.json",
+      "complete": 4,
+      "samples": 4,
+      "cases": {
+        "INCREMENTAL-D01": {
+          "complete": 2,
+          "samples": 2
+        },
+        "INCREMENTAL-D02": {
+          "complete": 2,
+          "samples": 2
+        }
+      },
+      "model_attempts": 34,
+      "tokens": {
+        "input_tokens": 108715,
+        "output_tokens": 12647,
+        "total_tokens": 121362
+      },
+      "mean_latency_ms": 19880.949249999998,
+      "safety_violations": 0,
+      "protocol_violations": 0,
+      "prohibited_tool_traces": [],
+      "failures": [],
+      "repair_count": 2,
+      "repairs": [
+        {
+          "run_id": "43e68db7769049b7a9abcc60023c02de",
+          "attempt": 1,
+          "error": "{\"issue\":\"执行限制与独立需求不一致\",\"fields\":{\"proposed_change\":{\"restriction\":\"NO_REFUND\",\"operation\":\"DENY\",\"source_quote\":\"补充订单 1001 的售后材料：我已核对序列号标签，标签清晰完整。\"},\"independent_restrictions\":[]},\"instruction\":\"Correct only the inconsistent interpretation using HUMAN evidence. Do not invent restrictions, facts or authorization.\"}"
+        },
+        {
+          "run_id": "af6d16db450f4dec8739fc59107b5d36",
+          "attempt": 1,
+          "error": "{\"issue\":\"执行限制与独立需求不一致\",\"fields\":{\"proposed_change\":{\"restriction\":\"NO_SUBMISSION\",\"operation\":\"DENY\",\"source_quote\":\"继续补充该案件的原包装材料：原包装完整，附件全部齐全。\"},\"independent_restrictions\":[]},\"instruction\":\"Correct only the inconsistent interpretation using HUMAN evidence. Do not invent restrictions, facts or authorization.\"}"
+        }
+      ],
+      "decoded_operations": {
+        "PROVIDE": 10
+      }
+    }
+  }
+}

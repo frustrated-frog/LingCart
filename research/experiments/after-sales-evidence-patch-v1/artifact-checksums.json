@@ -1,0 +1,10 @@
+{
+  "algorithm": "sha256",
+  "files": {
+    "experiment-spec.json": "cf69162e6c05bb4d72975f63ad5073697f080feb00ad3cf365318ad1cad6928a",
+    "run_smoke.py": "0b570522a46b506c9926d85d72b6b4f48c3617bca4e9f931ca4a7171b86ca331",
+    "diagnostic-summary.json": "cb0c2022262727f828869739f5735d87ead5467382097a54e791e608e41f44cc",
+    "run-01/baseline.json": "db3ea56cbbd2200ad4a1c6d94cd1db3211fcf22a6b55494a18f09726b3c42ee3",
+    "run-01/candidate.json": "fc4f32052ecbf0caeefa2672ce41206506b8e440953035d6c45342170a17665a"
+  }
+}
