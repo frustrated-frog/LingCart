@@ -68,6 +68,11 @@ class EmbeddedMechanism:
 
 
 @dataclass(frozen=True)
+class EvidencePatchMechanism(EmbeddedMechanism):
+    material_patch_protocol: bool = True
+
+
+@dataclass(frozen=True)
 class EvidenceVerificationMechanism(EmbeddedMechanism):
     """保留既有目标审查，同时提供可替换的证据语义核验槽位。"""
 
@@ -322,6 +327,11 @@ def built_in_mechanisms() -> tuple[HarnessMechanism, ...]:
                           ("src/runtime.py", "src/persistence.py", "src/backend/db.py",
                            "src/execution_boundaries.py",
                            "src/after_sales/pending_clarification.py")),
+        EvidencePatchMechanism("tool_protocol", "evidence-patch-ledger", "1", ("orchestrator",),
+                          ("src/runtime.py", "src/persistence.py", "src/backend/db.py", "src/execution_boundaries.py",
+                           "src/after_sales/pending_clarification.py", "src/after_sales/evidence_patch.py",
+                           "src/dialogue_understanding.py", "src/capability_registry.py", "src/after_sales/context.py",
+                           "src/request_semantics_runtime.py")),
         EvidenceVerificationMechanism("verification", "deterministic-business-gates", "2", ("orchestrator",),
                           ("src/direct_executor.py", "src/task_plan.py", "src/catalog_query.py",
                            "src/after_sales/semantic.py", "src/after_sales/evidence.py",

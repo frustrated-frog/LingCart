@@ -1,0 +1,58 @@
+{
+  "schema_version": 1,
+  "profile_id": "after-sales-evidence-patch-v1",
+  "version": "1.0.0",
+  "display_name": "售后统一材料变更候选",
+  "description": "为现有案件提供单一类型化材料变更协议，宿主编译到已有账本执行器。",
+  "engine": {
+    "id": "orchestrator",
+    "version": "1"
+  },
+  "mechanisms": [
+    {
+      "slot": "planning",
+      "id": "lookahead-case-execution",
+      "version": "1"
+    },
+    {
+      "slot": "tool_protocol",
+      "id": "evidence-patch-ledger",
+      "version": "1"
+    },
+    {
+      "slot": "verification",
+      "id": "incremental-case-verification",
+      "version": "1"
+    }
+  ],
+  "capabilities": [
+    "open_set_dialogue_understanding",
+    "after_sales_case_planning",
+    "policy_aware_case_execution",
+    "after_sales_evidence_boundary",
+    "evidence_readiness_ledger",
+    "cross_turn_evidence_readiness",
+    "obligation_graph_planning",
+    "multi_candidate_action_solver",
+    "active_clarification",
+    "counterfactual_answer_branches",
+    "pareto_question_selection",
+    "durable_pending_clarification",
+    "cross_turn_answer_binding",
+    "durable_runtime",
+    "approval_guard",
+    "tool_ledger",
+    "bounded_information_lookahead",
+    "receding_horizon_selection",
+    "independent_material_scope",
+    "incremental_evidence_verification",
+    "targeted_case_repair",
+    "committed_evidence_transitions",
+    "typed_material_changes"
+  ],
+  "research": {
+    "status": "candidate",
+    "source_type": "native",
+    "hypothesis": "统一模型可见的材料变更表达可能减少协议混用，收益需独立对照。"
+  }
+}

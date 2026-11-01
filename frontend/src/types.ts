@@ -261,7 +261,7 @@ export interface RequestSemantics {
       outcome: { kind: string; reason_code?: string | null; quantity: number; order_id: number | null; question: string | null; product_ids: string[] } | null
       predicate: { field: string | null; op: string; value: unknown } | null
       restriction: ExecutionRestriction | null
-      material_scope?: { case_id: string; requirement_id: string; disposition: 'PROVIDED' | 'DEFERRED' } | null
+      material_scope?: { case_id: string; requirement_id: string; disposition: 'PROVIDED' | 'DEFERRED' | 'RETRACTED' } | null
     }
   }>
   revisions: Array<{

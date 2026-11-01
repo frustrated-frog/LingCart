@@ -189,6 +189,10 @@ def normalize_case_continuation(objective: dict, sources: tuple[str, ...]):
     for update in updates:
         if update['requirement_id'] not in requirements or update['source_quote'] not in quote:
             raise AgentError('UNGROUNDED_EVIDENCE', '材料更新必须引用本轮原文及当前案件要求', retryable=False)
+        if update.get('revoke_evidence_id'):
+            old = next((e for e in case['evidence'] if e['evidence_id']==update['revoke_evidence_id'] and e['status']=='ACTIVE'), None)
+            if not old or old['evidence_type']!=requirements[update['requirement_id']]['evidence_type']:
+                raise AgentError('EVIDENCE_REPLACEMENT_CONFLICT','撤回或替换的材料与当前要求不一致',retryable=False)
     normalized.update(case_id=case['case_id'], case_revision=case['revision'])
     provenance = {
         key: {"resolver": "session_case_ledger", "resolver_version": "2",

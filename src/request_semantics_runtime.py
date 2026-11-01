@@ -93,6 +93,11 @@ def extract_contract(context, request, history, *, previous=None, change_text=No
                    'may use the single pending question. Ambiguous scope stays UNKNOWN without material_scope. '
                    'Keep separate facts per requirement; do not erase a serial fact when packaging changes. '
                    'Preserve the case OUTCOME. Material supply never introduces or retracts execution restrictions.')
+        from src.after_sales.evidence_patch import enabled
+        if enabled():
+            prompt += ('\nAn explicit withdrawal is a USER_FACT with material_scope.disposition=RETRACTED and the '
+                       'existing requirement identity. A replacement has disposition=PROVIDED; its quote must retain '
+                       'the explicit correction and replacement facts. Merely repeating a preserved fact is not ADD/REPLACE.')
     declarations = None
     if native:
         declarations = [function('extract_requirements', '提取 HUMAN 需求与显式修订，不执行动作', schema)]

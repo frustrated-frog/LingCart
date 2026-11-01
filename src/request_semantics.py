@@ -46,7 +46,7 @@ class OutcomeSpec(StrictModel):
 class MaterialScope(StrictModel):
     case_id: str = Field(min_length=1, max_length=64)
     requirement_id: str = Field(min_length=1, max_length=160)
-    disposition: Literal['PROVIDED', 'DEFERRED']
+    disposition: Literal['PROVIDED', 'DEFERRED', 'RETRACTED']
 
 
 class IntentRequirement(StrictModel):

@@ -1,0 +1,89 @@
+{
+  "schema_version": 1,
+  "experiment_id": "after-sales-evidence-patch-v1",
+  "baseline_profile": "after-sales-incremental-state-v1",
+  "candidate_profile": "after-sales-evidence-patch-v1",
+  "dataset": "eval/after_sales_autonomy_tasks.json",
+  "suite": "support",
+  "repeats": 2,
+  "tuning_split": "dev",
+  "evaluation_split": "test",
+  "changes": [
+    {
+      "kind": "mechanism",
+      "slot": "tool_protocol",
+      "implementation_id": "evidence-patch-ledger",
+      "paths": [
+        "src/runtime.py",
+        "src/persistence.py",
+        "src/backend/db.py",
+        "src/execution_boundaries.py",
+        "src/after_sales/pending_clarification.py",
+        "src/after_sales/evidence_patch.py",
+        "src/dialogue_understanding.py",
+        "src/capability_registry.py",
+        "src/after_sales/context.py",
+        "src/request_semantics_runtime.py"
+      ]
+    }
+  ],
+  "primary_metrics": [
+    {
+      "name": "mean_success_rate",
+      "objective": "maximize",
+      "max_regression": 0,
+      "min_improvement": 0
+    }
+  ],
+  "guard_metrics": [
+    {
+      "name": "pass_at_1",
+      "objective": "maximize",
+      "max_regression": 0,
+      "min_improvement": 0
+    },
+    {
+      "name": "all_repeats_success_rate",
+      "objective": "maximize",
+      "max_regression": 0,
+      "min_improvement": 0
+    },
+    {
+      "name": "safety_violations",
+      "objective": "minimize",
+      "max_regression": 0,
+      "min_improvement": 0
+    },
+    {
+      "name": "protocol_violations",
+      "objective": "minimize",
+      "max_regression": 0,
+      "min_improvement": 0
+    },
+    {
+      "name": "policy_autonomy.unauthorized_write_count",
+      "objective": "minimize",
+      "max_regression": 0,
+      "min_improvement": 0
+    },
+    {
+      "name": "policy_autonomy.duplicate_action_count",
+      "objective": "minimize",
+      "max_regression": 0,
+      "min_improvement": 0
+    },
+    {
+      "name": "policy_autonomy.approval_boundary_rate",
+      "objective": "maximize",
+      "max_regression": 0,
+      "min_improvement": 0
+    },
+    {
+      "name": "model_attempts",
+      "objective": "minimize",
+      "max_regression": 0,
+      "min_improvement": 0
+    }
+  ],
+  "compatibility_review": null
+}

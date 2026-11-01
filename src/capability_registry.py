@@ -635,9 +635,12 @@ def _continue_after_sales_case(objective: Mapping[str, object], request: str) ->
             args = dict(arguments)
             if index:
                 args['_case_revision_dependency'] = True
-            if update['disposition'] == 'PROVIDED':
+            if update['disposition'] in {'PROVIDED', 'RETRACTED'}:
                 operation = 'continue_after_sales_case'
-                args.update(requirement_id=update['requirement_id'], evidence_text=update['source_quote'])
+                if update['disposition']=='PROVIDED':
+                    args.update(requirement_id=update['requirement_id'], evidence_text=update['source_quote'])
+                if update.get('revoke_evidence_id'):
+                    args['revoke_evidence_id']=update['revoke_evidence_id']
             else:
                 operation = 'record_after_sales_evidence_readiness'
                 args['evidence_readiness_claims'] = [dict(evidence_type=requirements[update['requirement_id']]['evidence_type'],
