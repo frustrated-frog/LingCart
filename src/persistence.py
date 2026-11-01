@@ -177,11 +177,17 @@ class RunStore:
                 snapshot = new_runtime_snapshot(
                     run.run_id,
                     conversation=conversation.state,
-                    history=[{"role": m.role, "content": m.content} for m in reversed(history)],
+                    history=[{"role": m.role, "content": m.content, "message_id": str(m.message_id)} for m in reversed(history)],
                     execution_contract=requested_contract,
                 )
                 session.add(Checkpoint(run_id=run.run_id, payload=snapshot))
-                session.add(ConversationMessage(session_id=session_id, run_id=run.run_id, role="user", content=request))
+                user_message = ConversationMessage(session_id=session_id, run_id=run.run_id, role="user", content=request)
+                session.add(user_message)
+                session.flush()
+                snapshot['request_message_id'] = str(user_message.message_id)
+                snapshot['request_source_sha256'] = hashlib.sha256(request.encode()).hexdigest()
+                snapshot = seal_runtime_snapshot(snapshot, run.run_id)
+                session.get(Checkpoint, run.run_id).payload = snapshot
             run.status = "RUNNING"
             run.lease_token = uuid.uuid4().hex
             run.lease_until = utcnow() + timedelta(seconds=run.limits.get("max_seconds", 30) + 15)

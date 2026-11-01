@@ -216,6 +216,7 @@ export interface RequestSourceSpan {
   end: number
   text: string
   source_sha256: string
+  message_id?: string | null
 }
 
 export interface RequestSemanticRequirement {

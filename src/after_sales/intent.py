@@ -48,7 +48,8 @@ def verify_intent(context, understanding, request, history):
                 'proposed_change': change.model_dump(), 'independent_restrictions': sorted(restrictions)},
                 question='这轮只是补充材料，还是也要修改执行限制？请明确说明要新增或解除的限制。')
     if scoped:
-        verify_material_scope(context, objectives, rows, cases, request)
+        changed_ids = {r['requirement_id'] for r in contract['revisions'] if r['operation'] in {'ADD', 'REPLACE'}}
+        verify_material_scope(context, objectives, [row for row in rows if row.requirement_id in changed_ids], cases, request)
     # 新提取的限制只有完整语义接受后才允许释放。
     apply_semantic_boundaries(context, contract)
     context.snapshot['request_semantics'] = deepcopy(contract)

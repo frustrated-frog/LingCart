@@ -85,7 +85,7 @@ def execute_claim(claim, *, store=None, runner=None):
     harness_runner = unwrap_harness_runner(runner)
     snapshot = claim["snapshot"]
     state = dict(snapshot.get("conversation") or {})
-    history = [(HumanMessage if item["role"] == "user" else AIMessage)(content=item["content"])
+    history = [(HumanMessage if item["role"] == "user" else AIMessage)(content=item["content"], id=item.get('message_id'))
                for item in snapshot.get("history", [])]
     pending = state.get("pending_action")
     approval = pending if pending and store._is_confirmation(claim["request"], pending) else None

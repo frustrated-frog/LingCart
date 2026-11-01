@@ -133,3 +133,11 @@ def test_rehashed_source_offsets_cannot_mislead_the_inspector():
     contract['sha256'] = fingerprint({k: v for k, v in contract.items() if k != 'sha256'})
     with pytest.raises(AgentError, match='来源发生变化'):
         compare_goal(contract, goal(), REQUEST)
+
+
+def test_source_identity_cannot_be_replaced_by_an_identical_other_message():
+    from src.request_ir import locate_source_span
+    from src.request_semantics import validate_source
+    source=locate_source_span('完整','', [HumanMessage(content='完整',id='old')]).model_dump()
+    with pytest.raises(AgentError,match='来源发生变化'):
+        validate_source(source,'完整',[HumanMessage(content='不再完整',id='old'),HumanMessage(content='完整',id='new')])

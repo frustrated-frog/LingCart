@@ -140,6 +140,31 @@ def transitions(result):
             if e['type']=='tool_result' and isinstance(e.get('result'),dict) and e['result'].get('evidence_transition')]
 
 
+@pytest.mark.parametrize('explicit',[False,True])
+def test_identical_short_answers_only_update_current_material(models,explicit):
+    run(MESSAGE)
+    text='完整'
+    models.scopes[text]=[('SERIAL_LABEL','PROVIDED')]
+    models.explicit_target='SERIAL_LABEL'
+    first=run(text)
+    contract=RunStore().conversation('incremental')['state']['request_semantics']
+    old=next(r for r in contract['requirements'] if r['requirement']['requirement_id']=='serial_label')
+    assert old['source']['message_id']
+    models.scopes[text]=[('ORIGINAL_PACKAGING','PROVIDED')]
+    models.explicit_target='ORIGINAL_PACKAGING' if explicit else None
+    final=run(text)
+    assert final['status']=='WAITING_APPROVAL', final
+    contract=RunStore().conversation('incremental')['state']['request_semantics']
+    kept=next(r for r in contract['requirements'] if r['requirement']['requirement_id']=='serial_label')
+    new=next(r for r in contract['requirements'] if r['requirement']['requirement_id']=='original_packaging')
+    assert kept==old
+    assert new['source']['message_id']!=kept['source']['message_id']
+    assert new['source']['source_sha256']==kept['source']['source_sha256']
+    with tools._session() as session:
+        rows=session.scalars(select(AfterSalesEvidence).where(AfterSalesEvidence.evidence_type=='SERIAL_LABEL')).all()
+        assert len(rows)==1 and first['run_id'] in rows[0].source_ref
+
+
 @pytest.mark.parametrize('crash', [False, True])
 def test_out_of_order_material_is_rebound_then_preserved_until_confirmation(models, crash):
     opened = run(MESSAGE)

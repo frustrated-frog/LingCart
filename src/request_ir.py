@@ -45,6 +45,7 @@ class SourceSpan(StrictModel):
     end: int = Field(gt=0)
     text: str = Field(min_length=1, max_length=600)
     source_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    message_id: str | None = None
 
     @model_validator(mode="after")
     def coherent_location(self):
@@ -137,6 +138,13 @@ def locate_source_span(
             continue
         end = start + len(quote)
         exact = text[start:end]
+        from src.runtime import current_runtime
+        runtime = current_runtime()
+        message_id = (getattr((history or [])[history_index], 'id', None) if history_index is not None
+                      else (runtime.snapshot.get('request_message_id') if runtime else None))
+        # STEER 可使用合成请求，不能把合成文档误标为最初的持久化消息。
+        if runtime and source == 'CURRENT_TURN' and runtime.snapshot.get('request_source_sha256') != hashlib.sha256(current.encode()).hexdigest():
+            message_id = None
         return SourceSpan(
             source=source,
             history_index=history_index,
@@ -144,6 +152,7 @@ def locate_source_span(
             end=end,
             text=exact,
             source_sha256=hashlib.sha256(text.encode("utf-8")).hexdigest(),
+            message_id=message_id,
         )
     raise AgentError(
         "UNGROUNDED_REQUEST_IR",

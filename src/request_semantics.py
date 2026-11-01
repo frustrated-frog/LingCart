@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 from typing import Literal
+from copy import deepcopy
+import hashlib
 
 from pydantic import Field, model_validator
 
@@ -154,6 +156,13 @@ def apply_extraction(extraction, request, history=None, *, previous=None, change
         if row is not None:
             if row.requirement_id in active:
                 reject('有效需求身份重复')
+            if change.operation == 'PRESERVE':
+                stored = next(item for item in previous['requirements'] if item['requirement']['requirement_id'] == identity)
+                validate_source(stored['source'], request, history)
+                active[row.requirement_id] = deepcopy(stored)
+                revisions.append(dict(operation=change.operation, previous_id=identity,
+                                      requirement_id=row.requirement_id, source_quote=change.source_quote))
+                continue
             source = locate_source_span(row.source_quote, request, history)
             if row.outcome and row.outcome.question:
                 locate_source_span(row.outcome.question, request, history)
@@ -168,6 +177,30 @@ def apply_extraction(extraction, request, history=None, *, previous=None, change
     contract = {**body, 'sha256': fingerprint(body)}
     validate_contract(contract)
     return contract
+
+
+def validate_source(source, request, history=None):
+    """验证已绑定文档，不重新搜索引用；旧无编号契约只验证原摘要和切片。"""
+    from src.request_ir import _human_sources
+    from src.runtime import current_runtime
+    runtime = current_runtime()
+    texts = [text for _, _, text in _human_sources(request, history)]
+    message_id = source.get('message_id')
+    if message_id:
+        texts = [m.content for m in history or [] if getattr(m, 'type', None) == 'human' and getattr(m, 'id', None) == message_id]
+        if runtime and runtime.snapshot.get('request_message_id') == message_id:
+            texts.append(request)
+        if runtime and runtime.store:
+            from src import tools
+            from src.backend.db import AgentRun, ConversationMessage
+            with tools._session() as session:
+                run = session.get(AgentRun, runtime.run_id)
+                message = session.get(ConversationMessage, int(message_id)) if message_id.isdecimal() else None
+                if run and message and message.session_id == run.session_id and message.role == 'user':
+                    texts = [message.content]
+    if not any(isinstance(text, str) and hashlib.sha256(text.encode()).hexdigest() == source['source_sha256']
+               and text[source['start']:source['end']] == source['text'] for text in texts):
+        reject('需求原文来源发生变化')
 
 
 def _predicate_identity(predicate, request, history):
@@ -198,10 +231,7 @@ def compare_goal(contract, goal, request, history=None):
     goal = ShoppingGoal.model_validate(goal).model_dump()
     rows = validate_contract(contract)
     for stored, row in zip(contract['requirements'], rows):
-        span = locate_source_span(row.source_quote, request, history)
-        # 修订阶段已重新绑定原文；执行/恢复阶段禁止来源偏移漂移。
-        if span.model_dump() != stored['source']:
-            reject('需求原文来源发生变化')
+        validate_source(stored['source'], request, history)
     if any(row.kind == 'UNKNOWN' for row in rows):
         reject('存在需要用户澄清的条件', code='REQUEST_SEMANTICS_UNCERTAIN')
     outcomes = [row for row in rows if row.kind == 'OUTCOME']
