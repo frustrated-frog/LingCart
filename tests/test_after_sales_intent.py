@@ -163,6 +163,44 @@ def test_model_schema_leaves_fixed_capability_metadata_to_host():
     assert set(fields['evidence_requirement']['enum']) == {'MODEL_KNOWLEDGE', 'REALTIME_EXTERNAL'}
 
 
+@pytest.mark.parametrize('kind', ['EXECUTION_BOUNDARY', 'SOFT_PREFERENCE'])
+def test_independent_process_quote_can_cover_multiple_coordinated_clauses(database, monkeypatch, kind):
+    import src.request_semantics_runtime as semantics
+    process = '请先和我核对原包装及附件的情况，再核对序列号标签'
+
+    class ProcessExtractor(Extractor):
+        def invoke(self, messages):
+            result = json.loads(super().invoke(messages).content)
+            result['changes'].append(dict(operation='ADD', requirement=dict(
+                requirement_id='sequence', kind=kind, description='用户指定处理顺序', source_quote=process)))
+            return AIMessage(content=json.dumps(result))
+
+    monkeypatch.setattr('src.after_sales.intent.verify_intent', real_verify)
+    monkeypatch.setattr(semantics, 'get_llm', lambda **_: ProcessExtractor())
+    result = run_conversation(MESSAGE + '；' + process, 'process-order')
+    assert result['status'] == 'WAITING_APPROVAL', result
+    assert any(e['type'] == 'after_sales_intent_verified' for e in result['events'])
+    assert result['pending_action']
+
+
+def test_process_quote_does_not_cover_an_unrelated_business_goal(database, monkeypatch):
+    import src.request_semantics_runtime as semantics
+    process = '先核对包装，再核对标签'
+
+    class ProcessExtractor(Extractor):
+        def invoke(self, messages):
+            result = json.loads(super().invoke(messages).content)
+            result['changes'].append(dict(operation='ADD', requirement=dict(
+                requirement_id='sequence', kind='EXECUTION_BOUNDARY', description='处理顺序', source_quote=process)))
+            return AIMessage(content=json.dumps(result))
+
+    monkeypatch.setattr('src.after_sales.intent.verify_intent', real_verify)
+    monkeypatch.setattr(semantics, 'get_llm', lambda **_: ProcessExtractor())
+    result = run_conversation(MESSAGE + '；' + process + '；再查询订单1002的物流', 'process-missing-goal')
+    assert result['terminal_reason'] == 'INCOMPLETE_REQUEST_COVERAGE', result
+    assert not result['trace']
+
+
 @pytest.mark.parametrize('metadata', [dict(target_type='order'), dict(evidence_requirement='AFTER_SALES_CASE')])
 def test_conflicting_legacy_capability_metadata_still_rejected(metadata):
     from src.capability_registry import get_capability_registry

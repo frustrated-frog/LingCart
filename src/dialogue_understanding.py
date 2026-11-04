@@ -298,10 +298,15 @@ def _validate_goal_coverage(understanding: TurnUnderstanding, user_message: str)
               *(claim.source_quote for objective in understanding.objectives
                 for claim in objective.evidence_readiness_claims)]
     contract = (current_runtime().snapshot.get('after_sales_intent_contract') or {}) if current_runtime() else {}
-    quotes.extend(row['source']['text'] for row in contract.get('requirements', [])
-                  if row['source']['source'] == 'CURRENT_TURN'
-                  and row['requirement']['kind'] in {'USER_FACT', 'UNKNOWN', 'PROHIBITION', 'EXECUTION_BOUNDARY'})
-    uncovered = [clause for clause in clauses if not any(quote in clause for quote in quotes)]
+    context_quotes = [row['source']['text'] for row in contract.get('requirements', [])
+                      if row['source']['source'] == 'CURRENT_TURN'
+                      and row['requirement']['kind'] in {
+                          'USER_FACT', 'UNKNOWN', 'PROHIBITION', 'EXECUTION_BOUNDARY', 'SOFT_PREFERENCE'}]
+    # 独立提取的处理顺序可能跨越多个分句。完整覆盖的分句无需伪造一个业务目标；
+    # OUTCOME 不享有此豁免，仍须有独立的规划声明，防止长引用掩盖漏掉的业务任务。
+    uncovered = [clause for clause in clauses
+                 if not any(quote in clause for quote in quotes + context_quotes)
+                 and not any(clause in quote for quote in context_quotes)]
     if uncovered:
         raise AgentError(
             "INCOMPLETE_REQUEST_COVERAGE",

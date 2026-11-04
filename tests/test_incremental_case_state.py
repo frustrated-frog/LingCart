@@ -270,11 +270,16 @@ def test_deferred_material_then_provided_does_not_invent_evidence(models):
     models.batch=True
     result=run(text)
     assert not result.get('pending_action')
+    assert result['status'] == 'PARTIAL', result
+    assert any(t['tool'] == 'record_after_sales_evidence_readiness' for t in result['trace'])
     with tools._session() as session:
         assert not session.scalars(select(AfterSalesEvidence).where(AfterSalesEvidence.evidence_type=='ORIGINAL_PACKAGING')).all()
     models.batch=False
     run(SERIAL)
-    assert run(PACKAGING)['status']=='WAITING_APPROVAL'
+    # 延期后不再有包装的待答问题，补交必须显式引用要求，不能依赖旧问题绑定。
+    models.explicit_target='ORIGINAL_PACKAGING'
+    final=run(PACKAGING)
+    assert final['status']=='WAITING_APPROVAL', final
 
 
 @pytest.mark.parametrize('invalid_parent',[False,True])

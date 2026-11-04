@@ -57,7 +57,7 @@ def planning_input(context, state, graph, current, executed):
     history = [row['content'] for row in context.snapshot.get('history', []) if row.get('role') == 'user'][-4:]
     contract = context.snapshot.get('after_sales_intent_contract') or {}
     goals = [row['requirement'] for row in contract.get('requirements', [])
-             if row['requirement']['kind'] in {'OUTCOME', 'EXECUTION_BOUNDARY', 'PROHIBITION'}]
+             if row['requirement']['kind'] in {'OUTCOME', 'EXECUTION_BOUNDARY', 'PROHIBITION', 'SOFT_PREFERENCE'}]
     requirements = (current.get('policy_decision', {}).get('facts') or {}).get('evidence_requirements', [])
     return dict(current_request=request, human_history=history, goals=goals,
                 state=state.model_dump(mode='json', exclude={'next_actions'}),

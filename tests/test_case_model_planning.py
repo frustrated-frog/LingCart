@@ -159,9 +159,10 @@ def test_stale_state_never_calls_model():
 
 def test_planning_budget_exhaustion_stops_before_autonomous_write(planner):
     from src.runtime import BudgetLimits
-    result = run(limits=BudgetLimits(max_model_calls=0))
+    result = run(limits=BudgetLimits(max_model_calls=3))
     assert result['error']['code'] == 'MODEL_ROUND_BUDGET_EXHAUSTED'
     assert not planner.inputs
+    assert [t['tool'] for t in result['trace']] == ['prepare_after_sales_case']
     assert not result['pending_action']
 
 
