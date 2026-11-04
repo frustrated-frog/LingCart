@@ -1,0 +1,61 @@
+{
+  "schema_version": 1,
+  "profile_id": "after-sales-goal-revision-v1",
+  "version": "1.0.0",
+  "display_name": "案件目标修订候选",
+  "description": "区分材料更新与案件目标，持久保存草稿、暂停和继续模式。",
+  "engine": {
+    "id": "orchestrator",
+    "version": "1"
+  },
+  "mechanisms": [
+    {
+      "slot": "planning",
+      "id": "model-case-execution",
+      "version": "3"
+    },
+    {
+      "slot": "tool_protocol",
+      "id": "evidence-patch-ledger",
+      "version": "1"
+    },
+    {
+      "slot": "verification",
+      "id": "incremental-case-verification",
+      "version": "1"
+    }
+  ],
+  "capabilities": [
+    "open_set_dialogue_understanding",
+    "after_sales_case_planning",
+    "policy_aware_case_execution",
+    "after_sales_evidence_boundary",
+    "evidence_readiness_ledger",
+    "cross_turn_evidence_readiness",
+    "obligation_graph_planning",
+    "multi_candidate_action_solver",
+    "active_clarification",
+    "counterfactual_answer_branches",
+    "pareto_question_selection",
+    "durable_pending_clarification",
+    "cross_turn_answer_binding",
+    "durable_runtime",
+    "approval_guard",
+    "tool_ledger",
+    "independent_material_scope",
+    "incremental_evidence_verification",
+    "targeted_case_repair",
+    "committed_evidence_transitions",
+    "typed_material_changes",
+    "goal_conditioned_action_selection",
+    "observation_driven_replanning",
+    "goal_clarification_pause",
+    "durable_case_goal_revision",
+    "independent_goal_and_material_updates"
+  ],
+  "research": {
+    "status": "candidate",
+    "source_type": "native",
+    "hypothesis": "独立解释案件目标与材料，持久化草稿、暂停和继续模式，可能减少混合请求的遗漏与不必要澄清；通过冻结对照检验成功率和模型成本。"
+  }
+}

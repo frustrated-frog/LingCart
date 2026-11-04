@@ -104,6 +104,7 @@ class AfterSalesPlanningMechanism(EmbeddedMechanism):
     case_execution_mode: str = "policy_aware"
     evidence_intake_mode: str = "model_default"
     action_selection_mode: str = "priority_v2"
+    goal_revision: bool = False
 
     def install(self, context) -> None:
         super().install(context)
@@ -116,6 +117,7 @@ class AfterSalesPlanningMechanism(EmbeddedMechanism):
                 "case_execution_mode": self.case_execution_mode,
                 "evidence_intake_mode": self.evidence_intake_mode,
                 "action_selection_mode": self.action_selection_mode,
+                **({"goal_revision": True} if self.goal_revision else {}),
             },
         )
 
@@ -126,6 +128,7 @@ class AfterSalesPlanningMechanism(EmbeddedMechanism):
                 "case_execution_mode": self.case_execution_mode,
                 "evidence_intake_mode": self.evidence_intake_mode,
                 "action_selection_mode": self.action_selection_mode,
+                **({"goal_revision": True} if self.goal_revision else {}),
             },
         }
 
@@ -334,6 +337,12 @@ def built_in_mechanisms() -> tuple[HarnessMechanism, ...]:
             active_clarification_sources + ("src/after_sales/model_planning.py",),
             case_execution_mode="policy_aware", evidence_intake_mode="readiness_ledger",
             action_selection_mode="model_planning",
+        ),
+        AfterSalesPlanningMechanism(
+            "planning", "model-case-execution", "3", ("orchestrator",),
+            active_clarification_sources + ("src/after_sales/model_planning.py", "src/after_sales/goals.py"),
+            case_execution_mode="policy_aware", evidence_intake_mode="readiness_ledger",
+            action_selection_mode="model_planning", goal_revision=True,
         ),
         EmbeddedMechanism("tool_protocol", "runtime-tool-ledger", "2", ("orchestrator",),
                           ("src/runtime.py", "src/persistence.py", "src/backend/db.py",

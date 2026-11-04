@@ -141,6 +141,8 @@ def build_plan(intake):
 
 def _facts(step):
     result, name, order_id = step.result, step.tool, step.args.get("order_id")
+    if isinstance(result, dict) and result.get('suppressed_by_goal'):
+        return ''  # 前项案件投影已解释当前目标；确认准备步骤不重复回复。
     if step.status in {"FAILED", "SKIPPED"}:
         return f"{step.specialist} 步骤未完成：{(step.error or {}).get('message', '前置查询未完成')}"
     contract = get_capability_registry().operation_contract(name)
@@ -293,6 +295,15 @@ def _advance_after_sales_case(
     material_observations=(),
 ):
     """Consume persisted CasePlan actions without creating a second runtime or bypassing ToolExecutor."""
+    from src.after_sales.goals import held_goal, goal_message
+    goal = held_goal(current_runtime(), result.get('case_id'))
+    if goal:
+        recorder.record('case_goal_applied', case_id=result['case_id'], goal=goal,
+                        case_revision=result['revision'], material_observations=list(material_observations))
+        return {**result, 'autonomous_execution': {
+            'status': 'WAIT_USER_INPUT' if goal['mode'] == 'CLARIFY' else 'COMPLETE',
+            'reason_code': 'MODEL_GOAL_CLARIFICATION' if goal['mode'] == 'CLARIFY' else 'CASE_GOAL_' + goal['mode'],
+            'question': goal_message(goal), 'goal_mode': goal['mode'], 'goal_revision': goal['revision']}}
     current = result
     executed = []
     initial_state_id = None
@@ -595,7 +606,7 @@ def execute_plan(intake, run_id, *, plan=None, source="deterministic", incomplet
     planning_history = deepcopy((context.snapshot.get('conversation') or {}).get('case_model_decisions', {})) if context else {}
     batch_observations = {}
     batch_planning = (getattr(context.mechanisms.get('planning'), 'mechanism_id', None) == 'model-case-execution'
-                      and getattr(context.mechanisms.get('planning'), 'mechanism_version', None) == '2') if context else False
+                      and getattr(context.mechanisms.get('planning'), 'mechanism_version', None) in {'2', '3'}) if context else False
     stop_error = None
     for step_index, step in enumerate(plan.steps):
         dependency_failed = any(completed[d].status not in {"SUCCEEDED", "REUSED", "WAITING_APPROVAL", "REJECTED"} for d in step.depends_on)
@@ -621,6 +632,11 @@ def execute_plan(intake, run_id, *, plan=None, source="deterministic", incomplet
                             step.status = "SUCCEEDED"
                             step.outcome = "UNAVAILABLE_EVIDENCE"
                             step.result = {"message": "案件已保留，待明确处理目标后继续。"}
+                        elif (observation.get('autonomous_execution') or {}).get('goal_mode') in {'DRAFT', 'PAUSED'}:
+                            step.status = 'SUCCEEDED'
+                            step.outcome = 'SATISFIED'
+                            step.result = {'message': observation['autonomous_execution']['question'],
+                                           'suppressed_by_goal': observation['autonomous_execution']['goal_mode']}
                         elif outcome == "ELIGIBLE" and _case_submission_restricted(context):
                             step.status = "SUCCEEDED"
                             step.outcome = "SATISFIED"

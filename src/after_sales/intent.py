@@ -37,11 +37,19 @@ def verify_intent(context, understanding, request, history):
             if not case or not case.get('reason_code'):
                 raise AgentError('CASE_CONTEXT_CONFLICT', '继续案件缺少当前会话身份', retryable=False)
             expected[(case['order_id'], case['reason_code'])] += 1
+    from src.after_sales.goals import enabled as goals_enabled
+    preserved = {r['requirement_id'] for r in contract['revisions'] if r['operation'] == 'PRESERVE'}
     actual = Counter((row.outcome.order_id, row.outcome.reason_code) for row in rows
-                     if row.kind == 'OUTCOME' and row.outcome.kind == 'after_sales_case')
+                     if row.kind == 'OUTCOME' and row.outcome.kind == 'after_sales_case'
+                     and not (goals_enabled(context) and row.requirement_id in preserved
+                              and (row.outcome.order_id, row.outcome.reason_code) not in expected))
     if actual != expected:
         raise AgentError('REQUEST_SEMANTICS_MISMATCH', '独立售后需求与案件目标不一致，尚未执行写入', retryable=False)
     restrictions = {row.restriction for row in rows if row.restriction}
+    if goals_enabled(context) and 'NO_SUBMISSION' in restrictions:
+        restrictions |= {'NO_PAYMENT', 'NO_REFUND'}
+    if goals_enabled(context) and any(row.case_goal and row.case_goal.mode != 'CONTINUE' for row in rows):
+        restrictions |= {'NO_SUBMISSION', 'NO_REFUND'}
     for change in understanding.execution_boundaries:
         if (change.operation == 'DENY') != (change.restriction in restrictions):
             raise CaseTurnMismatch('执行限制与独立需求不一致', fields={
@@ -50,6 +58,8 @@ def verify_intent(context, understanding, request, history):
     if scoped:
         changed_ids = {r['requirement_id'] for r in contract['revisions'] if r['operation'] in {'ADD', 'REPLACE'}}
         verify_material_scope(context, objectives, [row for row in rows if row.requirement_id in changed_ids], cases, request)
+    from src.after_sales.goals import goal_changes
+    goal_changes(context, understanding, rows, contract)
     # 新提取的限制只有完整语义接受后才允许释放。
     apply_semantic_boundaries(context, contract)
     context.snapshot['request_semantics'] = deepcopy(contract)

@@ -103,6 +103,8 @@ def current_case_context() -> list[dict]:
                 runtime.checkpoint(case_context=result)
                 return result
         service = AfterSalesCaseService(session)
+        from src.after_sales.goals import current_goals
+        goals = current_goals(runtime)
         result = []
         for row in rows:
             case = current_case_projection(session, service.get_case(row.case_id))
@@ -116,6 +118,7 @@ def current_case_context() -> list[dict]:
             )
             result.append({"case_id": row.case_id, "order_id": row.order_id,
                            "revision": row.revision, "status": row.status, "reason_code": row.reason_code,
+                           **({"goal": goals[row.case_id]} if row.case_id in goals else {}),
                            "policy": {
                                "policy_version_id": decision.get("policy_version_id"),
                                "policy_checksum": decision.get("policy_checksum"),

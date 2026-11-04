@@ -731,7 +731,7 @@ class ToolExecutor:
         context = current_runtime()
         context = context if context and context.run_id == self.recorder.run_id else None
         from src.execution_boundaries import require_allowed
-        require_allowed(context, name, spec)
+        require_allowed(context, name, spec, args)
         if context:
             context.hooks.emit(context, 'before_tool', {'tool': name, 'args': args, 'policy': policy})
         if spec.preflight:

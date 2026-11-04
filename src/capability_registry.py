@@ -733,6 +733,8 @@ def _render_after_sales_case(result: object, _arguments: Mapping[str, object]) -
     latest_plan = next(reversed(case.get("plans") or []), {})
     autonomous = result.get("autonomous_execution") or {}
     selected_question = autonomous.get("question")
+    if autonomous.get('goal_mode') in {'DRAFT', 'PAUSED'} and selected_question:
+        return f"售后案件 {result['case_id']}：{selected_question}"
     if autonomous.get("reason_code") == "MODEL_GOAL_CLARIFICATION" and selected_question:
         return f"售后案件 {result['case_id']} 已保留。请先明确处理目标：{selected_question}"
     if (

@@ -80,6 +80,11 @@ def extract_contract(context, request, history, *, previous=None, change_text=No
     native = getattr(model, 'native_protocol', False)
     from src.semantic_wire import condition_schema, decode_conditions
     schema = _compact(condition_schema(IntentExtraction.model_json_schema()))
+    from src.after_sales.goals import enabled as goals_enabled, SEMANTIC_INSTRUCTION
+    goal_protocol = goals_enabled(context) and case_context is not None
+    if not goal_protocol:
+        schema['$defs']['IntentRequirement']['properties'].pop('case_goal', None)
+        schema['$defs'].pop('CaseGoalScope', None)
     if case_context is None:
         schema['$defs']['IntentRequirement']['properties'].pop('material_scope', None)
         schema['$defs'].pop('MaterialScope', None)
@@ -98,6 +103,8 @@ def extract_contract(context, request, history, *, previous=None, change_text=No
             prompt += ('\nAn explicit withdrawal is a USER_FACT with material_scope.disposition=RETRACTED and the '
                        'existing requirement identity. A replacement has disposition=PROVIDED; its quote must retain '
                        'the explicit correction and replacement facts. Merely repeating a preserved fact is not ADD/REPLACE.')
+    if goal_protocol:
+        prompt += '\n' + SEMANTIC_INSTRUCTION
     declarations = None
     if native:
         declarations = [function('extract_requirements', '提取 HUMAN 需求与显式修订，不执行动作', schema)]

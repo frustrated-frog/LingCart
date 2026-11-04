@@ -287,7 +287,7 @@ def _execute_understanding(
         )
     elif "HUMAN_HANDOFF" in kinds:
         result = _explicit_escalation(intake, run_id, user_message)
-    elif "CLARIFY" in kinds:
+    elif "CLARIFY" in kinds and not understanding.objectives:
         question = next(command.message for command in understanding.commands if command.kind == "CLARIFY")
         result = _simple_result(
             intake,
@@ -299,6 +299,18 @@ def _execute_understanding(
             terminal_reason="MODEL_CLARIFICATION",
         )
     elif understanding.objectives:
+        from src.after_sales.goals import held_goal, goal_message
+        held = [held_goal(current_runtime(), o.case_id) for o in understanding.objectives]
+        goal_only = all(o.kind == 'AFTER_SALES_CONTINUE' and goal and not (
+            o.evidence_updates or o.evidence_text or o.evidence_readiness_claims or o.revoke_evidence_id)
+            for o, goal in zip(understanding.objectives, held))
+        if goal_only:
+            clarify = any(g['mode'] == 'CLARIFY' for g in held)
+            result = _simple_result(intake, run_id, reply='\n'.join(goal_message(g) for g in held),
+                agent='after_sales', route='DIRECT', status='WAITING_CLARIFICATION' if clarify else 'SUCCEEDED',
+                terminal_reason='MODEL_GOAL_CLARIFICATION' if clarify else 'COMPLETED')
+            result.update(understanding=payload, request_ir=request_ir)
+            return result
         planned_intake, plan = to_task_plan(understanding, user_message, history)
         if planned_intake.execution_mode == CLARIFICATION_REQUIRED:
             missing_order = planned_intake.missing_slots == ("order_id",)
@@ -518,7 +530,9 @@ def _run_orchestrator(user_message: str, history: list | None = None, pending_ac
 
     # Browsing another read-only task must not silently discard an existing
     # approval. Only explicit confirmation/cancellation consumes that action.
-    if pending_action and approval_decision not in {APPROVAL_CONFIRMED, APPROVAL_CANCELLED} and not result.get("pending_action"):
+    from src.after_sales.goals import action_held
+    if (pending_action and not action_held(current_runtime(), pending_action)
+            and approval_decision not in {APPROVAL_CONFIRMED, APPROVAL_CANCELLED} and not result.get("pending_action")):
         result["pending_action"] = pending_action
     result["latency_ms"] = round((time.perf_counter() - started_at) * 1000, 2)
     logger.info(
@@ -566,6 +580,7 @@ def run_orchestrator(user_message: str, history: list | None = None, pending_act
                 "INVALID_APPROVAL",
                 "APPROVAL_ALREADY_USED",
                 "REFUND_SCOPE_MISMATCH",
+                "CASE_GOAL_HELD",
             }
             else pending_action
         )

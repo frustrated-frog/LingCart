@@ -86,11 +86,18 @@ def apply_semantic_boundaries(context, contract, *, restrict_only=False):
                    restrict_only=restrict_only)
 
 
-def require_allowed(context, name, spec):
+def require_allowed(context, name, spec, arguments=None):
     """在账本重放、preflight 和副作用执行之前检查，已有审批不能越过限制。"""
     if context is None:
         return
     from src.runtime import BusinessEffect, ToolEffect
+    if arguments and set(spec.business_effects) & {BusinessEffect.REFUND, BusinessEffect.FINAL_SUBMISSION}:
+        from src.after_sales.goals import current_goals
+        for goal in current_goals(context).values():
+            if goal['mode'] != 'CONTINUE' and (arguments.get('case_id') == goal['case_id']
+                    or arguments.get('order_id') == goal['order_id']):
+                context.record('case_goal_execution_blocked', tool=name, case_id=goal['case_id'], mode=goal['mode'])
+                raise AgentError('CASE_GOAL_HELD', '当前案件目标不允许提交或退款，继续处理也不等于确认授权', retryable=False)
     for row in current_boundaries(context):
         restriction = row['restriction']
         blocked = (

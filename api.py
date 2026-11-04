@@ -26,6 +26,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from src import tools
+from src.after_sales.goals import CaseGoal
 from src.after_sales import CaseDetail, CaseListItem, CaseStatus
 from src.logging_config import configure_logging
 from src.durable import run_conversation, resume_run
@@ -148,6 +149,7 @@ class ChatResponse(BaseModel):
     request_semantics: dict | None = None
     semantic_revision: dict | None = None
     execution_boundaries: list[dict] = Field(default_factory=list)
+    case_goals: dict[str, CaseGoal] = Field(default_factory=dict)
     pending_action: dict | None = None
     pending_clarification: dict | None = None
     error: dict | None = None

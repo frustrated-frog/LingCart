@@ -374,6 +374,18 @@ class RunStore:
             )
             new_clarification = result.get("pending_clarification")
             now = utcnow()
+            from src.backend.db import AfterSalesPendingClarification
+            held_cases = {key for key, goal in state.get('case_goals', {}).items() if goal['mode'] != 'CONTINUE'}
+            if held_cases:
+                for question in session.scalars(select(AfterSalesPendingClarification).where(
+                    AfterSalesPendingClarification.session_id == run.session_id,
+                    AfterSalesPendingClarification.case_id.in_(held_cases),
+                    AfterSalesPendingClarification.status == 'OPEN',
+                )).all():
+                    question.status = 'SUPERSEDED'
+                    question.resolved_at = now
+                if isinstance(new_clarification, dict) and new_clarification.get('case_id') in held_cases:
+                    new_clarification = None
             persisted_clarification = None
             if isinstance(new_clarification, dict):
                 persisted_clarification = persist_open_clarification(

@@ -11,6 +11,7 @@ from src.adaptive_decision import Constraint, StrictModel
 from src.constraint_bindings import fingerprint
 from src.errors import AgentError
 from src.request_ir import SourceSpan, locate_source_span
+from src.after_sales.goals import CaseGoalScope
 
 
 class OutcomeSpec(StrictModel):
@@ -59,6 +60,7 @@ class IntentRequirement(StrictModel):
     targets: list[str] = Field(default_factory=list, max_length=8)
     restriction: Literal['READ_ONLY', 'NO_PAYMENT', 'NO_REFUND', 'NO_SUBMISSION'] | None = None
     material_scope: MaterialScope | None = None
+    case_goal: CaseGoalScope | None = None
 
     @model_validator(mode='after')
     def typed_requirement(self):
@@ -74,6 +76,8 @@ class IntentRequirement(StrictModel):
             raise ValueError('Only an execution boundary may restrict effects')
         if self.material_scope is not None and self.kind != 'USER_FACT':
             raise ValueError('Only a material USER_FACT may carry material_scope')
+        if self.case_goal is not None and (self.kind not in {'EXECUTION_BOUNDARY', 'UNKNOWN'} or self.restriction):
+            raise ValueError('Case goals are scoped process requirements, not global restrictions')
         return self
 
 

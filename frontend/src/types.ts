@@ -274,6 +274,16 @@ export interface ExecutionBoundary {
   requirement_id?: string
 }
 
+export interface CaseGoal {
+  case_id: string
+  order_id: number
+  mode: 'CONTINUE' | 'DRAFT' | 'PAUSED' | 'CLARIFY'
+  revision: number
+  source: RequestSourceSpan
+  run_id: string
+  question: string | null
+}
+
 export interface RequestSemantics {
   version: 'request-semantics/v1'
   sha256: string
@@ -285,6 +295,7 @@ export interface RequestSemantics {
       kind: 'OUTCOME' | 'CONDITION' | 'PROHIBITION' | 'EXECUTION_BOUNDARY' | 'USER_FACT' | 'SOFT_PREFERENCE' | 'UNKNOWN'
       description: string
       source_quote: string
+      case_goal?: { case_id: string; mode: CaseGoal['mode'] } | null
       targets: string[]
       outcome: { kind: string; reason_code?: string | null; quantity: number; order_id: number | null; question: string | null; product_ids: string[] } | null
       predicate: { field: string | null; op: string; value: unknown } | null
@@ -323,6 +334,7 @@ export interface RunResult {
   request_semantics?: RequestSemantics | null
   semantic_revision?: SemanticRevision | null
   execution_boundaries?: ExecutionBoundary[]
+  case_goals?: Record<string, CaseGoal>
   budget?: Record<string, unknown>
   usage?: Record<string, number | null>
   pending_action?: PendingAction | null
