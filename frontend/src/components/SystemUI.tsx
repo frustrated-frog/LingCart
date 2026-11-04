@@ -42,6 +42,7 @@ export const TERMINAL_REASON_LABELS: Record<string, string> = {
   BUSINESS_RULE_REJECTED: '业务规则拒绝执行', INVALID_PENDING_ACTION: '待处理操作无效',
   APPROVAL_REQUIRED: '需要用户确认', NO_PENDING_ACTION: '没有待确认操作',
   MODEL_CLARIFICATION: '模型请求补充信息', MISSING_ORDER_ID: '缺少订单号',
+  MODEL_GOAL_CLARIFICATION: '需要明确处理目标', INVALID_CASE_MODEL_DECISION: '行动决策未通过校验',
   MISSING_REQUIRED_INFORMATION: '缺少必要信息', UNSUPPORTED_INTENT: '请求超出能力范围',
   UNSUPPORTED_SHARED_BUDGET: '暂不支持多商品共享预算求解',
   USER_CANCELLED_ACTION: '用户取消操作', USER_CANCELLED_RUN: '用户取消运行',
@@ -140,6 +141,8 @@ const EVENT_LABELS: Record<string, [string, string]> = {
   case_plan_revised: ['案件', '修订证据与行动计划'],
   case_state_projected: ['案件', '投影政策约束案件状态'],
   case_lookahead_solved: ['前瞻', '比较有限步信息获取路径'],
+  case_model_decision: ['决策', '模型根据目标和实际观察选择下一步'],
+  case_model_decision_rejected: ['拒绝', '模型行动未通过执行前校验'],
   case_obligation_graph_solved: ['义务图', '构建并求解政策义务图'],
   case_clarification_portfolio_solved: ['澄清', '比较澄清问题的信息价值'],
   case_clarification_opened: ['澄清', '持久化待回答问题'],
@@ -198,6 +201,7 @@ const EVENT_LABELS: Record<string, [string, string]> = {
 }
 
 const MODEL_PURPOSE_LABELS: Record<string, string> = {
+  case_action_decision: '售后行动决策',
   dialogue_understanding: '对话理解', evidence_verification: '证据语义核验', goal: '目标提取', planner: '任务规划',
   agent: '智能体执行', final_response: '最终回答', audit: '独立审查', liveplan_advisor: 'LivePlan 纠偏建议',
   pg_guidance: '程序图指导', pg_refiner: '程序图演化',

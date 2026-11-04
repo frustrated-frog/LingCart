@@ -1,5 +1,15 @@
 export type ResearchStatus = 'baseline' | 'candidate' | 'promoted'
 
+export interface ModelCaseDecision {
+  action: 'SELECT' | 'CLARIFY_GOAL'
+  candidate_id: string | null
+  source_quote: string
+  reason: string
+  question: string | null
+  expected_observation: string
+  replan_when: string
+}
+
 export interface InformationPath {
   candidate_ids: string[]
   requirement_ids: string[]
