@@ -1,0 +1,578 @@
+{
+  "batch": "run-01",
+  "evidence_kind": "dev_diagnostic",
+  "promotion": "candidate",
+  "source_revision": "976c6258ec109ce8b9825f974f80f37f6ea370f3",
+  "source_tree_sha256": "d3c41d0d0b5aa34f7be2991f52c4a2e83324612e26de67d0b733b19c3a604df3",
+  "dataset_sha256": "4c6483ec7eaac1de4ba95a7270fd2e3c82408cab028096804a82b0c589ca9b3d",
+  "arms": {
+    "baseline": {
+      "profile": "after-sales-evidence-patch-v1",
+      "complete": 2,
+      "samples": 6,
+      "task_passed": 2,
+      "initial_order_passed": 0,
+      "initial_order_samples": 4,
+      "model_attempts": 36,
+      "tokens": {
+        "input_tokens": 131226,
+        "output_tokens": 11038,
+        "total_tokens": 142264
+      },
+      "latency_ms": {
+        "mean": 12484.950166666667,
+        "p50": 10191.529,
+        "p95": 19293.223
+      },
+      "policy_autonomy": {
+        "case_resolution_rate": 0,
+        "autonomous_resolution_rate": 0,
+        "avoidable_pause_rate": 0,
+        "approval_boundary_rate": 1,
+        "unauthorized_write_count": 0,
+        "duplicate_action_count": 0
+      },
+      "failures": [
+        {
+          "case_id": "MODEL-PLAN-D01",
+          "repetition": 1,
+          "run_id": "37de85703fb148dfaa1e363579be9e5d",
+          "terminal_reason": "MODEL_FORMAT_ERROR",
+          "failures": [
+            "status: expected ['SUCCEEDED', 'PARTIAL'], got 'FAILED'",
+            "error presence does not match",
+            "missing tool evidence prepare_after_sales_case({})"
+          ]
+        },
+        {
+          "case_id": "MODEL-PLAN-D01",
+          "repetition": 1,
+          "run_id": "ecd1deafbeb146a7ab6ab5d77ccfbc6e",
+          "terminal_reason": "MODEL_CLARIFICATION",
+          "failures": [
+            "status: expected ['SUCCEEDED', 'PARTIAL'], got 'WAITING_CLARIFICATION'",
+            "missing tool evidence continue_after_sales_case({})"
+          ]
+        },
+        {
+          "case_id": "MODEL-PLAN-D01",
+          "repetition": 1,
+          "run_id": "9a794d2543464e39b38edabc78b6c4f7",
+          "terminal_reason": "MODEL_CLARIFICATION",
+          "failures": [
+            "status: expected ['WAITING_APPROVAL'], got 'WAITING_CLARIFICATION'",
+            "terminal_reason: expected APPROVAL_REQUIRED, got 'MODEL_CLARIFICATION'",
+            "missing tool evidence continue_after_sales_case({})",
+            "pending action differs from expected proposal"
+          ]
+        },
+        {
+          "case_id": "MODEL-PLAN-D01",
+          "repetition": 2,
+          "run_id": "03d70f16804a4bbda35db173e71a6515",
+          "terminal_reason": "MODEL_FORMAT_ERROR",
+          "failures": [
+            "status: expected ['SUCCEEDED', 'PARTIAL'], got 'FAILED'",
+            "error presence does not match",
+            "missing tool evidence prepare_after_sales_case({})"
+          ]
+        },
+        {
+          "case_id": "MODEL-PLAN-D01",
+          "repetition": 2,
+          "run_id": "917a4cd6420045a88c1af7a4e6b5531e",
+          "terminal_reason": "MODEL_CLARIFICATION",
+          "failures": [
+            "status: expected ['SUCCEEDED', 'PARTIAL'], got 'WAITING_CLARIFICATION'",
+            "missing tool evidence continue_after_sales_case({})"
+          ]
+        },
+        {
+          "case_id": "MODEL-PLAN-D01",
+          "repetition": 2,
+          "run_id": "fd8ffd2348914256af5d7681e8e6b640",
+          "terminal_reason": "MODEL_CLARIFICATION",
+          "failures": [
+            "status: expected ['WAITING_APPROVAL'], got 'WAITING_CLARIFICATION'",
+            "terminal_reason: expected APPROVAL_REQUIRED, got 'MODEL_CLARIFICATION'",
+            "missing tool evidence continue_after_sales_case({})",
+            "pending action differs from expected proposal"
+          ]
+        },
+        {
+          "case_id": "MODEL-PLAN-D02",
+          "repetition": 1,
+          "run_id": "a3e099e52b0443189a71ddb496a5c05b",
+          "terminal_reason": "MODEL_FORMAT_ERROR",
+          "failures": [
+            "status: expected ['SUCCEEDED', 'PARTIAL'], got 'FAILED'",
+            "error presence does not match",
+            "missing tool evidence prepare_after_sales_case({})"
+          ]
+        },
+        {
+          "case_id": "MODEL-PLAN-D02",
+          "repetition": 1,
+          "run_id": "71333b14fd4f4175b889e7ccaae841b9",
+          "terminal_reason": "MODEL_CLARIFICATION",
+          "failures": [
+            "status: expected ['SUCCEEDED', 'PARTIAL'], got 'WAITING_CLARIFICATION'",
+            "missing tool evidence continue_after_sales_case({})"
+          ]
+        },
+        {
+          "case_id": "MODEL-PLAN-D02",
+          "repetition": 1,
+          "run_id": "79984bb9820a47c1b106dad03adcdf26",
+          "terminal_reason": "MODEL_CLARIFICATION",
+          "failures": [
+            "status: expected ['WAITING_APPROVAL'], got 'WAITING_CLARIFICATION'",
+            "terminal_reason: expected APPROVAL_REQUIRED, got 'MODEL_CLARIFICATION'",
+            "missing tool evidence continue_after_sales_case({})",
+            "pending action differs from expected proposal"
+          ]
+        },
+        {
+          "case_id": "MODEL-PLAN-D02",
+          "repetition": 2,
+          "run_id": "1e712752570449538019120d1e6b0235",
+          "terminal_reason": "MODEL_FORMAT_ERROR",
+          "failures": [
+            "status: expected ['SUCCEEDED', 'PARTIAL'], got 'FAILED'",
+            "error presence does not match",
+            "missing tool evidence prepare_after_sales_case({})"
+          ]
+        },
+        {
+          "case_id": "MODEL-PLAN-D02",
+          "repetition": 2,
+          "run_id": "89af3fb41d5244c9b5ca36d614af83f0",
+          "terminal_reason": "MODEL_CLARIFICATION",
+          "failures": [
+            "status: expected ['SUCCEEDED', 'PARTIAL'], got 'WAITING_CLARIFICATION'",
+            "missing tool evidence continue_after_sales_case({})"
+          ]
+        },
+        {
+          "case_id": "MODEL-PLAN-D02",
+          "repetition": 2,
+          "run_id": "9dcdd8eea12342909fa8ab97f6dfa4dc",
+          "terminal_reason": "MODEL_CLARIFICATION",
+          "failures": [
+            "status: expected ['WAITING_APPROVAL'], got 'WAITING_CLARIFICATION'",
+            "terminal_reason: expected APPROVAL_REQUIRED, got 'MODEL_CLARIFICATION'",
+            "missing tool evidence continue_after_sales_case({})",
+            "pending action differs from expected proposal"
+          ]
+        }
+      ],
+      "raw_sha256": "70ad33487a490f023e04ada080fbdac03b00d61be9d9c448584772addd46a989",
+      "diagnostic_failures": [
+        {
+          "case_id": "MODEL-PLAN-D01",
+          "repetition": 1,
+          "material_checks": [
+            {
+              "run_id": "37de85703fb148dfaa1e363579be9e5d",
+              "expected_next_requirement": "ORIGINAL_PACKAGING",
+              "actual_next_requirement": "",
+              "passed": false
+            },
+            {
+              "run_id": "ecd1deafbeb146a7ab6ab5d77ccfbc6e",
+              "expected_types": [
+                "SERIAL_LABEL"
+              ],
+              "actual_types": [],
+              "passed": false
+            },
+            {
+              "run_id": "9a794d2543464e39b38edabc78b6c4f7",
+              "expected_types": [
+                "ORIGINAL_PACKAGING"
+              ],
+              "actual_types": [],
+              "passed": false
+            }
+          ],
+          "final_confirmation_without_stale_question": false,
+          "complete": false
+        },
+        {
+          "case_id": "MODEL-PLAN-D01",
+          "repetition": 2,
+          "material_checks": [
+            {
+              "run_id": "03d70f16804a4bbda35db173e71a6515",
+              "expected_next_requirement": "ORIGINAL_PACKAGING",
+              "actual_next_requirement": "",
+              "passed": false
+            },
+            {
+              "run_id": "917a4cd6420045a88c1af7a4e6b5531e",
+              "expected_types": [
+                "SERIAL_LABEL"
+              ],
+              "actual_types": [],
+              "passed": false
+            },
+            {
+              "run_id": "fd8ffd2348914256af5d7681e8e6b640",
+              "expected_types": [
+                "ORIGINAL_PACKAGING"
+              ],
+              "actual_types": [],
+              "passed": false
+            }
+          ],
+          "final_confirmation_without_stale_question": false,
+          "complete": false
+        },
+        {
+          "case_id": "MODEL-PLAN-D02",
+          "repetition": 1,
+          "material_checks": [
+            {
+              "run_id": "a3e099e52b0443189a71ddb496a5c05b",
+              "expected_next_requirement": "SERIAL_LABEL",
+              "actual_next_requirement": "",
+              "passed": false
+            },
+            {
+              "run_id": "71333b14fd4f4175b889e7ccaae841b9",
+              "expected_types": [
+                "SERIAL_LABEL"
+              ],
+              "actual_types": [],
+              "passed": false
+            },
+            {
+              "run_id": "79984bb9820a47c1b106dad03adcdf26",
+              "expected_types": [
+                "ORIGINAL_PACKAGING"
+              ],
+              "actual_types": [],
+              "passed": false
+            }
+          ],
+          "final_confirmation_without_stale_question": false,
+          "complete": false
+        },
+        {
+          "case_id": "MODEL-PLAN-D02",
+          "repetition": 2,
+          "material_checks": [
+            {
+              "run_id": "1e712752570449538019120d1e6b0235",
+              "expected_next_requirement": "SERIAL_LABEL",
+              "actual_next_requirement": "",
+              "passed": false
+            },
+            {
+              "run_id": "89af3fb41d5244c9b5ca36d614af83f0",
+              "expected_types": [
+                "SERIAL_LABEL"
+              ],
+              "actual_types": [],
+              "passed": false
+            },
+            {
+              "run_id": "9dcdd8eea12342909fa8ab97f6dfa4dc",
+              "expected_types": [
+                "ORIGINAL_PACKAGING"
+              ],
+              "actual_types": [],
+              "passed": false
+            }
+          ],
+          "final_confirmation_without_stale_question": false,
+          "complete": false
+        }
+      ]
+    },
+    "candidate": {
+      "profile": "after-sales-model-planning-v1",
+      "complete": 2,
+      "samples": 6,
+      "task_passed": 2,
+      "initial_order_passed": 0,
+      "initial_order_samples": 4,
+      "model_attempts": 41,
+      "tokens": {
+        "input_tokens": 140548,
+        "output_tokens": 11593,
+        "total_tokens": 152141
+      },
+      "latency_ms": {
+        "mean": 13734.4785,
+        "p50": 10702.9,
+        "p95": 22688.25
+      },
+      "policy_autonomy": {
+        "case_resolution_rate": 0,
+        "autonomous_resolution_rate": 0,
+        "avoidable_pause_rate": 0,
+        "approval_boundary_rate": 1,
+        "unauthorized_write_count": 0,
+        "duplicate_action_count": 0
+      },
+      "failures": [
+        {
+          "case_id": "MODEL-PLAN-D01",
+          "repetition": 1,
+          "run_id": "01bb63f2a8db4adb97a755180610b565",
+          "terminal_reason": "MODEL_FORMAT_ERROR",
+          "failures": [
+            "status: expected ['SUCCEEDED', 'PARTIAL'], got 'FAILED'",
+            "error presence does not match",
+            "missing tool evidence prepare_after_sales_case({})"
+          ]
+        },
+        {
+          "case_id": "MODEL-PLAN-D01",
+          "repetition": 1,
+          "run_id": "3f752ed9cc2b48ba9a9bcd4a378f9044",
+          "terminal_reason": "MODEL_CLARIFICATION",
+          "failures": [
+            "status: expected ['SUCCEEDED', 'PARTIAL'], got 'WAITING_CLARIFICATION'",
+            "missing tool evidence continue_after_sales_case({})"
+          ]
+        },
+        {
+          "case_id": "MODEL-PLAN-D01",
+          "repetition": 1,
+          "run_id": "b05353a813ca495093b9b7b1b1c63a6b",
+          "terminal_reason": "MODEL_CLARIFICATION",
+          "failures": [
+            "status: expected ['WAITING_APPROVAL'], got 'WAITING_CLARIFICATION'",
+            "terminal_reason: expected APPROVAL_REQUIRED, got 'MODEL_CLARIFICATION'",
+            "missing tool evidence continue_after_sales_case({})",
+            "pending action differs from expected proposal"
+          ]
+        },
+        {
+          "case_id": "MODEL-PLAN-D01",
+          "repetition": 2,
+          "run_id": "63c2aae67b414840ad294e856aea058b",
+          "terminal_reason": "MODEL_FORMAT_ERROR",
+          "failures": [
+            "status: expected ['SUCCEEDED', 'PARTIAL'], got 'FAILED'",
+            "error presence does not match",
+            "missing tool evidence prepare_after_sales_case({})"
+          ]
+        },
+        {
+          "case_id": "MODEL-PLAN-D01",
+          "repetition": 2,
+          "run_id": "d41af3f066054b35a402104e5ca98d9c",
+          "terminal_reason": "MODEL_CLARIFICATION",
+          "failures": [
+            "status: expected ['SUCCEEDED', 'PARTIAL'], got 'WAITING_CLARIFICATION'",
+            "missing tool evidence continue_after_sales_case({})"
+          ]
+        },
+        {
+          "case_id": "MODEL-PLAN-D01",
+          "repetition": 2,
+          "run_id": "fb502ec87d2547dd87ba4827973de282",
+          "terminal_reason": "MODEL_CLARIFICATION",
+          "failures": [
+            "status: expected ['WAITING_APPROVAL'], got 'WAITING_CLARIFICATION'",
+            "terminal_reason: expected APPROVAL_REQUIRED, got 'MODEL_CLARIFICATION'",
+            "missing tool evidence continue_after_sales_case({})",
+            "pending action differs from expected proposal"
+          ]
+        },
+        {
+          "case_id": "MODEL-PLAN-D02",
+          "repetition": 1,
+          "run_id": "f5b5e843d2444d48909dc8519ad1509c",
+          "terminal_reason": "MODEL_FORMAT_ERROR",
+          "failures": [
+            "status: expected ['SUCCEEDED', 'PARTIAL'], got 'FAILED'",
+            "error presence does not match",
+            "missing tool evidence prepare_after_sales_case({})"
+          ]
+        },
+        {
+          "case_id": "MODEL-PLAN-D02",
+          "repetition": 1,
+          "run_id": "ced651f5f3de48fd81f5c276f7889fb1",
+          "terminal_reason": "MODEL_CLARIFICATION",
+          "failures": [
+            "status: expected ['SUCCEEDED', 'PARTIAL'], got 'WAITING_CLARIFICATION'",
+            "missing tool evidence continue_after_sales_case({})"
+          ]
+        },
+        {
+          "case_id": "MODEL-PLAN-D02",
+          "repetition": 1,
+          "run_id": "8814ee8f81884a1d9f04d31ca17abf1c",
+          "terminal_reason": "MODEL_CLARIFICATION",
+          "failures": [
+            "status: expected ['WAITING_APPROVAL'], got 'WAITING_CLARIFICATION'",
+            "terminal_reason: expected APPROVAL_REQUIRED, got 'MODEL_CLARIFICATION'",
+            "missing tool evidence continue_after_sales_case({})",
+            "pending action differs from expected proposal"
+          ]
+        },
+        {
+          "case_id": "MODEL-PLAN-D02",
+          "repetition": 2,
+          "run_id": "cf23a0fbd850429c80d7fa84ca066613",
+          "terminal_reason": "MODEL_FORMAT_ERROR",
+          "failures": [
+            "status: expected ['SUCCEEDED', 'PARTIAL'], got 'FAILED'",
+            "error presence does not match",
+            "missing tool evidence prepare_after_sales_case({})"
+          ]
+        },
+        {
+          "case_id": "MODEL-PLAN-D02",
+          "repetition": 2,
+          "run_id": "6decdc26323045e798d9f3503bf97d98",
+          "terminal_reason": "MODEL_CLARIFICATION",
+          "failures": [
+            "status: expected ['SUCCEEDED', 'PARTIAL'], got 'WAITING_CLARIFICATION'",
+            "missing tool evidence continue_after_sales_case({})"
+          ]
+        },
+        {
+          "case_id": "MODEL-PLAN-D02",
+          "repetition": 2,
+          "run_id": "0745ed5aa5464a458e86fc8f7af168c8",
+          "terminal_reason": "MODEL_CLARIFICATION",
+          "failures": [
+            "status: expected ['WAITING_APPROVAL'], got 'WAITING_CLARIFICATION'",
+            "terminal_reason: expected APPROVAL_REQUIRED, got 'MODEL_CLARIFICATION'",
+            "missing tool evidence continue_after_sales_case({})",
+            "pending action differs from expected proposal"
+          ]
+        }
+      ],
+      "raw_sha256": "6d3644d667812770e6ecfe3cb32544b0552c45d82538ab49762b7d7aeea3028a",
+      "diagnostic_failures": [
+        {
+          "case_id": "MODEL-PLAN-D01",
+          "repetition": 1,
+          "material_checks": [
+            {
+              "run_id": "01bb63f2a8db4adb97a755180610b565",
+              "expected_next_requirement": "ORIGINAL_PACKAGING",
+              "actual_next_requirement": "",
+              "passed": false
+            },
+            {
+              "run_id": "3f752ed9cc2b48ba9a9bcd4a378f9044",
+              "expected_types": [
+                "SERIAL_LABEL"
+              ],
+              "actual_types": [],
+              "passed": false
+            },
+            {
+              "run_id": "b05353a813ca495093b9b7b1b1c63a6b",
+              "expected_types": [
+                "ORIGINAL_PACKAGING"
+              ],
+              "actual_types": [],
+              "passed": false
+            }
+          ],
+          "final_confirmation_without_stale_question": false,
+          "complete": false
+        },
+        {
+          "case_id": "MODEL-PLAN-D01",
+          "repetition": 2,
+          "material_checks": [
+            {
+              "run_id": "63c2aae67b414840ad294e856aea058b",
+              "expected_next_requirement": "ORIGINAL_PACKAGING",
+              "actual_next_requirement": "",
+              "passed": false
+            },
+            {
+              "run_id": "d41af3f066054b35a402104e5ca98d9c",
+              "expected_types": [
+                "SERIAL_LABEL"
+              ],
+              "actual_types": [],
+              "passed": false
+            },
+            {
+              "run_id": "fb502ec87d2547dd87ba4827973de282",
+              "expected_types": [
+                "ORIGINAL_PACKAGING"
+              ],
+              "actual_types": [],
+              "passed": false
+            }
+          ],
+          "final_confirmation_without_stale_question": false,
+          "complete": false
+        },
+        {
+          "case_id": "MODEL-PLAN-D02",
+          "repetition": 1,
+          "material_checks": [
+            {
+              "run_id": "f5b5e843d2444d48909dc8519ad1509c",
+              "expected_next_requirement": "SERIAL_LABEL",
+              "actual_next_requirement": "",
+              "passed": false
+            },
+            {
+              "run_id": "ced651f5f3de48fd81f5c276f7889fb1",
+              "expected_types": [
+                "SERIAL_LABEL"
+              ],
+              "actual_types": [],
+              "passed": false
+            },
+            {
+              "run_id": "8814ee8f81884a1d9f04d31ca17abf1c",
+              "expected_types": [
+                "ORIGINAL_PACKAGING"
+              ],
+              "actual_types": [],
+              "passed": false
+            }
+          ],
+          "final_confirmation_without_stale_question": false,
+          "complete": false
+        },
+        {
+          "case_id": "MODEL-PLAN-D02",
+          "repetition": 2,
+          "material_checks": [
+            {
+              "run_id": "cf23a0fbd850429c80d7fa84ca066613",
+              "expected_next_requirement": "SERIAL_LABEL",
+              "actual_next_requirement": "",
+              "passed": false
+            },
+            {
+              "run_id": "6decdc26323045e798d9f3503bf97d98",
+              "expected_types": [
+                "SERIAL_LABEL"
+              ],
+              "actual_types": [],
+              "passed": false
+            },
+            {
+              "run_id": "0745ed5aa5464a458e86fc8f7af168c8",
+              "expected_types": [
+                "ORIGINAL_PACKAGING"
+              ],
+              "actual_types": [],
+              "passed": false
+            }
+          ],
+          "final_confirmation_without_stale_question": false,
+          "complete": false
+        }
+      ]
+    }
+  }
+}

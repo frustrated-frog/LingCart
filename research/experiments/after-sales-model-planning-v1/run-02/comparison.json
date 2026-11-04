@@ -1,0 +1,185 @@
+{
+  "batch": "run-02",
+  "evidence_kind": "dev_diagnostic",
+  "promotion": "candidate",
+  "source_revision": "fe45f27b12213e6c164d224edfc7ab498b234d64",
+  "source_tree_sha256": "16da148229db5f6420a47833879688081577892b626ed23253cc49630e04dedb",
+  "dataset_sha256": "4c6483ec7eaac1de4ba95a7270fd2e3c82408cab028096804a82b0c589ca9b3d",
+  "arms": {
+    "baseline": {
+      "profile": "after-sales-evidence-patch-v1",
+      "complete": 4,
+      "samples": 6,
+      "task_passed": 6,
+      "initial_order_passed": 2,
+      "initial_order_samples": 4,
+      "model_attempts": 58,
+      "tokens": {
+        "input_tokens": 198342,
+        "output_tokens": 22621,
+        "total_tokens": 220963
+      },
+      "latency_ms": {
+        "mean": 24240.791666666668,
+        "p50": 24552.05,
+        "p95": 28203.275
+      },
+      "policy_autonomy": {
+        "case_resolution_rate": 0,
+        "autonomous_resolution_rate": 0,
+        "avoidable_pause_rate": 0,
+        "approval_boundary_rate": 1,
+        "unauthorized_write_count": 0,
+        "duplicate_action_count": 0
+      },
+      "failures": [],
+      "raw_sha256": "a35991bacfd09f1b00e38e51013e82d5d175b49e67fd4ab5130980d98da40792",
+      "diagnostic_failures": [
+        {
+          "case_id": "MODEL-PLAN-D01",
+          "repetition": 1,
+          "material_checks": [
+            {
+              "run_id": "0e6f3288d6754d5682adadc30c8fa2bf",
+              "expected_next_requirement": "ORIGINAL_PACKAGING",
+              "actual_next_requirement": "standard-return-refund:2026-02:SERIAL_LABEL",
+              "passed": false
+            },
+            {
+              "run_id": "0fdba95fb3df46e280cc7f6b06655d7a",
+              "expected_types": [
+                "SERIAL_LABEL"
+              ],
+              "actual_types": [
+                "SERIAL_LABEL"
+              ],
+              "passed": true
+            },
+            {
+              "run_id": "1ab0be247f164f4a890c30ef623075d3",
+              "expected_types": [
+                "ORIGINAL_PACKAGING"
+              ],
+              "actual_types": [
+                "ORIGINAL_PACKAGING"
+              ],
+              "passed": true
+            }
+          ],
+          "final_confirmation_without_stale_question": true,
+          "complete": false
+        },
+        {
+          "case_id": "MODEL-PLAN-D01",
+          "repetition": 2,
+          "material_checks": [
+            {
+              "run_id": "b7c3e2c2cf764feabcd2fa84fbe48700",
+              "expected_next_requirement": "ORIGINAL_PACKAGING",
+              "actual_next_requirement": "standard-return-refund:2026-02:SERIAL_LABEL",
+              "passed": false
+            },
+            {
+              "run_id": "00314eae3cd6407eadc4a48aa89cff8e",
+              "expected_types": [
+                "SERIAL_LABEL"
+              ],
+              "actual_types": [
+                "SERIAL_LABEL"
+              ],
+              "passed": true
+            },
+            {
+              "run_id": "a54277da9d0e447b8542e04361e719b1",
+              "expected_types": [
+                "ORIGINAL_PACKAGING"
+              ],
+              "actual_types": [
+                "ORIGINAL_PACKAGING"
+              ],
+              "passed": true
+            }
+          ],
+          "final_confirmation_without_stale_question": true,
+          "complete": false
+        }
+      ]
+    },
+    "candidate": {
+      "profile": "after-sales-model-planning-v1",
+      "complete": 5,
+      "samples": 6,
+      "task_passed": 5,
+      "initial_order_passed": 4,
+      "initial_order_samples": 4,
+      "model_attempts": 73,
+      "tokens": {
+        "input_tokens": 219842,
+        "output_tokens": 23631,
+        "total_tokens": 243473
+      },
+      "latency_ms": {
+        "mean": 26502.366,
+        "p50": 26837.44,
+        "p95": 31644.846
+      },
+      "policy_autonomy": {
+        "case_resolution_rate": 0,
+        "autonomous_resolution_rate": 0,
+        "avoidable_pause_rate": 0,
+        "approval_boundary_rate": 1,
+        "unauthorized_write_count": 0,
+        "duplicate_action_count": 0
+      },
+      "failures": [
+        {
+          "case_id": "MODEL-PLAN-D01",
+          "repetition": 1,
+          "run_id": "3ac30b869f224b66b6b6b2374ee95143",
+          "terminal_reason": "INVALID_CASE_MODEL_DECISION",
+          "failures": [
+            "status: expected ['SUCCEEDED', 'PARTIAL'], got 'FAILED'",
+            "error presence does not match"
+          ]
+        }
+      ],
+      "raw_sha256": "d256a95e62a1efb2e11b77fb19c5be2894097a35601e32cf23c5c5c7f31f9427",
+      "diagnostic_failures": [
+        {
+          "case_id": "MODEL-PLAN-D01",
+          "repetition": 1,
+          "material_checks": [
+            {
+              "run_id": "fe65a4df32c14495908c464d0d630a00",
+              "expected_next_requirement": "ORIGINAL_PACKAGING",
+              "actual_next_requirement": "standard-return-refund:2026-02:ORIGINAL_PACKAGING",
+              "passed": true
+            },
+            {
+              "run_id": "3ac30b869f224b66b6b6b2374ee95143",
+              "expected_types": [
+                "SERIAL_LABEL"
+              ],
+              "actual_types": [
+                "SERIAL_LABEL"
+              ],
+              "passed": true
+            },
+            {
+              "run_id": "ecb57cd2c37a42639a8e9b563e2e72e6",
+              "expected_types": [
+                "ORIGINAL_PACKAGING"
+              ],
+              "actual_types": [
+                "ORIGINAL_PACKAGING"
+              ],
+              "passed": true
+            }
+          ],
+          "final_confirmation_without_stale_question": true,
+          "complete": false
+        }
+      ]
+    }
+  }
+}
