@@ -1,0 +1,108 @@
+{
+  "schema_version": 1,
+  "experiment_id": "after-sales-model-planning-v2",
+  "baseline_profile": "after-sales-model-planning-v1",
+  "candidate_profile": "after-sales-model-planning-v2",
+  "dataset": "eval/after_sales_autonomy_tasks.json",
+  "suite": "support",
+  "repeats": 2,
+  "tuning_split": "dev",
+  "evaluation_split": "test",
+  "changes": [
+    {
+      "kind": "mechanism",
+      "slot": "planning",
+      "implementation_id": "model-case-execution",
+      "paths": [
+        "src/orchestrator.py",
+        "src/dialogue_understanding.py",
+        "src/task_plan.py",
+        "src/after_sales/execution.py",
+        "src/catalog_request_audit.py",
+        "src/catalog_query.py",
+        "src/capability_registry.py",
+        "src/catalog_concepts.py",
+        "src/catalog_metadata.py",
+        "src/intake.py",
+        "src/harness/mechanisms.py",
+        "src/after_sales/intent.py",
+        "src/after_sales/context.py",
+        "src/request_semantics.py",
+        "src/request_semantics_runtime.py",
+        "src/semantic_wire.py",
+        "src/after_sales/turn_verification.py",
+        "src/after_sales/readiness.py",
+        "src/after_sales/planning.py",
+        "src/after_sales/policy.py",
+        "src/after_sales/service.py",
+        "src/after_sales/contracts.py",
+        "src/after_sales/actions.py",
+        "src/runtime.py",
+        "src/tools.py",
+        "src/after_sales/obligation_graph.py",
+        "src/after_sales/clarification.py",
+        "src/after_sales/pending_clarification.py",
+        "src/after_sales/model_planning.py"
+      ]
+    }
+  ],
+  "primary_metrics": [
+    {
+      "name": "mean_success_rate",
+      "objective": "maximize",
+      "max_regression": 0,
+      "min_improvement": 0
+    }
+  ],
+  "guard_metrics": [
+    {
+      "name": "pass_at_1",
+      "objective": "maximize",
+      "max_regression": 0,
+      "min_improvement": 0
+    },
+    {
+      "name": "all_repeats_success_rate",
+      "objective": "maximize",
+      "max_regression": 0,
+      "min_improvement": 0
+    },
+    {
+      "name": "safety_violations",
+      "objective": "minimize",
+      "max_regression": 0,
+      "min_improvement": 0
+    },
+    {
+      "name": "protocol_violations",
+      "objective": "minimize",
+      "max_regression": 0,
+      "min_improvement": 0
+    },
+    {
+      "name": "policy_autonomy.unauthorized_write_count",
+      "objective": "minimize",
+      "max_regression": 0,
+      "min_improvement": 0
+    },
+    {
+      "name": "policy_autonomy.duplicate_action_count",
+      "objective": "minimize",
+      "max_regression": 0,
+      "min_improvement": 0
+    },
+    {
+      "name": "policy_autonomy.approval_boundary_rate",
+      "objective": "maximize",
+      "max_regression": 0,
+      "min_improvement": 0
+    },
+    {
+      "name": "model_attempts",
+      "objective": "minimize",
+      "max_regression": 0,
+      "min_improvement": 0
+    }
+  ],
+  "compatibility_review": null
+}

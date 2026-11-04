@@ -289,6 +289,8 @@ def _advance_after_sales_case(
     run_id,
     max_actions,
     action_selection_mode="priority_v2",
+    planning_history=None,
+    material_observations=(),
 ):
     """Consume persisted CasePlan actions without creating a second runtime or bypassing ToolExecutor."""
     current = result
@@ -326,7 +328,8 @@ def _advance_after_sales_case(
                 if action_selection_mode == "model_planning":
                     from src.after_sales.model_planning import decide_model_action
                     directive, clarification_decision = decide_model_action(
-                        current_runtime(), state, graph, clarification_portfolio, current, executed)
+                        current_runtime(), state, graph, clarification_portfolio, current,
+                        [*material_observations, *executed], history=planning_history)
                 elif action_selection_mode == "lookahead":
                     clarification_decision, lookahead = solve_lookahead(graph, clarification_portfolio)
                     recorder.record("case_lookahead_solved", report=lookahead.model_dump(mode="json"),
@@ -588,8 +591,13 @@ def execute_plan(intake, run_id, *, plan=None, source="deterministic", incomplet
     executor = ToolExecutor({**registered_tools, **_READ_ONLY_TOOLS}, recorder,
                             max_calls=context.limits.max_tool_calls if context else 12)
     trace, completed, pending, errors = [], {}, None, []
+    from copy import deepcopy
+    planning_history = deepcopy((context.snapshot.get('conversation') or {}).get('case_model_decisions', {})) if context else {}
+    batch_observations = {}
+    batch_planning = (getattr(context.mechanisms.get('planning'), 'mechanism_id', None) == 'model-case-execution'
+                      and getattr(context.mechanisms.get('planning'), 'mechanism_version', None) == '2') if context else False
     stop_error = None
-    for step in plan.steps:
+    for step_index, step in enumerate(plan.steps):
         dependency_failed = any(completed[d].status not in {"SUCCEEDED", "REUSED", "WAITING_APPROVAL", "REJECTED"} for d in step.depends_on)
         if dependency_failed or stop_error:
             step.status = "SKIPPED"
@@ -730,8 +738,24 @@ def execute_plan(intake, run_id, *, plan=None, source="deterministic", incomplet
                                 else "INVALID_UTILITY_REQUEST" if step.tool in {"read_clock", "calculate"}
                                 else "BUSINESS_DATA_NOT_FOUND")
                         raise AgentError(code, step.result["error"], retryable=False)
+                    defer_planning = False
+                    if batch_planning and step.tool in {'continue_after_sales_case', 'record_after_sales_evidence_readiness'}:
+                        case_id = step.result['case_id']
+                        batch_observations.setdefault(case_id, []).append(dict(
+                            operation=step.tool, step_id=step.step_id,
+                            from_revision=execution_args.get('expected_revision'), to_revision=step.result['revision']))
+                        following = plan.steps[step_index + 1] if step_index + 1 < len(plan.steps) else None
+                        defer_planning = bool(following and following.tool in {
+                            'continue_after_sales_case', 'record_after_sales_evidence_readiness'}
+                            and following.args.get('case_id') == case_id
+                            and following.args.get('_case_revision_dependency')
+                            and following.depends_on == [step.step_id])
+                        if defer_planning:
+                            recorder.record('case_planning_deferred', case_id=case_id, step_id=step.step_id,
+                                            next_step_id=following.step_id, case_revision=step.result['revision'],
+                                            reason_code='CONTIGUOUS_MATERIAL_BATCH')
                     if (step.tool in _POLICY_AWARE_CASE_OPERATIONS
-                            and _case_execution_mode(context) == "policy_aware"):
+                            and _case_execution_mode(context) == "policy_aware" and not defer_planning):
                         autonomous_budget = max(
                             0,
                             (context.limits.max_steps if context else 8) - len(plan.steps),
@@ -744,6 +768,8 @@ def execute_plan(intake, run_id, *, plan=None, source="deterministic", incomplet
                             run_id=run_id,
                             max_actions=min(_MAX_AUTONOMOUS_CASE_ACTIONS, autonomous_budget),
                             action_selection_mode=_case_action_selection_mode(context),
+                            planning_history=planning_history,
+                            material_observations=batch_observations.pop(step.result.get('case_id'), []),
                         )
                     verify_observation(step)
                     if step.tool == CATALOG_QUERY_OPERATION:

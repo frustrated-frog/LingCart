@@ -204,6 +204,8 @@ def execute_claim(claim, *, store=None, runner=None):
                 result['request_semantics'] = deepcopy(semantics)
             if 'execution_boundaries' in context.snapshot:
                 state['execution_boundaries'] = deepcopy(context.snapshot['execution_boundaries'])
+            if 'case_model_decisions' in context.snapshot:
+                state['case_model_decisions'] = deepcopy(context.snapshot['case_model_decisions'])
             result['execution_boundaries'] = deepcopy(state.get('execution_boundaries', []))
             state["clarification"] = result.get("intake") if result.get("terminal_reason") == "MISSING_ORDER_ID" else None
             catalog_artifacts = [

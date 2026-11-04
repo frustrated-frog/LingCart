@@ -33,6 +33,7 @@ TOOLS = {
     "process_payment", "answer_faq", "escalate_to_human", "search_products",
     "get_catalog_facets", "discover_products", "compare_products",
     "prepare_after_sales_case", "continue_after_sales_case", "submit_after_sales_case",
+    "record_after_sales_evidence_readiness",
 }
 MUTATIONS = {"process_payment", "initiate_refund", "submit_after_sales_case"}
 STATUSES = {
