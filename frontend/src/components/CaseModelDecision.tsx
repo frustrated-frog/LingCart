@@ -3,6 +3,32 @@ import type { ModelCaseDecision, RunEvent } from '../types'
 import './case-lookahead.css'
 import './case-model-decision.css'
 
+function DecisionChange({ event }: { event: RunEvent }) {
+  if (event.version !== 'case-model-decision-v2') return null
+  const previous = record(event.previous_decision)
+  const prior = record(previous.decision)
+  const observation = record(event.actual_observation)
+  const requirements = Array.isArray(observation.requirements) ? observation.requirements.map(record) : []
+  const operations = Array.isArray(observation.operations) ? observation.operations.map(record) : []
+  const matched = previous.case_id === event.case_id && typeof previous.run_id === 'string' && valid(prior)
+  const labels: Record<string, string> = { SATISFIED: '已满足', UNSATISFIED: '尚未满足', CONFLICT: '存在冲突', UNKNOWN: '待核验' }
+  return <section className="decision-change" aria-label="决策调整对照">
+    <h4>观察如何改变这一步</h4>
+    <div className="decision-change-flow">
+      <article><span className="model-decision-label">01 / 上次选择</span>
+        {matched ? <><p>{String(prior.reason)}</p><a href={`/runs/${encodeURIComponent(String(previous.run_id))}`}>查看来源运行 · 版本 {String(previous.case_revision)}</a><small>历史选择不代表动作已经完成。</small></>
+          : <p>{event.previous_decision === null ? '首次决策，尚无同案件的历史选择。' : '历史决策记录不完整或案件不匹配。'}</p>}
+      </article>
+      <article><span className="model-decision-label">02 / 当前真实观察</span>
+        <p>案件版本 {String(observation.case_revision ?? '尚未加载')} · 本次已完成操作 {operations.length} 项</p>
+        {requirements.length ? <ul>{requirements.map((r, i) => <li key={String(r.requirement_id ?? i)}>{String(r.description ?? r.evidence_type ?? '材料要求')}<b>{labels[String(r.status)] ?? '查看核验详情'}</b></li>)}</ul>
+          : <p>当前材料核验详情尚未加载。</p>}
+      </article>
+      <article><span className="model-decision-label">03 / 本次判断依据</span><p>{String(record(event.decision).reason ?? '尚无说明')}</p><small>这是模型给出的调整说明；实际行动以工具和确认记录为准。</small></article>
+    </div>
+  </section>
+}
+
 const record = (v: unknown): Record<string, unknown> => v && typeof v === 'object' ? v as Record<string, unknown> : {}
 function valid(v: unknown): v is ModelCaseDecision {
   const d = record(v)
@@ -36,6 +62,7 @@ export function CaseModelDecision({ events }: { events: RunEvent[] }) {
     {rejected ? <p role="alert">模型提议未通过校验，未据此执行动作。错误码：{String(event.code)}。{String(event.feedback)}</p>
       : !accepted ? <p role="alert">决策记录不完整，请查看原始事件。</p>
       : <>
+        <DecisionChange event={event} />
         <div className="model-decision-columns">
           <article><span className="model-decision-label">用户依据</span><blockquote>{decision.source_quote}</blockquote><p>{decision.reason}</p></article>
           <article className="model-decision-choice"><span className="model-decision-label">已接受的下一步</span>

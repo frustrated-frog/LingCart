@@ -10,6 +10,24 @@ export interface ModelCaseDecision {
   replan_when: string
 }
 
+export interface CaseModelDecisionSource {
+  source_ref: string
+  origin: 'CURRENT_TURN' | 'HISTORY'
+  message_id: string | null
+  start: number
+  end: number
+  text: string
+}
+
+export interface CaseModelDecisionHistory {
+  run_id: string
+  case_id: string
+  state_id: string
+  case_revision: number
+  directive_id: string
+  decision: ModelCaseDecision
+}
+
 export interface InformationPath {
   candidate_ids: string[]
   requirement_ids: string[]

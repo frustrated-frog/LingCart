@@ -12,6 +12,22 @@ const graph: RunEvent = { type: 'case_obligation_graph_solved', sequence: 3, gra
   candidates: [{ candidate_id: 'candidate', mode: 'ASK_USER', requirement_id: 'packaging', question: '原包装是否完整？' }] } }
 
 describe('CaseModelDecision', () => {
+  it('compares same-case history with real observations and exposes missing history', () => {
+    const event = { ...accepted, version: 'case-model-decision-v2', previous_decision: {
+      run_id: 'prior', case_id: 'case', case_revision: 1, decision: { ...(accepted.decision as object), reason: '之前先问包装' },
+    }, actual_observation: { case_revision: 3, operations: [{ operation: 'continue_after_sales_case' }],
+      requirements: [{ requirement_id: 'packaging', description: '包装要求', status: 'SATISFIED' }] } }
+    const { rerender } = render(<CaseModelDecision events={[event, graph]} />)
+    expect(screen.getByRole('region', { name: '决策调整对照' })).toHaveTextContent('之前先问包装')
+    expect(screen.getByRole('link', { name: /查看来源运行/ })).toHaveAttribute('href', '/runs/prior')
+    expect(screen.getByText('已满足')).toBeInTheDocument()
+    rerender(<CaseModelDecision events={[{ ...event, previous_decision: { ...event.previous_decision, case_id: 'other' } }]} />)
+    expect(screen.queryByRole('link')).not.toBeInTheDocument()
+    expect(screen.getByText(/历史决策记录不完整或案件不匹配/)).toBeInTheDocument()
+    rerender(<CaseModelDecision events={[{ ...event, previous_decision: null, actual_observation: null }]} />)
+    expect(screen.getByText(/首次决策/)).toBeInTheDocument()
+    expect(screen.getByText(/当前材料核验详情尚未加载/)).toBeInTheDocument()
+  })
   it('shows source, selected action and hypothetical observation separately', () => {
     render(<CaseModelDecision events={[accepted, graph]} />)
     expect(screen.getByText('请先核对原包装')).toBeInTheDocument()

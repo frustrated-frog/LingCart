@@ -142,6 +142,7 @@ const EVENT_LABELS: Record<string, [string, string]> = {
   case_state_projected: ['案件', '投影政策约束案件状态'],
   case_lookahead_solved: ['前瞻', '比较有限步信息获取路径'],
   case_model_decision: ['决策', '模型根据目标和实际观察选择下一步'],
+  case_planning_deferred: ['合批', '材料已入账，等待本批材料完成后统一规划'],
   case_model_decision_rejected: ['拒绝', '模型行动未通过执行前校验'],
   case_obligation_graph_solved: ['义务图', '构建并求解政策义务图'],
   case_clarification_portfolio_solved: ['澄清', '比较澄清问题的信息价值'],
