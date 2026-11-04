@@ -86,8 +86,6 @@ def goal_changes(context, understanding, rows, contract):
             if scope.case_id not in objectives or scope.case_id in changes:
                 raise CaseTurnMismatch('目标变更没有唯一的当前案件归属', fields={}, question='请分别明确要改变哪个案件的处理目标。')
             changes[scope.case_id] = (scope.mode, row.source_quote, None)
-        elif row.restriction == 'NO_SUBMISSION' and len(objectives) == 1:
-            changes.setdefault(next(iter(objectives)), ('DRAFT', row.source_quote, None))
     question = next((c for c in understanding.commands if c.kind == 'CLARIFY'), None)
     if question:
         for case_id in objectives:

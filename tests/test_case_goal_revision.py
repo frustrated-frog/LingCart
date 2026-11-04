@@ -251,6 +251,23 @@ def test_goal_scope_must_match_the_current_objective():
         goal_changes(context, understanding, [row], {'revisions': [dict(operation='ADD', requirement_id='goal')]})
 
 
+def test_global_no_submit_does_not_convert_continue_into_draft():
+    from types import SimpleNamespace
+    from src.after_sales.goals import goal_changes
+    from src.request_semantics import IntentRequirement
+    from src.runtime import RunRuntime
+    context = RunRuntime('separate')
+    context.mechanisms['planning'] = SimpleNamespace(goal_revision=True)
+    understanding = SimpleNamespace(objectives=[SimpleNamespace(kind='AFTER_SALES_CONTINUE', case_id='own')], commands=[])
+    quote = '继续核验这个案件，但整个会话仍禁止提交'
+    boundary = IntentRequirement(requirement_id='boundary', kind='EXECUTION_BOUNDARY', description='禁止提交', source_quote=quote, restriction='NO_SUBMISSION')
+    mode = IntentRequirement(requirement_id='mode', kind='EXECUTION_BOUNDARY', description='继续核验', source_quote=quote, case_goal=dict(case_id='own', mode='CONTINUE'))
+    contract = {'revisions': [dict(operation='ADD', requirement_id=row.requirement_id) for row in [boundary, mode]]}
+    assert goal_changes(context, understanding, [boundary], contract) == {}
+    for rows in [[boundary, mode], [mode, boundary]]:
+        assert goal_changes(context, understanding, rows, contract) == {'own': ('CONTINUE', quote, None)}
+
+
 def test_frozen_dev_diagnostic_and_experiment_load():
     from pathlib import Path
     from eval.run_live_eval import load_dataset

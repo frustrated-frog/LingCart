@@ -1,0 +1,12 @@
+{
+  "status": "INTERRUPTED",
+  "source_revision": "624c03b649a712daee29ed99e3c16ccc91b15ee5",
+  "reason": "源码复核发现全局 NO_SUBMISSION 不应自动推导 DRAFT；暂停本次对照，保留已完成样本，修正后另起完整对照。",
+  "completed_sample_files": [
+    "baseline-MODEL-PLAN-D01-1.json",
+    "baseline-MODEL-PLAN-D01-2.json",
+    "baseline-MODEL-PLAN-D05-1.json",
+    "baseline-MODEL-PLAN-D05-2.json"
+  ],
+  "comparison_valid": false
+}
