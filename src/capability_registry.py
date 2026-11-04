@@ -733,8 +733,10 @@ def _render_after_sales_case(result: object, _arguments: Mapping[str, object]) -
     latest_plan = next(reversed(case.get("plans") or []), {})
     autonomous = result.get("autonomous_execution") or {}
     selected_question = autonomous.get("question")
+    if autonomous.get("reason_code") == "MODEL_GOAL_CLARIFICATION" and selected_question:
+        return f"售后案件 {result['case_id']} 已保留。请先明确处理目标：{selected_question}"
     if (
-        autonomous.get("action_selection_mode") in {"active_clarification", "lookahead"}
+        autonomous.get("action_selection_mode") in {"active_clarification", "lookahead", "model_planning"}
         and autonomous.get("status") == "WAIT_USER_INPUT"
         and isinstance(autonomous.get("selected_question_id"), str)
         and isinstance(selected_question, str)

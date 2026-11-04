@@ -313,23 +313,30 @@ def _advance_after_sales_case(
             state=state.model_dump(mode="json"),
             autonomous_action_index=index,
         )
-        if action_selection_mode in {"obligation_graph", "active_clarification", "lookahead"}:
+        if action_selection_mode in {"obligation_graph", "active_clarification", "lookahead", "model_planning"}:
             graph = build_obligation_graph(state) if state.status == "READY" else None
-            planner_version = (LOOKAHEAD_PLANNER_VERSION if action_selection_mode == "lookahead"
+            planner_version = ("policy-aware-model-planner-v1" if action_selection_mode == "model_planning"
+                               else LOOKAHEAD_PLANNER_VERSION if action_selection_mode == "lookahead"
                                else ACTIVE_CLARIFICATION_PLANNER_VERSION if action_selection_mode == "active_clarification"
                                else OBLIGATION_ACTION_PLANNER_VERSION)
             clarification_portfolio = None
             clarification_decision = None
-            if action_selection_mode in {"active_clarification", "lookahead"} and graph is not None:
+            if action_selection_mode in {"active_clarification", "lookahead", "model_planning"} and graph is not None:
                 clarification_portfolio = build_clarification_portfolio(state, graph, current)
-                if action_selection_mode == "lookahead":
+                if action_selection_mode == "model_planning":
+                    from src.after_sales.model_planning import decide_model_action
+                    directive, clarification_decision = decide_model_action(
+                        current_runtime(), state, graph, clarification_portfolio, current, executed)
+                elif action_selection_mode == "lookahead":
                     clarification_decision, lookahead = solve_lookahead(graph, clarification_portfolio)
                     recorder.record("case_lookahead_solved", report=lookahead.model_dump(mode="json"),
                                     case_id=state.case_id, case_revision=state.case_revision,
                                     autonomous_action_index=index)
                 else:
                     clarification_decision = solve_active_clarification(graph, clarification_portfolio)
-                if graph.status != "READY":
+                if action_selection_mode == "model_planning":
+                    pass  # 模型选择已通过同一义务执行契约编译。
+                elif graph.status != "READY":
                     directive = decide_next_obligation_action(
                         state,
                         graph,
@@ -393,8 +400,10 @@ def _advance_after_sales_case(
         )
         final_status, final_reason = directive.status, directive.reason_code
         final_question = directive.question
+        if action_selection_mode == 'model_planning' and directive.status == 'ABSTAINED':
+            raise AgentError(directive.reason_code, '当前案件状态不能用于行动决策，已保留此前结果', retryable=False)
         if (
-            action_selection_mode in {"active_clarification", "lookahead"}
+            action_selection_mode in {"active_clarification", "lookahead", "model_planning"}
             and clarification_portfolio is not None
             and clarification_decision is not None
             and clarification_decision.status == "SELECTED"
@@ -600,6 +609,10 @@ def execute_plan(intake, run_id, *, plan=None, source="deterministic", incomplet
                             step.result = {
                                 "message": f"售后案件 {observation['case_id']} 已经提交，无需重复操作。"
                             }
+                        elif (observation.get("autonomous_execution") or {}).get("reason_code") == "MODEL_GOAL_CLARIFICATION":
+                            step.status = "SUCCEEDED"
+                            step.outcome = "UNAVAILABLE_EVIDENCE"
+                            step.result = {"message": "案件已保留，待明确处理目标后继续。"}
                         elif outcome == "ELIGIBLE" and _case_submission_restricted(context):
                             step.status = "SUCCEEDED"
                             step.outcome = "SATISFIED"
@@ -843,6 +856,11 @@ def execute_plan(intake, run_id, *, plan=None, source="deterministic", incomplet
     for step in plan.steps:
         if isinstance(step.result, dict) and step.result.get("data_source") == "AFTER_SALES_CASE_LEDGER":
             latest_case_steps[step.result["case_id"]] = step
+    if not errors and not pending and any(
+        (s.result.get("autonomous_execution") or {}).get("reason_code") == "MODEL_GOAL_CLARIFICATION"
+        for s in latest_case_steps.values()
+    ):
+        status, reason = "WAITING_CLARIFICATION", "MODEL_GOAL_CLARIFICATION"
     visible_steps = [s for s in plan.steps if not isinstance(s.result, dict)
                      or s.result.get("data_source") != "AFTER_SALES_CASE_LEDGER"
                      or latest_case_steps[s.result["case_id"]] is s]

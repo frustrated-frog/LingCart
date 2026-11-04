@@ -92,7 +92,7 @@ class ActiveClarificationDecision(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     schema_version: Literal[1] = 1
-    solver_version: Literal["active-clarification-solver-v1", "case-lookahead-solver-v1"] = ACTIVE_CLARIFICATION_SOLVER_VERSION
+    solver_version: Literal["active-clarification-solver-v1", "case-lookahead-solver-v1", "case-model-decision-v1"] = ACTIVE_CLARIFICATION_SOLVER_VERSION
     decision_id: str = Field(pattern=r"^[0-9a-f]{64}$")
     graph_id: str = Field(pattern=r"^[0-9a-f]{64}$")
     portfolio_id: str = Field(pattern=r"^[0-9a-f]{64}$")

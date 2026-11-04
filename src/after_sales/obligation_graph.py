@@ -83,6 +83,7 @@ class CandidateSelection(BaseModel):
         "obligation-action-solver-v1",
         "active-clarification-solver-v1",
         "case-lookahead-solver-v1",
+        "case-model-decision-v1",
     ] = OBLIGATION_ACTION_SOLVER_VERSION
     selection_id: str = Field(pattern=r"^[0-9a-f]{64}$")
     graph_id: str = Field(pattern=r"^[0-9a-f]{64}$")
@@ -109,6 +110,7 @@ class ObligationActionDirective(BaseModel):
         "policy-aware-obligation-planner-v1",
         "policy-aware-active-clarification-v1",
         "policy-aware-lookahead-v1",
+        "policy-aware-model-planner-v1",
     ] = OBLIGATION_ACTION_PLANNER_VERSION
     verifier_version: Literal["policy-obligation-graph-verifier-v1"] = OBLIGATION_GRAPH_VERIFIER_VERSION
     directive_id: str = Field(pattern=r"^[0-9a-f]{64}$")
@@ -527,7 +529,7 @@ def build_candidate_selection(
         "graph_id": graph.graph_id,
         "selected_candidate_id": ordered_ids[0],
         "eligible_candidate_ids": ordered_ids,
-        "dominated_candidate_ids": ordered_ids[1:],
+        "dominated_candidate_ids": () if solver_version == 'case-model-decision-v1' else ordered_ids[1:],
         "reason_code": reason_code,
     }
     identity = (
