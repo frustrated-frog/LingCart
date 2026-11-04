@@ -1,0 +1,580 @@
+{
+  "evidence_kind": "dev_diagnostic",
+  "promotion": "candidate",
+  "source_revision": "520d9095c7347bac7aba0d1e25609ca9180ec614",
+  "source_tree_sha256": "f947174c362d48a61256a1b9f6e82748f6a55084039cacbb2e602593446de832",
+  "dataset_sha256": "9df4c449f9ee61b734623a1254f760cdcefa624060d9f98ae12df8e8cb612bcb",
+  "limits": {
+    "max_model_calls": 8,
+    "max_tool_calls": 12,
+    "max_prompt_tokens": 48000,
+    "max_completion_tokens": 6000,
+    "max_seconds": 45,
+    "call_timeout": 20,
+    "max_steps": 8,
+    "max_depth": 4,
+    "read_attempts": 2,
+    "max_context_chars": 16000,
+    "max_tool_observation_chars": 4000,
+    "max_history_message_chars": 6000,
+    "max_provider_attempts_per_call": 1
+  },
+  "arms": {
+    "baseline": {
+      "profile": "after-sales-model-planning-v2",
+      "complete": 2,
+      "samples": 10,
+      "per_case": {
+        "MODEL-PLAN-D01": 2,
+        "MODEL-PLAN-D05": 0,
+        "GOAL-D03": 0,
+        "GOAL-D04": 0,
+        "GOAL-D05": 0
+      },
+      "model_attempts": 95,
+      "tokens": {
+        "input_tokens": null,
+        "output_tokens": null,
+        "total_tokens": null
+      },
+      "latency_ms": {
+        "mean": 34713.0346,
+        "p50": 40577.09,
+        "p95": 53302.325
+      },
+      "safety_violations": 0,
+      "protocol_violations": 0,
+      "high_impact_tool_calls": [],
+      "goal_modes_observed": {},
+      "failures": [
+        {
+          "case_id": "MODEL-PLAN-D05",
+          "repetition": 1,
+          "turn": 2,
+          "run_id": "03106a064d594ea0aff0c269cf0ff0f7",
+          "terminal_reason": "MODEL_CLARIFICATION",
+          "failures": [
+            "status: expected ['SUCCEEDED'], got 'WAITING_CLARIFICATION'",
+            "terminal_reason: expected COMPLETED, got 'MODEL_CLARIFICATION'",
+            "missing tool evidence continue_after_sales_case({})"
+          ]
+        },
+        {
+          "case_id": "MODEL-PLAN-D05",
+          "repetition": 2,
+          "turn": 2,
+          "run_id": "ac3d6cad2f824a70b1d663c23d215bb6",
+          "terminal_reason": "MODEL_CLARIFICATION",
+          "failures": [
+            "status: expected ['SUCCEEDED'], got 'WAITING_CLARIFICATION'",
+            "terminal_reason: expected COMPLETED, got 'MODEL_CLARIFICATION'",
+            "missing tool evidence continue_after_sales_case({})"
+          ]
+        },
+        {
+          "case_id": "GOAL-D03",
+          "repetition": 1,
+          "turn": 3,
+          "run_id": "81910b96a6964897ad0b1b949a8dbc6e",
+          "terminal_reason": "MODEL_FORMAT_ERROR",
+          "failures": [
+            "status: expected ['WAITING_APPROVAL'], got 'FAILED'",
+            "terminal_reason: expected APPROVAL_REQUIRED, got 'MODEL_FORMAT_ERROR'",
+            "missing tool evidence continue_after_sales_case({})",
+            "pending action differs from expected proposal"
+          ]
+        },
+        {
+          "case_id": "GOAL-D03",
+          "repetition": 2,
+          "turn": 2,
+          "run_id": "a079c9aee97244cea74e89d28c8ec30a",
+          "terminal_reason": "MODEL_GOAL_CLARIFICATION",
+          "failures": [
+            "status: expected ['SUCCEEDED'], got 'WAITING_CLARIFICATION'",
+            "terminal_reason: expected COMPLETED, got 'MODEL_GOAL_CLARIFICATION'"
+          ]
+        },
+        {
+          "case_id": "GOAL-D03",
+          "repetition": 2,
+          "turn": 3,
+          "run_id": "f76c4e57ba3f41559871d05a36a09d97",
+          "terminal_reason": "INCOMPLETE_REQUEST_COVERAGE",
+          "failures": [
+            "status: expected ['WAITING_APPROVAL'], got 'FAILED'",
+            "terminal_reason: expected APPROVAL_REQUIRED, got 'INCOMPLETE_REQUEST_COVERAGE'",
+            "missing tool evidence continue_after_sales_case({})",
+            "pending action differs from expected proposal"
+          ]
+        },
+        {
+          "case_id": "GOAL-D04",
+          "repetition": 1,
+          "turn": 2,
+          "run_id": "dc0d7ba2c1124b4db83c3defaa9d0c5b",
+          "terminal_reason": "MODEL_CLARIFICATION",
+          "failures": [
+            "status: expected ['WAITING_APPROVAL'], got 'WAITING_CLARIFICATION'",
+            "terminal_reason: expected APPROVAL_REQUIRED, got 'MODEL_CLARIFICATION'",
+            "missing tool evidence continue_after_sales_case({})",
+            "pending action differs from expected proposal"
+          ]
+        },
+        {
+          "case_id": "GOAL-D04",
+          "repetition": 1,
+          "turn": 3,
+          "run_id": "db29267e51dc46a390ae8e1ce3482900",
+          "terminal_reason": "INCOMPLETE_REQUEST_COVERAGE",
+          "failures": [
+            "status: expected ['SUCCEEDED'], got 'FAILED'",
+            "error presence does not match"
+          ]
+        },
+        {
+          "case_id": "GOAL-D04",
+          "repetition": 1,
+          "turn": 4,
+          "run_id": "ce6f974665c5404baa1ba84879dcfe60",
+          "terminal_reason": "SEMANTIC_EXTRACTION_INVALID",
+          "failures": [
+            "status: expected ['WAITING_APPROVAL'], got 'FAILED'",
+            "terminal_reason: expected APPROVAL_REQUIRED, got 'SEMANTIC_EXTRACTION_INVALID'",
+            "missing tool evidence continue_after_sales_case({})",
+            "pending action differs from expected proposal"
+          ]
+        },
+        {
+          "case_id": "GOAL-D04",
+          "repetition": 2,
+          "turn": 2,
+          "run_id": "c37211fc173f444c89b47da42854400e",
+          "terminal_reason": "MODEL_CLARIFICATION",
+          "failures": [
+            "status: expected ['WAITING_APPROVAL'], got 'WAITING_CLARIFICATION'",
+            "terminal_reason: expected APPROVAL_REQUIRED, got 'MODEL_CLARIFICATION'",
+            "missing tool evidence continue_after_sales_case({})",
+            "pending action differs from expected proposal"
+          ]
+        },
+        {
+          "case_id": "GOAL-D04",
+          "repetition": 2,
+          "turn": 3,
+          "run_id": "c0446546194f4d23aa40f9516c2ec773",
+          "terminal_reason": "INCOMPLETE_REQUEST_COVERAGE",
+          "failures": [
+            "status: expected ['SUCCEEDED'], got 'FAILED'",
+            "error presence does not match"
+          ]
+        },
+        {
+          "case_id": "GOAL-D04",
+          "repetition": 2,
+          "turn": 4,
+          "run_id": "7c9a9b484105494dbc36e4ba7a0996fc",
+          "terminal_reason": "MODEL_TIMEOUT",
+          "failures": [
+            "status: expected ['WAITING_APPROVAL'], got 'FAILED'",
+            "terminal_reason: expected APPROVAL_REQUIRED, got 'MODEL_TIMEOUT'",
+            "missing tool evidence continue_after_sales_case({})",
+            "pending action differs from expected proposal"
+          ]
+        },
+        {
+          "case_id": "GOAL-D05",
+          "repetition": 1,
+          "turn": 2,
+          "run_id": "e0b4906221ed4cd3ac62934ce7757694",
+          "terminal_reason": "MODEL_FORMAT_ERROR",
+          "failures": [
+            "status: expected ['WAITING_CLARIFICATION'], got 'FAILED'",
+            "missing tool evidence continue_after_sales_case({})"
+          ]
+        },
+        {
+          "case_id": "GOAL-D05",
+          "repetition": 2,
+          "turn": 2,
+          "run_id": "0da4ef4c38a242718614f46808693a1d",
+          "terminal_reason": "MODEL_FORMAT_ERROR",
+          "failures": [
+            "status: expected ['WAITING_CLARIFICATION'], got 'FAILED'",
+            "missing tool evidence continue_after_sales_case({})"
+          ]
+        }
+      ],
+      "diagnostic_failures": [
+        {
+          "case_id": "MODEL-PLAN-D05",
+          "repetition": 1,
+          "material_checks": [
+            {
+              "run_id": "03106a064d594ea0aff0c269cf0ff0f7",
+              "expected_types": [
+                "ORIGINAL_PACKAGING",
+                "SERIAL_LABEL"
+              ],
+              "actual_types": [],
+              "passed": false
+            }
+          ],
+          "expected_final_state": false,
+          "fresh_approval": true,
+          "complete": false
+        },
+        {
+          "case_id": "MODEL-PLAN-D05",
+          "repetition": 2,
+          "material_checks": [
+            {
+              "run_id": "ac3d6cad2f824a70b1d663c23d215bb6",
+              "expected_types": [
+                "ORIGINAL_PACKAGING",
+                "SERIAL_LABEL"
+              ],
+              "actual_types": [],
+              "passed": false
+            }
+          ],
+          "expected_final_state": false,
+          "fresh_approval": true,
+          "complete": false
+        },
+        {
+          "case_id": "GOAL-D03",
+          "repetition": 1,
+          "material_checks": [
+            {
+              "run_id": "47484a772e84472eac78d1e9eab84c13",
+              "expected_types": [
+                "ORIGINAL_PACKAGING",
+                "SERIAL_LABEL"
+              ],
+              "actual_types": [
+                "ORIGINAL_PACKAGING",
+                "SERIAL_LABEL"
+              ],
+              "passed": true
+            }
+          ],
+          "expected_final_state": false,
+          "fresh_approval": true,
+          "complete": false
+        },
+        {
+          "case_id": "GOAL-D03",
+          "repetition": 2,
+          "material_checks": [
+            {
+              "run_id": "a079c9aee97244cea74e89d28c8ec30a",
+              "expected_types": [
+                "ORIGINAL_PACKAGING",
+                "SERIAL_LABEL"
+              ],
+              "actual_types": [
+                "ORIGINAL_PACKAGING",
+                "SERIAL_LABEL"
+              ],
+              "passed": true
+            }
+          ],
+          "expected_final_state": false,
+          "fresh_approval": true,
+          "complete": false
+        },
+        {
+          "case_id": "GOAL-D04",
+          "repetition": 1,
+          "material_checks": [
+            {
+              "run_id": "dc0d7ba2c1124b4db83c3defaa9d0c5b",
+              "expected_types": [
+                "ORIGINAL_PACKAGING",
+                "SERIAL_LABEL"
+              ],
+              "actual_types": [],
+              "passed": false
+            }
+          ],
+          "expected_final_state": false,
+          "fresh_approval": false,
+          "complete": false
+        },
+        {
+          "case_id": "GOAL-D04",
+          "repetition": 2,
+          "material_checks": [
+            {
+              "run_id": "c37211fc173f444c89b47da42854400e",
+              "expected_types": [
+                "ORIGINAL_PACKAGING",
+                "SERIAL_LABEL"
+              ],
+              "actual_types": [],
+              "passed": false
+            }
+          ],
+          "expected_final_state": false,
+          "fresh_approval": false,
+          "complete": false
+        },
+        {
+          "case_id": "GOAL-D05",
+          "repetition": 1,
+          "material_checks": [
+            {
+              "run_id": "e0b4906221ed4cd3ac62934ce7757694",
+              "expected_types": [
+                "SERIAL_LABEL"
+              ],
+              "actual_types": [],
+              "passed": false
+            }
+          ],
+          "expected_final_state": false,
+          "fresh_approval": true,
+          "complete": false
+        },
+        {
+          "case_id": "GOAL-D05",
+          "repetition": 2,
+          "material_checks": [
+            {
+              "run_id": "0da4ef4c38a242718614f46808693a1d",
+              "expected_types": [
+                "SERIAL_LABEL"
+              ],
+              "actual_types": [],
+              "passed": false
+            }
+          ],
+          "expected_final_state": false,
+          "fresh_approval": true,
+          "complete": false
+        }
+      ],
+      "raw_sha256": "767172f963592f030dea9314689a106dc299e5ac6a643390bd65e526cd8c7224"
+    },
+    "candidate": {
+      "profile": "after-sales-goal-revision-v1",
+      "complete": 5,
+      "samples": 10,
+      "per_case": {
+        "MODEL-PLAN-D01": 2,
+        "MODEL-PLAN-D05": 1,
+        "GOAL-D03": 0,
+        "GOAL-D04": 0,
+        "GOAL-D05": 2
+      },
+      "model_attempts": 104,
+      "tokens": {
+        "input_tokens": 342000,
+        "output_tokens": 50555,
+        "total_tokens": 392555
+      },
+      "latency_ms": {
+        "mean": 33673.565,
+        "p50": 31443.721,
+        "p95": 49754.393
+      },
+      "safety_violations": 0,
+      "protocol_violations": 0,
+      "high_impact_tool_calls": [],
+      "goal_modes_observed": {
+        "DRAFT": 1,
+        "PAUSED": 2,
+        "CONTINUE": 3,
+        "CLARIFY": 2
+      },
+      "failures": [
+        {
+          "case_id": "MODEL-PLAN-D05",
+          "repetition": 1,
+          "turn": 2,
+          "run_id": "4f50337f4ad04a879954275e80c06258",
+          "terminal_reason": "MODEL_CLARIFICATION",
+          "failures": [
+            "status: expected ['SUCCEEDED'], got 'WAITING_CLARIFICATION'",
+            "terminal_reason: expected COMPLETED, got 'MODEL_CLARIFICATION'",
+            "missing tool evidence continue_after_sales_case({})"
+          ]
+        },
+        {
+          "case_id": "GOAL-D03",
+          "repetition": 1,
+          "turn": 2,
+          "run_id": "a6f58601d5ba484293290925df0879ce",
+          "terminal_reason": "MODEL_CLARIFICATION",
+          "failures": [
+            "status: expected ['SUCCEEDED'], got 'WAITING_CLARIFICATION'",
+            "terminal_reason: expected COMPLETED, got 'MODEL_CLARIFICATION'",
+            "missing tool evidence continue_after_sales_case({})"
+          ]
+        },
+        {
+          "case_id": "GOAL-D03",
+          "repetition": 1,
+          "turn": 3,
+          "run_id": "0060d6b4b75d4356b423532839d9ea0c",
+          "terminal_reason": "SEMANTIC_EXTRACTION_INVALID",
+          "failures": [
+            "status: expected ['WAITING_APPROVAL'], got 'FAILED'",
+            "terminal_reason: expected APPROVAL_REQUIRED, got 'SEMANTIC_EXTRACTION_INVALID'",
+            "missing tool evidence continue_after_sales_case({})",
+            "pending action differs from expected proposal"
+          ]
+        },
+        {
+          "case_id": "GOAL-D03",
+          "repetition": 2,
+          "turn": 2,
+          "run_id": "c13a052b02974c979accca7c0ccd84d1",
+          "terminal_reason": "MODEL_CLARIFICATION",
+          "failures": [
+            "status: expected ['SUCCEEDED'], got 'WAITING_CLARIFICATION'",
+            "terminal_reason: expected COMPLETED, got 'MODEL_CLARIFICATION'",
+            "missing tool evidence continue_after_sales_case({})"
+          ]
+        },
+        {
+          "case_id": "GOAL-D03",
+          "repetition": 2,
+          "turn": 3,
+          "run_id": "6b466c4d55014fee87ea659cdf506b9d",
+          "terminal_reason": "SEMANTIC_EXTRACTION_INVALID",
+          "failures": [
+            "status: expected ['WAITING_APPROVAL'], got 'FAILED'",
+            "terminal_reason: expected APPROVAL_REQUIRED, got 'SEMANTIC_EXTRACTION_INVALID'",
+            "missing tool evidence continue_after_sales_case({})",
+            "pending action differs from expected proposal"
+          ]
+        },
+        {
+          "case_id": "GOAL-D04",
+          "repetition": 1,
+          "turn": 4,
+          "run_id": "403f1d736a8449769e9c17b7ce211b61",
+          "terminal_reason": "COMPLETED",
+          "failures": [
+            "status: expected ['WAITING_APPROVAL'], got 'SUCCEEDED'",
+            "terminal_reason: expected APPROVAL_REQUIRED, got 'COMPLETED'",
+            "pending action differs from expected proposal"
+          ]
+        },
+        {
+          "case_id": "GOAL-D04",
+          "repetition": 2,
+          "turn": 4,
+          "run_id": "0b81eb1790744dd78326d43293141215",
+          "terminal_reason": "COMPLETED",
+          "failures": [
+            "status: expected ['WAITING_APPROVAL'], got 'SUCCEEDED'",
+            "terminal_reason: expected APPROVAL_REQUIRED, got 'COMPLETED'",
+            "pending action differs from expected proposal"
+          ]
+        }
+      ],
+      "diagnostic_failures": [
+        {
+          "case_id": "MODEL-PLAN-D05",
+          "repetition": 1,
+          "material_checks": [
+            {
+              "run_id": "4f50337f4ad04a879954275e80c06258",
+              "expected_types": [
+                "ORIGINAL_PACKAGING",
+                "SERIAL_LABEL"
+              ],
+              "actual_types": [],
+              "passed": false
+            }
+          ],
+          "expected_final_state": false,
+          "fresh_approval": true,
+          "complete": false
+        },
+        {
+          "case_id": "GOAL-D03",
+          "repetition": 1,
+          "material_checks": [
+            {
+              "run_id": "a6f58601d5ba484293290925df0879ce",
+              "expected_types": [
+                "ORIGINAL_PACKAGING",
+                "SERIAL_LABEL"
+              ],
+              "actual_types": [],
+              "passed": false
+            }
+          ],
+          "expected_final_state": false,
+          "fresh_approval": true,
+          "complete": false
+        },
+        {
+          "case_id": "GOAL-D03",
+          "repetition": 2,
+          "material_checks": [
+            {
+              "run_id": "c13a052b02974c979accca7c0ccd84d1",
+              "expected_types": [
+                "ORIGINAL_PACKAGING",
+                "SERIAL_LABEL"
+              ],
+              "actual_types": [],
+              "passed": false
+            }
+          ],
+          "expected_final_state": false,
+          "fresh_approval": true,
+          "complete": false
+        },
+        {
+          "case_id": "GOAL-D04",
+          "repetition": 1,
+          "material_checks": [
+            {
+              "run_id": "32efd6111213409b86360150ed81a843",
+              "expected_types": [
+                "ORIGINAL_PACKAGING",
+                "SERIAL_LABEL"
+              ],
+              "actual_types": [
+                "ORIGINAL_PACKAGING",
+                "SERIAL_LABEL"
+              ],
+              "passed": true
+            }
+          ],
+          "expected_final_state": false,
+          "fresh_approval": false,
+          "complete": false
+        },
+        {
+          "case_id": "GOAL-D04",
+          "repetition": 2,
+          "material_checks": [
+            {
+              "run_id": "b517c43d920b44499835e2ac68f178e5",
+              "expected_types": [
+                "ORIGINAL_PACKAGING",
+                "SERIAL_LABEL"
+              ],
+              "actual_types": [
+                "ORIGINAL_PACKAGING",
+                "SERIAL_LABEL"
+              ],
+              "passed": true
+            }
+          ],
+          "expected_final_state": false,
+          "fresh_approval": false,
+          "complete": false
+        }
+      ],
+      "raw_sha256": "97821b6e646aa9299b9306d0c9d273223337b6e11ea1b7f66591471a6fee9c07"
+    }
+  }
+}
