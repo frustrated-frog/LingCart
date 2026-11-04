@@ -1,0 +1,371 @@
+{
+  "evidence_kind": "dev_diagnostic",
+  "promotion": "candidate",
+  "source_revision": "a7948f5406df6bb1855523a48faf4e2d565a3ec1",
+  "source_tree_sha256": "cf43f5683526cbc26a27a2b48ab35ce3ab0395e084fde377f1a1e8d64edee5a5",
+  "dataset_sha256": "988ec62046c435c99812b8b114c216c4d373246153c4f259b8e69e34eb1b2df7",
+  "arms": {
+    "baseline": {
+      "profile": "after-sales-model-planning-v1",
+      "complete": 7,
+      "samples": 14,
+      "task_passed": 7,
+      "model_attempts": 138,
+      "tokens": {
+        "input_tokens": 441938,
+        "output_tokens": 45751,
+        "total_tokens": 487689
+      },
+      "latency_ms": {
+        "mean": 21655.167214285713,
+        "p50": 20620.957,
+        "p95": 43340.386
+      },
+      "policy_autonomy": {
+        "case_resolution_rate": 0,
+        "autonomous_resolution_rate": 0,
+        "avoidable_pause_rate": 0,
+        "approval_boundary_rate": 1,
+        "unauthorized_write_count": 0,
+        "duplicate_action_count": 0
+      },
+      "planning_calls": 34,
+      "decision_rejections": 7,
+      "history_references": 0,
+      "per_case": {
+        "MODEL-PLAN-D01": 0,
+        "MODEL-PLAN-D02": 1,
+        "MODEL-PLAN-D03": 2,
+        "MODEL-PLAN-D04": 2,
+        "MODEL-PLAN-D05": 0,
+        "MODEL-PLAN-D06": 0,
+        "MODEL-PLAN-D07": 2
+      },
+      "failures": [
+        {
+          "case_id": "MODEL-PLAN-D01",
+          "repetition": 1,
+          "run_id": "d8184bb8035d4ccd9ba2cfe9ad7f8661",
+          "terminal_reason": "INVALID_CASE_MODEL_DECISION",
+          "failures": [
+            "status: expected ['SUCCEEDED', 'PARTIAL'], got 'FAILED'",
+            "error presence does not match"
+          ]
+        },
+        {
+          "case_id": "MODEL-PLAN-D01",
+          "repetition": 2,
+          "run_id": "2416c61a1cb1480dbf8fb54a02c33e10",
+          "terminal_reason": "INVALID_CASE_MODEL_DECISION",
+          "failures": [
+            "status: expected ['SUCCEEDED', 'PARTIAL'], got 'FAILED'",
+            "error presence does not match"
+          ]
+        },
+        {
+          "case_id": "MODEL-PLAN-D02",
+          "repetition": 1,
+          "run_id": "5de2b81e34ba4fe8be0d939df0c7fdc1",
+          "terminal_reason": "INVALID_CASE_MODEL_DECISION",
+          "failures": [
+            "status: expected ['SUCCEEDED', 'PARTIAL'], got 'FAILED'",
+            "error presence does not match"
+          ]
+        },
+        {
+          "case_id": "MODEL-PLAN-D05",
+          "repetition": 1,
+          "run_id": "4846cfc876584b698fdaece21762c113",
+          "terminal_reason": "MODEL_CLARIFICATION",
+          "failures": [
+            "status: expected ['SUCCEEDED'], got 'WAITING_CLARIFICATION'",
+            "terminal_reason: expected COMPLETED, got 'MODEL_CLARIFICATION'",
+            "missing tool evidence continue_after_sales_case({})"
+          ]
+        },
+        {
+          "case_id": "MODEL-PLAN-D05",
+          "repetition": 2,
+          "run_id": "b69553955b0d48daa15efa91f8d07202",
+          "terminal_reason": "MODEL_CLARIFICATION",
+          "failures": [
+            "status: expected ['SUCCEEDED'], got 'WAITING_CLARIFICATION'",
+            "terminal_reason: expected COMPLETED, got 'MODEL_CLARIFICATION'",
+            "missing tool evidence continue_after_sales_case({})"
+          ]
+        },
+        {
+          "case_id": "MODEL-PLAN-D06",
+          "repetition": 1,
+          "run_id": "a340ebf5a6384588ac027062833eed0a",
+          "terminal_reason": "MODEL_FORMAT_ERROR",
+          "failures": [
+            "status: expected ['PARTIAL', 'WAITING_CLARIFICATION'], got 'FAILED'"
+          ]
+        },
+        {
+          "case_id": "MODEL-PLAN-D06",
+          "repetition": 2,
+          "run_id": "ea2d0afc1ba44219a5e7d94aa39434e7",
+          "terminal_reason": "MODEL_FORMAT_ERROR",
+          "failures": [
+            "status: expected ['PARTIAL', 'WAITING_CLARIFICATION'], got 'FAILED'"
+          ]
+        }
+      ],
+      "diagnostic_failures": [
+        {
+          "case_id": "MODEL-PLAN-D01",
+          "repetition": 1,
+          "material_checks": [
+            {
+              "run_id": "d3d989568fff46aeab32c56bc85fcf3b",
+              "expected_next_requirement": "ORIGINAL_PACKAGING",
+              "actual_next_requirement": "standard-return-refund:2026-02:ORIGINAL_PACKAGING",
+              "passed": true
+            },
+            {
+              "run_id": "d8184bb8035d4ccd9ba2cfe9ad7f8661",
+              "expected_types": [
+                "SERIAL_LABEL"
+              ],
+              "actual_types": [
+                "SERIAL_LABEL"
+              ],
+              "passed": true
+            },
+            {
+              "run_id": "5bdcd7bf3ec44ef5ab2f964379f40eef",
+              "expected_types": [
+                "ORIGINAL_PACKAGING"
+              ],
+              "actual_types": [
+                "ORIGINAL_PACKAGING"
+              ],
+              "passed": true
+            }
+          ],
+          "expected_final_state": true,
+          "complete": false
+        },
+        {
+          "case_id": "MODEL-PLAN-D01",
+          "repetition": 2,
+          "material_checks": [
+            {
+              "run_id": "e87990da86014f6e8a43d46ff318d74e",
+              "expected_next_requirement": "ORIGINAL_PACKAGING",
+              "actual_next_requirement": "standard-return-refund:2026-02:ORIGINAL_PACKAGING",
+              "passed": true
+            },
+            {
+              "run_id": "2416c61a1cb1480dbf8fb54a02c33e10",
+              "expected_types": [
+                "SERIAL_LABEL"
+              ],
+              "actual_types": [
+                "SERIAL_LABEL"
+              ],
+              "passed": true
+            },
+            {
+              "run_id": "bedd64decefa4dd5b6d7b08d4fee80eb",
+              "expected_types": [
+                "ORIGINAL_PACKAGING"
+              ],
+              "actual_types": [
+                "ORIGINAL_PACKAGING"
+              ],
+              "passed": true
+            }
+          ],
+          "expected_final_state": true,
+          "complete": false
+        },
+        {
+          "case_id": "MODEL-PLAN-D02",
+          "repetition": 1,
+          "material_checks": [
+            {
+              "run_id": "24ea05f813344984a526744933806910",
+              "expected_next_requirement": "SERIAL_LABEL",
+              "actual_next_requirement": "standard-return-refund:2026-02:SERIAL_LABEL",
+              "passed": true
+            },
+            {
+              "run_id": "5de2b81e34ba4fe8be0d939df0c7fdc1",
+              "expected_types": [
+                "SERIAL_LABEL"
+              ],
+              "actual_types": [
+                "SERIAL_LABEL"
+              ],
+              "passed": true
+            },
+            {
+              "run_id": "b923c4ebd2134f24ab26808edb404c1a",
+              "expected_types": [
+                "ORIGINAL_PACKAGING"
+              ],
+              "actual_types": [
+                "ORIGINAL_PACKAGING"
+              ],
+              "passed": true
+            }
+          ],
+          "expected_final_state": true,
+          "complete": false
+        },
+        {
+          "case_id": "MODEL-PLAN-D05",
+          "repetition": 1,
+          "material_checks": [
+            {
+              "run_id": "4846cfc876584b698fdaece21762c113",
+              "expected_types": [
+                "ORIGINAL_PACKAGING",
+                "SERIAL_LABEL"
+              ],
+              "actual_types": [],
+              "passed": false
+            }
+          ],
+          "expected_final_state": false,
+          "complete": false
+        },
+        {
+          "case_id": "MODEL-PLAN-D05",
+          "repetition": 2,
+          "material_checks": [
+            {
+              "run_id": "b69553955b0d48daa15efa91f8d07202",
+              "expected_types": [
+                "ORIGINAL_PACKAGING",
+                "SERIAL_LABEL"
+              ],
+              "actual_types": [],
+              "passed": false
+            }
+          ],
+          "expected_final_state": false,
+          "complete": false
+        },
+        {
+          "case_id": "MODEL-PLAN-D06",
+          "repetition": 1,
+          "material_checks": [],
+          "expected_final_state": false,
+          "complete": false
+        },
+        {
+          "case_id": "MODEL-PLAN-D06",
+          "repetition": 2,
+          "material_checks": [],
+          "expected_final_state": false,
+          "complete": false
+        }
+      ],
+      "raw_sha256": "bf981c5ac18cdf258399c599d1d6a0f762cfd30194ab14df5b55b3e5fb66d163"
+    },
+    "candidate": {
+      "profile": "after-sales-model-planning-v2",
+      "complete": 12,
+      "samples": 14,
+      "task_passed": 12,
+      "model_attempts": 140,
+      "tokens": {
+        "input_tokens": 455651,
+        "output_tokens": 52484,
+        "total_tokens": 508135
+      },
+      "latency_ms": {
+        "mean": 28060.251214285716,
+        "p50": 27710.743,
+        "p95": 56555.865
+      },
+      "policy_autonomy": {
+        "case_resolution_rate": 0,
+        "autonomous_resolution_rate": 0,
+        "avoidable_pause_rate": 0,
+        "approval_boundary_rate": 1,
+        "unauthorized_write_count": 0,
+        "duplicate_action_count": 0
+      },
+      "planning_calls": 31,
+      "decision_rejections": 0,
+      "history_references": 3,
+      "per_case": {
+        "MODEL-PLAN-D01": 2,
+        "MODEL-PLAN-D02": 2,
+        "MODEL-PLAN-D03": 2,
+        "MODEL-PLAN-D04": 2,
+        "MODEL-PLAN-D05": 0,
+        "MODEL-PLAN-D06": 2,
+        "MODEL-PLAN-D07": 2
+      },
+      "failures": [
+        {
+          "case_id": "MODEL-PLAN-D05",
+          "repetition": 1,
+          "run_id": "b041d63ec3a84f0c9db5f74b263a1717",
+          "terminal_reason": "MODEL_GOAL_CLARIFICATION",
+          "failures": [
+            "status: expected ['SUCCEEDED'], got 'WAITING_CLARIFICATION'",
+            "terminal_reason: expected COMPLETED, got 'MODEL_GOAL_CLARIFICATION'"
+          ]
+        },
+        {
+          "case_id": "MODEL-PLAN-D05",
+          "repetition": 2,
+          "run_id": "1c6a31ab9e76417daa98879adec199a1",
+          "terminal_reason": "MODEL_CLARIFICATION",
+          "failures": [
+            "status: expected ['SUCCEEDED'], got 'WAITING_CLARIFICATION'",
+            "terminal_reason: expected COMPLETED, got 'MODEL_CLARIFICATION'",
+            "missing tool evidence continue_after_sales_case({})"
+          ]
+        }
+      ],
+      "diagnostic_failures": [
+        {
+          "case_id": "MODEL-PLAN-D05",
+          "repetition": 1,
+          "material_checks": [
+            {
+              "run_id": "b041d63ec3a84f0c9db5f74b263a1717",
+              "expected_types": [
+                "ORIGINAL_PACKAGING",
+                "SERIAL_LABEL"
+              ],
+              "actual_types": [
+                "ORIGINAL_PACKAGING",
+                "SERIAL_LABEL"
+              ],
+              "passed": true
+            }
+          ],
+          "expected_final_state": false,
+          "complete": false
+        },
+        {
+          "case_id": "MODEL-PLAN-D05",
+          "repetition": 2,
+          "material_checks": [
+            {
+              "run_id": "1c6a31ab9e76417daa98879adec199a1",
+              "expected_types": [
+                "ORIGINAL_PACKAGING",
+                "SERIAL_LABEL"
+              ],
+              "actual_types": [],
+              "passed": false
+            }
+          ],
+          "expected_final_state": false,
+          "complete": false
+        }
+      ],
+      "raw_sha256": "a9c8e3c75a69c90ffaa447d10aee922fe2bfe56d6f811234f35a7666c525235f"
+    }
+  }
+}
