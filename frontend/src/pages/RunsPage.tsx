@@ -1,5 +1,6 @@
 import { CaseLookahead } from '../components/CaseLookahead'
 import { CaseModelDecision } from '../components/CaseModelDecision'
+import { CaseGoalRevision } from '../components/CaseGoalRevision'
 import { CaseStateChanges } from '../components/CaseStateChanges'
 import { useQuery } from '@tanstack/react-query'
 import { useEffect, useMemo, useState } from 'react'
@@ -354,12 +355,17 @@ function ResultTab({ detail }: { detail: RunDetail }) {
     <SectionHeading index="A" title="最终结果" />
     <div className="result-copy">{detail.result.reply ?? '该运行尚未生成最终回复。'}</div>
     <ResultArtifactViews artifacts={detail.result.artifacts} />
+    {(detail.profile?.profile_id === 'after-sales-goal-revision-v1' || detail.result.events?.some(e => e.type === 'case_goal_revised') || Object.keys(detail.result.case_goals ?? {}).length > 0)
+      && <CaseGoalRevision key={detail.run_id} events={detail.result.events ?? []} goals={detail.result.case_goals} running={detail.status === 'RUNNING'} />}
     <PolicyAwareCaseExecution detail={detail} />
     {(detail.profile?.profile_id === 'after-sales-incremental-state-v1' || detail.result.events?.some(e => e.type === 'case_evidence_transition_assessed')) && <CaseStateChanges events={detail.result.events ?? []} />}
     {(detail.result.events?.some(e => e.type === 'case_lookahead_solved') || detail.profile?.profile_id === 'after-sales-lookahead-v1') && <CaseLookahead events={detail.result.events ?? []} />}
     {(detail.result.events?.some(e => e.type.startsWith('case_model_decision')) || detail.profile?.profile_id?.startsWith('after-sales-model-planning-')) && <CaseModelDecision events={detail.result.events ?? []} />}
     {steps.length > 0 ? <div className="table-wrap"><table><thead><tr><th>步骤</th><th>执行角色</th><th>操作</th><th>状态</th></tr></thead><tbody>
-      {steps.map((step, index) => <tr key={String(step.step_id ?? index)}><td>{String(step.step_id ?? index + 1)}</td><td>{SPECIALIST_LABELS[String(step.specialist ?? '')] ?? String(step.specialist ?? '—')}</td><td>{TOOL_LABELS[String(step.tool ?? '')] ?? String(step.tool ?? '—')}</td><td>{STATUS_LABELS[String(step.status ?? '')] ?? String(step.status ?? '—')}</td></tr>)}
+      {steps.map((step, index) => {
+        const suppressed = ['DRAFT', 'PAUSED'].includes(String((step.result as Record<string, unknown> | undefined)?.suppressed_by_goal))
+        return <tr key={String(step.step_id ?? index)}><td>{String(step.step_id ?? index + 1)}</td><td>{SPECIALIST_LABELS[String(step.specialist ?? '')] ?? String(step.specialist ?? '—')}</td><td>{TOOL_LABELS[String(step.tool ?? '')] ?? String(step.tool ?? '—')}</td><td>{suppressed ? '按当前目标不生成确认' : STATUS_LABELS[String(step.status ?? '')] ?? String(step.status ?? '—')}</td></tr>
+      })}
     </tbody></table></div> : <div className="empty-inline">该路径没有记录结构化计划</div>}
   </>
 }

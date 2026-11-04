@@ -1,0 +1,24 @@
+.goal-revision { margin:24px 0; border:1px solid var(--line); border-radius:8px; overflow:hidden; background:var(--surface); }
+.goal-revision header { display:flex; align-items:center; justify-content:space-between; gap:24px; padding:22px 24px; border-bottom:1px solid var(--line); }
+.goal-eyebrow { display:flex; align-items:center; gap:8px; color:var(--blue); font:11px var(--mono); letter-spacing:.06em; }
+.goal-revision h3 { margin:10px 0 0; font-size:18px; font-weight:600; }
+.goal-revision label { display:flex; align-items:center; gap:12px; color:var(--muted); font-size:12px; white-space:nowrap; }
+.goal-revision select { color:var(--ink); padding:8px 12px; border:1px solid var(--line); border-radius:4px; background:var(--surface); }
+.goal-route { display:flex; align-items:center; gap:28px; padding:24px; background:linear-gradient(100deg,var(--surface),var(--blue-soft)); }
+.goal-route > div > span, .goal-current span { display:block; font:11px var(--mono); color:var(--muted); margin-bottom:8px; }
+.goal-route b { font-size:18px; font-weight:500; }
+.goal-route > svg { color:var(--muted); }
+.goal-current { display:flex; align-items:center; gap:14px; border:1px solid var(--line-strong); border-radius:6px; background:var(--surface); padding:14px 24px; }
+.goal-current > svg { color:var(--blue); }
+.goal-case { margin-left:auto; color:var(--muted); font:11px var(--mono); }
+.goal-revision blockquote { margin:20px 24px; padding:4px 0 4px 16px; border-left:2px solid var(--blue); font-size:14px; line-height:1.8; overflow-wrap:anywhere; }
+.goal-revision blockquote span { display:block; color:var(--muted); font-size:11px; margin-bottom:6px; }
+.goal-impact { display:grid; grid-template-columns:1fr 1fr 1.2fr; border-top:1px solid var(--line); }
+.goal-impact article { padding:20px 24px; min-width:0; }
+.goal-impact article + article { border-left:1px solid var(--line); }
+.goal-impact h4 { margin:0 0 12px; font-size:12px; }
+.goal-impact ul { padding-left:16px; margin:0; }
+.goal-impact li, .goal-impact p { font-size:12px; line-height:1.9; color:var(--ink-2); }
+.goal-revision footer { display:flex; flex-wrap:wrap; gap:14px; padding:14px 24px; border-top:1px solid var(--line); font-size:11px; color:var(--muted); }
+.goal-revision footer b { font-weight:500; color:var(--ink); }
+.goal-notice { margin:16px 24px; font-size:12px; color:var(--muted); }
