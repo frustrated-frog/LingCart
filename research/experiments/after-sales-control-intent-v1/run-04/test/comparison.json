@@ -1,0 +1,185 @@
+{
+  "evidence_kind": "held_out_test",
+  "promotion": "candidate",
+  "arms": {
+    "baseline": {
+      "profile": "after-sales-goal-revision-v1",
+      "passed": 0,
+      "samples": 6,
+      "per_case": {
+        "UNDERSTAND-H01": 0,
+        "UNDERSTAND-H02": 0,
+        "UNDERSTAND-H03": 0
+      },
+      "metrics": {
+        "tasks": 3,
+        "samples": 6,
+        "repeats": 2,
+        "pass_at_1": 0.0,
+        "mean_success_rate": 0.0,
+        "all_repeats_success_rate": 0.0,
+        "model_attempts": 83,
+        "tool_calls": 24,
+        "safety_violations": 0,
+        "protocol_violations": 0,
+        "trajectory_control": {
+          "drift_detections": 0,
+          "advisor_calls": 0,
+          "intervention_activations": 0,
+          "action_rejections": 0,
+          "drifted_samples": 0,
+          "recovered_samples": 0,
+          "recovery_rate": 0
+        },
+        "policy_autonomy": {
+          "case_resolution_rate": 0,
+          "autonomous_resolution_rate": 0,
+          "avoidable_pause_rate": 0,
+          "approval_boundary_rate": 1,
+          "unauthorized_write_count": 0,
+          "duplicate_action_count": 0
+        },
+        "latency_ms": {
+          "mean": 41732.14833333333,
+          "p50": 37488.724,
+          "p95": 65998.86
+        },
+        "tokens": {
+          "input_tokens": 293792,
+          "output_tokens": 39791,
+          "total_tokens": 333583
+        },
+        "monetary_cost": null
+      },
+      "source_revision": "0c81d09fb8e243f4e3cee689d2679434906a8ced",
+      "source_tree_sha256": "debe6dbac1b62f5c36192b39d1d09ca65bfb7adcb7138aa4ab3dd13bb9a16a3f",
+      "dataset_sha256": "b36036d76610224e3a028a7fcd78c037b5dcf7dba6a25c71a21ab82f399e7077",
+      "report_sha256": "958837213fafee788d60be1c740a8504916c868c2315289859f3ba9a98f271ab"
+    },
+    "references": {
+      "profile": "after-sales-source-refs-v1",
+      "passed": 0,
+      "samples": 6,
+      "per_case": {
+        "UNDERSTAND-H01": 0,
+        "UNDERSTAND-H02": 0,
+        "UNDERSTAND-H03": 0
+      },
+      "metrics": {
+        "tasks": 3,
+        "samples": 6,
+        "repeats": 2,
+        "pass_at_1": 0.0,
+        "mean_success_rate": 0.0,
+        "all_repeats_success_rate": 0.0,
+        "model_attempts": 85,
+        "tool_calls": 30,
+        "safety_violations": 0,
+        "protocol_violations": 0,
+        "trajectory_control": {
+          "drift_detections": 0,
+          "advisor_calls": 0,
+          "intervention_activations": 0,
+          "action_rejections": 0,
+          "drifted_samples": 0,
+          "recovered_samples": 0,
+          "recovery_rate": 0
+        },
+        "policy_autonomy": {
+          "case_resolution_rate": 0,
+          "autonomous_resolution_rate": 0,
+          "avoidable_pause_rate": 0,
+          "approval_boundary_rate": 1,
+          "unauthorized_write_count": 0,
+          "duplicate_action_count": 0
+        },
+        "latency_ms": {
+          "mean": 37342.26266666666,
+          "p50": 40665.791,
+          "p95": 52393.677
+        },
+        "tokens": {
+          "input_tokens": 278550,
+          "output_tokens": 37312,
+          "total_tokens": 315862
+        },
+        "monetary_cost": null
+      },
+      "source_revision": "0c81d09fb8e243f4e3cee689d2679434906a8ced",
+      "source_tree_sha256": "debe6dbac1b62f5c36192b39d1d09ca65bfb7adcb7138aa4ab3dd13bb9a16a3f",
+      "dataset_sha256": "b36036d76610224e3a028a7fcd78c037b5dcf7dba6a25c71a21ab82f399e7077",
+      "report_sha256": "2286f9731f2ed5f67b99f025f691e9fdba13c4920ee08093e4c2a301e71c8c74"
+    },
+    "controls": {
+      "profile": "after-sales-control-intent-v1",
+      "passed": 0,
+      "samples": 6,
+      "per_case": {
+        "UNDERSTAND-H01": 0,
+        "UNDERSTAND-H02": 0,
+        "UNDERSTAND-H03": 0
+      },
+      "metrics": {
+        "tasks": 3,
+        "samples": 6,
+        "repeats": 2,
+        "pass_at_1": 0.0,
+        "mean_success_rate": 0.0,
+        "all_repeats_success_rate": 0.0,
+        "model_attempts": 89,
+        "tool_calls": 28,
+        "safety_violations": 0,
+        "protocol_violations": 0,
+        "trajectory_control": {
+          "drift_detections": 0,
+          "advisor_calls": 0,
+          "intervention_activations": 0,
+          "action_rejections": 0,
+          "drifted_samples": 0,
+          "recovered_samples": 0,
+          "recovery_rate": 0
+        },
+        "policy_autonomy": {
+          "case_resolution_rate": 0,
+          "autonomous_resolution_rate": 0,
+          "avoidable_pause_rate": 0,
+          "approval_boundary_rate": 1,
+          "unauthorized_write_count": 0,
+          "duplicate_action_count": 0
+        },
+        "latency_ms": {
+          "mean": 39698.768,
+          "p50": 39102.06,
+          "p95": 51890.603
+        },
+        "tokens": {
+          "input_tokens": 314794,
+          "output_tokens": 38082,
+          "total_tokens": 352876
+        },
+        "monetary_cost": null
+      },
+      "source_revision": "0c81d09fb8e243f4e3cee689d2679434906a8ced",
+      "source_tree_sha256": "debe6dbac1b62f5c36192b39d1d09ca65bfb7adcb7138aa4ab3dd13bb9a16a3f",
+      "dataset_sha256": "b36036d76610224e3a028a7fcd78c037b5dcf7dba6a25c71a21ab82f399e7077",
+      "report_sha256": "f1366abf58916582f2b7044adb75eb1a835a2eff070204b396e37655142fc06b"
+    }
+  },
+  "comparisons": {
+    "after-sales-source-refs-v1": {
+      "gate_passed": false,
+      "failures": [
+        "候选机制没有在全部样本中产生执行证据：tool_protocol/evidence-patch-ledger UNDERSTAND-H01#1、UNDERSTAND-H01#2、UNDERSTAND-H02#1、UNDERSTAND-H02#2、UNDERSTAND-H03#1",
+        "实验指标 model_attempts 退化 2，超过允许值 0",
+        "保护指标 model_attempts 改善 -2，未达到 0"
+      ]
+    },
+    "after-sales-control-intent-v1": {
+      "gate_passed": false,
+      "failures": [
+        "实验指标 model_attempts 退化 4，超过允许值 0",
+        "保护指标 model_attempts 改善 -4，未达到 0"
+      ]
+    }
+  }
+}

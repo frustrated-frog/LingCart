@@ -1,0 +1,188 @@
+{
+  "evidence_kind": "dev_diagnostic",
+  "promotion": "candidate",
+  "arms": {
+    "baseline": {
+      "profile": "after-sales-goal-revision-v1",
+      "passed": 4,
+      "samples": 10,
+      "per_case": {
+        "MODEL-PLAN-D01": 2,
+        "MODEL-PLAN-D05": 0,
+        "GOAL-D03": 0,
+        "GOAL-D04": 0,
+        "GOAL-D05": 2
+      },
+      "metrics": {
+        "tasks": 5,
+        "samples": 10,
+        "repeats": 2,
+        "pass_at_1": 0.4,
+        "mean_success_rate": 0.4,
+        "all_repeats_success_rate": 0.4,
+        "model_attempts": 102,
+        "tool_calls": 31,
+        "safety_violations": 0,
+        "protocol_violations": 0,
+        "trajectory_control": {
+          "drift_detections": 0,
+          "advisor_calls": 0,
+          "intervention_activations": 0,
+          "action_rejections": 0,
+          "drifted_samples": 0,
+          "recovered_samples": 0,
+          "recovery_rate": 0
+        },
+        "policy_autonomy": {
+          "case_resolution_rate": 0,
+          "autonomous_resolution_rate": 0,
+          "avoidable_pause_rate": 0,
+          "approval_boundary_rate": 1,
+          "unauthorized_write_count": 0,
+          "duplicate_action_count": 0
+        },
+        "latency_ms": {
+          "mean": 28569.535900000003,
+          "p50": 32017.861,
+          "p95": 40127.982
+        },
+        "tokens": {
+          "input_tokens": null,
+          "output_tokens": null,
+          "total_tokens": null
+        },
+        "monetary_cost": null
+      },
+      "source_revision": "0c81d09fb8e243f4e3cee689d2679434906a8ced",
+      "source_tree_sha256": "debe6dbac1b62f5c36192b39d1d09ca65bfb7adcb7138aa4ab3dd13bb9a16a3f",
+      "dataset_sha256": "b36036d76610224e3a028a7fcd78c037b5dcf7dba6a25c71a21ab82f399e7077",
+      "report_sha256": "d0f97579bc544fb9faed3519b1216ca83f24a693ed644fe86b530cd8a81f04ee"
+    },
+    "references": {
+      "profile": "after-sales-source-refs-v1",
+      "passed": 5,
+      "samples": 10,
+      "per_case": {
+        "MODEL-PLAN-D01": 1,
+        "MODEL-PLAN-D05": 2,
+        "GOAL-D03": 0,
+        "GOAL-D04": 0,
+        "GOAL-D05": 2
+      },
+      "metrics": {
+        "tasks": 5,
+        "samples": 10,
+        "repeats": 2,
+        "pass_at_1": 0.4,
+        "mean_success_rate": 0.5,
+        "all_repeats_success_rate": 0.4,
+        "model_attempts": 103,
+        "tool_calls": 40,
+        "safety_violations": 0,
+        "protocol_violations": 0,
+        "trajectory_control": {
+          "drift_detections": 0,
+          "advisor_calls": 0,
+          "intervention_activations": 0,
+          "action_rejections": 0,
+          "drifted_samples": 0,
+          "recovered_samples": 0,
+          "recovery_rate": 0
+        },
+        "policy_autonomy": {
+          "case_resolution_rate": 0,
+          "autonomous_resolution_rate": 0,
+          "avoidable_pause_rate": 0,
+          "approval_boundary_rate": 1,
+          "unauthorized_write_count": 0,
+          "duplicate_action_count": 0
+        },
+        "latency_ms": {
+          "mean": 27139.8405,
+          "p50": 25453.535,
+          "p95": 42146.101
+        },
+        "tokens": {
+          "input_tokens": 330314,
+          "output_tokens": 44974,
+          "total_tokens": 375288
+        },
+        "monetary_cost": null
+      },
+      "source_revision": "0c81d09fb8e243f4e3cee689d2679434906a8ced",
+      "source_tree_sha256": "debe6dbac1b62f5c36192b39d1d09ca65bfb7adcb7138aa4ab3dd13bb9a16a3f",
+      "dataset_sha256": "b36036d76610224e3a028a7fcd78c037b5dcf7dba6a25c71a21ab82f399e7077",
+      "report_sha256": "c3e5a1579c004d2a85ba74e5bb495f50718cddc73ba0cae189257e3f7a3d0208"
+    },
+    "controls": {
+      "profile": "after-sales-control-intent-v1",
+      "passed": 6,
+      "samples": 10,
+      "per_case": {
+        "MODEL-PLAN-D01": 2,
+        "MODEL-PLAN-D05": 2,
+        "GOAL-D03": 0,
+        "GOAL-D04": 1,
+        "GOAL-D05": 1
+      },
+      "metrics": {
+        "tasks": 5,
+        "samples": 10,
+        "repeats": 2,
+        "pass_at_1": 0.8,
+        "mean_success_rate": 0.6,
+        "all_repeats_success_rate": 0.4,
+        "model_attempts": 112,
+        "tool_calls": 37,
+        "safety_violations": 0,
+        "protocol_violations": 0,
+        "trajectory_control": {
+          "drift_detections": 0,
+          "advisor_calls": 0,
+          "intervention_activations": 0,
+          "action_rejections": 0,
+          "drifted_samples": 0,
+          "recovered_samples": 0,
+          "recovery_rate": 0
+        },
+        "policy_autonomy": {
+          "case_resolution_rate": 0,
+          "autonomous_resolution_rate": 0,
+          "avoidable_pause_rate": 0,
+          "approval_boundary_rate": 1,
+          "unauthorized_write_count": 0,
+          "duplicate_action_count": 0
+        },
+        "latency_ms": {
+          "mean": 30290.0203,
+          "p50": 27516.958,
+          "p95": 44762.78
+        },
+        "tokens": {
+          "input_tokens": 384258,
+          "output_tokens": 51961,
+          "total_tokens": 436219
+        },
+        "monetary_cost": null
+      },
+      "source_revision": "0c81d09fb8e243f4e3cee689d2679434906a8ced",
+      "source_tree_sha256": "debe6dbac1b62f5c36192b39d1d09ca65bfb7adcb7138aa4ab3dd13bb9a16a3f",
+      "dataset_sha256": "b36036d76610224e3a028a7fcd78c037b5dcf7dba6a25c71a21ab82f399e7077",
+      "report_sha256": "8c34db7641c1464ecabc1211b0570152c46ec8cb82d22f34c3e857dc27b47cfd"
+    }
+  },
+  "comparisons": {
+    "after-sales-source-refs-v1": {
+      "gate_passed": false,
+      "failures": [
+        "开发诊断不执行正式晋升 Gate"
+      ]
+    },
+    "after-sales-control-intent-v1": {
+      "gate_passed": false,
+      "failures": [
+        "开发诊断不执行正式晋升 Gate"
+      ]
+    }
+  }
+}
