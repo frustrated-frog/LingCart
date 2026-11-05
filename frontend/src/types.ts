@@ -270,8 +270,17 @@ export type ExecutionRestriction = 'READ_ONLY' | 'NO_PAYMENT' | 'NO_REFUND' | 'N
 export interface ExecutionBoundary {
   restriction: ExecutionRestriction
   source: RequestSourceSpan
-  origin: 'adaptive' | 'dialogue'
+  origin: 'adaptive' | 'dialogue' | 'control'
   requirement_id?: string
+  case_id?: string | null
+  order_id?: number | null
+}
+
+export interface ControlIntent {
+  kind: 'REQUIRE_CONFIRMATION' | 'PROHIBIT' | 'RELEASE_PROHIBITION' | 'REVOKE_APPROVAL'
+  scope: 'CASE' | 'SESSION'
+  case_id: string | null
+  restriction: ExecutionRestriction | null
 }
 
 export interface CaseGoal {
@@ -296,6 +305,7 @@ export interface RequestSemantics {
       description: string
       source_quote: string
       case_goal?: { case_id: string; mode: CaseGoal['mode'] } | null
+      control_intent?: ControlIntent | null
       targets: string[]
       outcome: { kind: string; reason_code?: string | null; quantity: number; order_id: number | null; question: string | null; product_ids: string[] } | null
       predicate: { field: string | null; op: string; value: unknown } | null

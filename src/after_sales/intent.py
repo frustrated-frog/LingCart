@@ -26,6 +26,8 @@ def verify_intent(context, understanding, request, history):
     contract = extract_contract(context, request, history, previous=previous,
                                 **({'case_context': trusted_case_scope(cases)} if scoped else {}))
     from src.execution_boundaries import apply_semantic_boundaries
+    from src.after_sales.control_intent import restrictive_controls
+    restrictive_controls(context, contract, cases)
     apply_semantic_boundaries(context, contract, restrict_only=True)
     rows = validate_contract(contract)
     expected = Counter()
@@ -60,6 +62,8 @@ def verify_intent(context, understanding, request, history):
         verify_material_scope(context, objectives, [row for row in rows if row.requirement_id in changed_ids], cases, request)
     from src.after_sales.goals import goal_changes
     goal_changes(context, understanding, rows, contract)
+    from src.after_sales.control_intent import verify_controls
+    verify_controls(context, understanding, rows, contract, cases, request)
     # 新提取的限制只有完整语义接受后才允许释放。
     apply_semantic_boundaries(context, contract)
     context.snapshot['request_semantics'] = deepcopy(contract)

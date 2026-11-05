@@ -138,6 +138,8 @@ export const METRIC_LABELS: Record<string, string> = {
 }
 
 const EVENT_LABELS: Record<string, [string, string]> = {
+  request_sources_resolved: ['原文', '根据来源身份还原本轮用户原话'],
+  case_control_interpreted: ['意图', '核验控制意图及其作用范围'],
   case_goal_revised: ['目标', '依据本轮用户原话修订案件目标'],
   case_goal_applied: ['目标', '执行采用当前案件目标并停止主动推进'],
   case_goal_execution_blocked: ['阻断', '当前案件目标不允许提交或退款'],

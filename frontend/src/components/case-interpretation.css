@@ -1,0 +1,11 @@
+.interpretation-intent { padding:22px 24px; background:linear-gradient(100deg,var(--surface),var(--blue-soft)); }
+.interpretation-state { color:var(--blue); font:11px var(--mono); }
+.interpretation-intent h4 { font-size:20px; font-weight:500; margin:12px 0; }
+.interpretation-intent p { font-size:13px; line-height:1.8; }
+.interpretation-intent small { color:var(--muted); font:11px var(--mono); overflow-wrap:anywhere; }
+.interpretation-sources { padding:0 24px 20px; }
+.interpretation-sources h4 { display:flex; align-items:center; gap:8px; font-size:12px; }
+.interpretation-sources details { border:1px solid var(--line); border-radius:5px; margin:8px 0; padding:12px 16px; }
+.interpretation-sources summary { cursor:pointer; font-size:12px; }
+.interpretation-sources details blockquote { margin:12px 0; }
+.interpretation-sources small, .interpretation-sources > p { color:var(--muted); font-size:11px; }

@@ -89,7 +89,7 @@ def planning_input(context, state, graph, current, executed):
 
 def decide_model_action(context, state, graph, portfolio, current, executed, *, history=None):
     """Runtime 的模型输入缓存和工具账本负责恢复；本模块不创建第二套状态机。"""
-    v2 = getattr(context.mechanisms.get('planning'), 'mechanism_version', None) in {'2', '3'}
+    v2 = getattr(context.mechanisms.get('planning'), 'mechanism_version', None) in {'2', '3', '4'}
     planner = 'policy-aware-model-planner-v2' if v2 else PLANNER
     solver = 'case-model-decision-v2' if v2 else SOLVER
     schema = ReferencedCaseDecision if v2 else ModelCaseDecision

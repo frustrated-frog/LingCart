@@ -12,6 +12,7 @@ from src.constraint_bindings import fingerprint
 from src.errors import AgentError
 from src.request_ir import SourceSpan, locate_source_span
 from src.after_sales.goals import CaseGoalScope
+from src.after_sales.control_intent import ControlIntent
 
 
 class OutcomeSpec(StrictModel):
@@ -61,6 +62,7 @@ class IntentRequirement(StrictModel):
     restriction: Literal['READ_ONLY', 'NO_PAYMENT', 'NO_REFUND', 'NO_SUBMISSION'] | None = None
     material_scope: MaterialScope | None = None
     case_goal: CaseGoalScope | None = None
+    control_intent: ControlIntent | None = None
 
     @model_validator(mode='after')
     def typed_requirement(self):
@@ -78,6 +80,8 @@ class IntentRequirement(StrictModel):
             raise ValueError('Only a material USER_FACT may carry material_scope')
         if self.case_goal is not None and (self.kind not in {'EXECUTION_BOUNDARY', 'UNKNOWN'} or self.restriction):
             raise ValueError('Case goals are scoped process requirements, not global restrictions')
+        if self.control_intent is not None and (self.kind != 'EXECUTION_BOUNDARY' or self.restriction or self.case_goal):
+            raise ValueError('Control intent is a separate scoped process requirement')
         return self
 
 

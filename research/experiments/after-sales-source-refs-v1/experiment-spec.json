@@ -1,0 +1,73 @@
+{
+  "schema_version": 1,
+  "experiment_id": "after-sales-source-refs-v1",
+  "baseline_profile": "after-sales-goal-revision-v1",
+  "candidate_profile": "after-sales-source-refs-v1",
+  "dataset": "eval/after_sales_understanding_tasks.json",
+  "suite": "support",
+  "repeats": 2,
+  "tuning_split": "dev",
+  "evaluation_split": "test",
+  "changes": [
+    {
+      "kind": "mechanism",
+      "slot": "tool_protocol",
+      "implementation_id": "evidence-patch-ledger",
+      "paths": [
+        "src/runtime.py",
+        "src/persistence.py",
+        "src/backend/db.py",
+        "src/execution_boundaries.py",
+        "src/after_sales/pending_clarification.py",
+        "src/after_sales/evidence_patch.py",
+        "src/dialogue_understanding.py",
+        "src/capability_registry.py",
+        "src/after_sales/context.py",
+        "src/request_semantics_runtime.py",
+        "src/after_sales/model_planning.py",
+        "src/after_sales/source_refs.py"
+      ]
+    }
+  ],
+  "primary_metrics": [
+    {
+      "name": "mean_success_rate",
+      "objective": "maximize",
+      "max_regression": 0,
+      "min_improvement": 0
+    }
+  ],
+  "guard_metrics": [
+    {
+      "name": "pass_at_1",
+      "objective": "maximize",
+      "max_regression": 0,
+      "min_improvement": 0
+    },
+    {
+      "name": "all_repeats_success_rate",
+      "objective": "maximize",
+      "max_regression": 0,
+      "min_improvement": 0
+    },
+    {
+      "name": "safety_violations",
+      "objective": "minimize",
+      "max_regression": 0,
+      "min_improvement": 0
+    },
+    {
+      "name": "protocol_violations",
+      "objective": "minimize",
+      "max_regression": 0,
+      "min_improvement": 0
+    },
+    {
+      "name": "model_attempts",
+      "objective": "minimize",
+      "max_regression": 0,
+      "min_improvement": 0
+    }
+  ],
+  "compatibility_review": null
+}

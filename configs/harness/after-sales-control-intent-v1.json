@@ -1,0 +1,61 @@
+{
+  "schema_version": 1,
+  "profile_id": "after-sales-control-intent-v1",
+  "version": "1.0.0",
+  "display_name": "控制意图与恢复候选",
+  "description": "区分等待确认、明确禁止、解除禁令和撤回授权，保持控制作用范围。",
+  "engine": {
+    "id": "orchestrator",
+    "version": "1"
+  },
+  "mechanisms": [
+    {
+      "slot": "planning",
+      "id": "model-case-execution",
+      "version": "4"
+    },
+    {
+      "slot": "tool_protocol",
+      "id": "evidence-patch-ledger",
+      "version": "2"
+    },
+    {
+      "slot": "verification",
+      "id": "incremental-case-verification",
+      "version": "1"
+    }
+  ],
+  "capabilities": [
+    "open_set_dialogue_understanding",
+    "after_sales_case_planning",
+    "policy_aware_case_execution",
+    "after_sales_evidence_boundary",
+    "evidence_readiness_ledger",
+    "cross_turn_evidence_readiness",
+    "obligation_graph_planning",
+    "multi_candidate_action_solver",
+    "active_clarification",
+    "counterfactual_answer_branches",
+    "pareto_question_selection",
+    "durable_pending_clarification",
+    "cross_turn_answer_binding",
+    "durable_runtime",
+    "approval_guard",
+    "tool_ledger",
+    "independent_material_scope",
+    "incremental_evidence_verification",
+    "targeted_case_repair",
+    "committed_evidence_transitions",
+    "typed_material_changes",
+    "goal_conditioned_action_selection",
+    "observation_driven_replanning",
+    "goal_clarification_pause",
+    "durable_case_goal_revision",
+    "independent_goal_and_material_updates"
+  ],
+  "research": {
+    "status": "candidate",
+    "source_type": "native",
+    "hypothesis": "结构化控制意图与双向解释核验减少恢复时的禁止与授权混淆。"
+  }
+}

@@ -553,12 +553,15 @@ def _advance_after_sales_case(
     }
 
 
-def _case_submission_restricted(context):
+def _case_submission_restricted(context, arguments):
     from src.execution_boundaries import require_allowed
     from src.runtime import tool_spec
     from src import tools
+    from src.after_sales.control_intent import confirmation_revoked_this_turn
+    if confirmation_revoked_this_turn(context, arguments):
+        return True
     try:
-        require_allowed(context, 'submit_after_sales_case', tool_spec('submit_after_sales_case', tools.submit_after_sales_case))
+        require_allowed(context, 'submit_after_sales_case', tool_spec('submit_after_sales_case', tools.submit_after_sales_case), arguments)
     except AgentError as error:
         if error.code != 'EXECUTION_BOUNDARY_VIOLATION':
             raise
@@ -606,7 +609,7 @@ def execute_plan(intake, run_id, *, plan=None, source="deterministic", incomplet
     planning_history = deepcopy((context.snapshot.get('conversation') or {}).get('case_model_decisions', {})) if context else {}
     batch_observations = {}
     batch_planning = (getattr(context.mechanisms.get('planning'), 'mechanism_id', None) == 'model-case-execution'
-                      and getattr(context.mechanisms.get('planning'), 'mechanism_version', None) in {'2', '3'}) if context else False
+                      and getattr(context.mechanisms.get('planning'), 'mechanism_version', None) in {'2', '3', '4'}) if context else False
     stop_error = None
     for step_index, step in enumerate(plan.steps):
         dependency_failed = any(completed[d].status not in {"SUCCEEDED", "REUSED", "WAITING_APPROVAL", "REJECTED"} for d in step.depends_on)
@@ -637,7 +640,7 @@ def execute_plan(intake, run_id, *, plan=None, source="deterministic", incomplet
                             step.outcome = 'SATISFIED'
                             step.result = {'message': observation['autonomous_execution']['question'],
                                            'suppressed_by_goal': observation['autonomous_execution']['goal_mode']}
-                        elif outcome == "ELIGIBLE" and _case_submission_restricted(context):
+                        elif outcome == "ELIGIBLE" and _case_submission_restricted(context, observation):
                             step.status = "SUCCEEDED"
                             step.outcome = "SATISFIED"
                             step.result = {"message": f"售后案件 {observation['case_id']} 已保存；按当前要求未提交、未退款。"}
@@ -646,7 +649,7 @@ def execute_plan(intake, run_id, *, plan=None, source="deterministic", incomplet
                             from src.runtime import tool_spec
                             from src import tools as business_tools
                             require_allowed(context, 'submit_after_sales_case',
-                                            tool_spec('submit_after_sales_case', business_tools.submit_after_sales_case))
+                                            tool_spec('submit_after_sales_case', business_tools.submit_after_sales_case), observation)
                             args = {
                                 "case_id": observation["case_id"],
                                 "expected_revision": observation["revision"],
@@ -709,7 +712,7 @@ def execute_plan(intake, run_id, *, plan=None, source="deterministic", incomplet
                         from src.runtime import tool_spec
                         from src import tools as business_tools
                         action_tool = 'initiate_refund' if step.tool == 'prepare_refund' else 'process_payment'
-                        require_allowed(context, action_tool, tool_spec(action_tool, getattr(business_tools, action_tool)))
+                        require_allowed(context, action_tool, tool_spec(action_tool, getattr(business_tools, action_tool)), step.args)
                         pending = dict(type="INITIATE_REFUND" if step.tool == "prepare_refund" else "PROCESS_PAYMENT",
                                        order_id=step.args["order_id"], requires_approval=True)
                         if step.tool == "prepare_refund":

@@ -2,7 +2,7 @@
 from copy import deepcopy
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from src.errors import AgentError
 from src.request_ir import SourceSpan, locate_source_span
@@ -19,8 +19,16 @@ class ExecutionBoundary(BaseModel):
     model_config = ConfigDict(extra='forbid', strict=True)
     restriction: Literal['READ_ONLY', 'NO_PAYMENT', 'NO_REFUND', 'NO_SUBMISSION']
     source: SourceSpan
-    origin: Literal['dialogue', 'adaptive']
+    origin: Literal['dialogue', 'adaptive', 'control']
     requirement_id: str | None = None
+    case_id: str | None = None
+    order_id: int | None = None
+
+    @model_validator(mode='after')
+    def scope_identity(self):
+        if bool(self.case_id) != (self.order_id is not None):
+            raise ValueError('Case-scoped boundary requires case and order identities')
+        return self
 
 
 def current_boundaries(context):
@@ -47,7 +55,7 @@ def apply_dialogue_boundaries(context, changes, request, history=None):
             raise AgentError('EXECUTION_BOUNDARY_CONFLICT', '同一轮不能重复声明或冲突修改同一执行限制', retryable=False)
         seen.add(change.restriction)
         source = locate_source_span(change.source_quote, request)  # 解除限制也必须是本轮原文。
-        active = [row for row in active if row['restriction'] != change.restriction]
+        active = [row for row in active if row['restriction'] != change.restriction or row.get('case_id')]
         if change.operation == 'DENY':
             active.append(dict(restriction=change.restriction, source=source.model_dump(), origin='dialogue'))
     previous = context.snapshot.get('request_semantics') or (context.snapshot.get('conversation') or {}).get('request_semantics')
@@ -90,6 +98,10 @@ def require_allowed(context, name, spec, arguments=None):
     """在账本重放、preflight 和副作用执行之前检查，已有审批不能越过限制。"""
     if context is None:
         return
+    from src.after_sales.control_intent import approval_revoked
+    from src.runtime import ReplayPolicy
+    if spec.replay_policy == ReplayPolicy.REQUIRES_APPROVAL and approval_revoked(context, context.approval):
+        raise AgentError('APPROVAL_REVOKED', '这份旧确认已被用户撤回，需要重新核验并单独确认', retryable=False)
     from src.runtime import BusinessEffect, ToolEffect
     if arguments and set(spec.business_effects) & {BusinessEffect.REFUND, BusinessEffect.FINAL_SUBMISSION}:
         from src.after_sales.goals import current_goals
@@ -99,6 +111,9 @@ def require_allowed(context, name, spec, arguments=None):
                 context.record('case_goal_execution_blocked', tool=name, case_id=goal['case_id'], mode=goal['mode'])
                 raise AgentError('CASE_GOAL_HELD', '当前案件目标不允许提交或退款，继续处理也不等于确认授权', retryable=False)
     for row in current_boundaries(context):
+        if row.get('case_id') and (not arguments or (arguments.get('case_id') != row['case_id']
+                                                   and arguments.get('order_id') != row['order_id'])):
+            continue
         restriction = row['restriction']
         blocked = (
             (restriction == 'READ_ONLY' and spec.effect == ToolEffect.WRITE)
@@ -109,3 +124,22 @@ def require_allowed(context, name, spec, arguments=None):
         if blocked:
             context.record('execution_boundary_blocked', tool=name, restriction=restriction, source=row['source'])
             raise AgentError('EXECUTION_BOUNDARY_VIOLATION', '当前用户要求禁止此操作：' + row['source']['text'], retryable=False)
+
+
+def action_restricted(context, action):
+    """旧确认恢复展示前也遵守新限制；检查不执行工具。"""
+    if not context or not action:
+        return False
+    from src import tools
+    from src.runtime import tool_spec
+    name = action.get('tool')
+    function = getattr(tools, name, None) if isinstance(name, str) else None
+    if function is None:
+        return False  # 旧格式确认仍由原有审批校验负责。
+    try:
+        require_allowed(context, name, tool_spec(name, function), {**action.get('args', {}), **action})
+    except AgentError as error:
+        if error.code in {'EXECUTION_BOUNDARY_VIOLATION', 'CASE_GOAL_HELD', 'APPROVAL_REVOKED'}:
+            return True
+        raise
+    return False

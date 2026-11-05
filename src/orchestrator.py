@@ -531,7 +531,11 @@ def _run_orchestrator(user_message: str, history: list | None = None, pending_ac
     # Browsing another read-only task must not silently discard an existing
     # approval. Only explicit confirmation/cancellation consumes that action.
     from src.after_sales.goals import action_held
+    from src.after_sales.control_intent import approval_revoked
+    from src.execution_boundaries import action_restricted
     if (pending_action and not action_held(current_runtime(), pending_action)
+            and not approval_revoked(current_runtime(), pending_action)
+            and not action_restricted(current_runtime(), pending_action)
             and approval_decision not in {APPROVAL_CONFIRMED, APPROVAL_CANCELLED} and not result.get("pending_action")):
         result["pending_action"] = pending_action
     result["latency_ms"] = round((time.perf_counter() - started_at) * 1000, 2)
@@ -581,6 +585,7 @@ def run_orchestrator(user_message: str, history: list | None = None, pending_act
                 "APPROVAL_ALREADY_USED",
                 "REFUND_SCOPE_MISMATCH",
                 "CASE_GOAL_HELD",
+                "APPROVAL_REVOKED",
             }
             else pending_action
         )

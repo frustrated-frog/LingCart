@@ -1,6 +1,7 @@
 import { CaseLookahead } from '../components/CaseLookahead'
 import { CaseModelDecision } from '../components/CaseModelDecision'
 import { CaseGoalRevision } from '../components/CaseGoalRevision'
+import { CaseInterpretation } from '../components/CaseInterpretation'
 import { CaseStateChanges } from '../components/CaseStateChanges'
 import { useQuery } from '@tanstack/react-query'
 import { useEffect, useMemo, useState } from 'react'
@@ -355,6 +356,8 @@ function ResultTab({ detail }: { detail: RunDetail }) {
     <SectionHeading index="A" title="最终结果" />
     <div className="result-copy">{detail.result.reply ?? '该运行尚未生成最终回复。'}</div>
     <ResultArtifactViews artifacts={detail.result.artifacts} />
+    {(detail.result.events?.some(e => ['request_sources_resolved', 'case_control_interpreted'].includes(e.type)) || ['after-sales-source-refs-v1', 'after-sales-control-intent-v1'].includes(detail.profile?.profile_id ?? ''))
+      && <CaseInterpretation key={detail.run_id} events={detail.result.events ?? []} running={detail.status === 'RUNNING'} />}
     {(detail.profile?.profile_id === 'after-sales-goal-revision-v1' || detail.result.events?.some(e => e.type === 'case_goal_revised') || Object.keys(detail.result.case_goals ?? {}).length > 0)
       && <CaseGoalRevision key={detail.run_id} events={detail.result.events ?? []} goals={detail.result.case_goals} running={detail.status === 'RUNNING'} />}
     <PolicyAwareCaseExecution detail={detail} />

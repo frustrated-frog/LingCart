@@ -72,6 +72,11 @@ def extract_contract(context, request, history, *, previous=None, change_text=No
     reference_surface = refs_enabled(context) and case_context is not None
     if reference_surface:
         payload['human_sources'] = catalog(context, request)
+        if previous:
+            # 模型只需旧需求内容和身份；完整来源范围与修订链由宿主保留、校验。
+            # 不重复发送同一句原文的 SourceSpan、哈希和历次修订元数据。
+            payload['prior_contract'] = dict(sha256=previous['sha256'],
+                requirements=[{'requirement': row['requirement']} for row in previous['requirements']])
     registry = get_catalog_concept_registry()
     basis = fingerprint(dict(input=payload, protocol='request-semantics/v1', registry=registry.fingerprint))
     cached = context.snapshot.get('semantic_extraction') or {}
@@ -89,6 +94,11 @@ def extract_contract(context, request, history, *, previous=None, change_text=No
     if not goal_protocol:
         schema['$defs']['IntentRequirement']['properties'].pop('case_goal', None)
         schema['$defs'].pop('CaseGoalScope', None)
+    from src.after_sales.control_intent import enabled as controls_enabled, SEMANTIC_INSTRUCTION as CONTROL_INSTRUCTION
+    control_surface = controls_enabled(context) and case_context is not None
+    if not control_surface:
+        schema['$defs']['IntentRequirement']['properties'].pop('control_intent', None)
+        schema['$defs'].pop('ControlIntent', None)
     if case_context is None:
         schema['$defs']['IntentRequirement']['properties'].pop('material_scope', None)
         schema['$defs'].pop('MaterialScope', None)
@@ -109,6 +119,8 @@ def extract_contract(context, request, history, *, previous=None, change_text=No
                        'the explicit correction and replacement facts. Merely repeating a preserved fact is not ADD/REPLACE.')
     if goal_protocol:
         prompt += '\n' + SEMANTIC_INSTRUCTION
+    if control_surface:
+        prompt += '\n' + CONTROL_INSTRUCTION
     if reference_surface:
         from src.after_sales.source_refs import INSTRUCTION as REFERENCE_INSTRUCTION
         schema = schema_with_refs(schema)

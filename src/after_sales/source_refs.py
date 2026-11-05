@@ -15,11 +15,9 @@ def catalog(context, request):
     return [s for s in source_catalog(context, request) if s['origin'] == 'CURRENT_TURN']
 
 
-INSTRUCTION = '''Output source_ref instead of source_quote everywhere. Choose an exact ID from human_sources;
-the host restores the original HUMAN text. Never copy/rewrite a quote, invent offsets or cite prior runs.
-One source may support multiple independently scoped facts. Preserved prior requirements keep their stored sources.
-Only extract NEW facts/changes asserted in the CURRENT message; do not backfill old uncommitted material from history.
-Material status, goal mode and authorization are separate interpretations of the same source, not implied by its ID.
+INSTRUCTION = '''Use source_ref IDs from human_sources instead of source_quote everywhere; host restores exact text.
+Never invent quotes/offsets. Each ID may support separate scoped facts. PRESERVE keeps prior sources;
+ADD/REPLACE assert CURRENT facts only, never backfill uncommitted history. References grant no authorization.
 '''
 
 

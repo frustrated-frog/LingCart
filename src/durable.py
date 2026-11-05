@@ -206,6 +206,8 @@ def execute_claim(claim, *, store=None, runner=None):
                 state['execution_boundaries'] = deepcopy(context.snapshot['execution_boundaries'])
             if 'case_goals' in context.snapshot:
                 state['case_goals'] = deepcopy(context.snapshot['case_goals'])
+            if 'revoked_approvals' in context.snapshot:
+                state['revoked_approvals'] = deepcopy(context.snapshot['revoked_approvals'])
             result['case_goals'] = deepcopy(state.get('case_goals', {}))
             if 'case_model_decisions' in context.snapshot:
                 state['case_model_decisions'] = deepcopy(context.snapshot['case_model_decisions'])
