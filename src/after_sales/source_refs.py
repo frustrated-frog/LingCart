@@ -90,5 +90,10 @@ def decode(context, payload, request, *, purpose):
             bindings.append(dict(path=path, source=source))
         return result
     decoded = visit(payload, [])
+    mechanism = context.mechanisms.get('tool_protocol')
+    if mechanism and getattr(mechanism, 'source_references', False):
+        context.record('mechanism_applied', slot='tool_protocol', mechanism_id=mechanism.mechanism_id,
+                       mechanism_version=mechanism.mechanism_version, purpose=purpose,
+                       configuration={'source_references': True, 'material_patch_protocol': True})
     context.record('request_sources_resolved', purpose=purpose, status='RESOLVED', bindings=bindings)
     return decoded

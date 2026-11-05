@@ -94,6 +94,15 @@ def apply_semantic_boundaries(context, contract, *, restrict_only=False):
                    restrict_only=restrict_only)
 
 
+def scope_matches(case_id, order_id, arguments):
+    """有明确案件身份时按案件匹配；订单回退仅保护不携带案件的直接工具。"""
+    if not arguments:
+        return False
+    if arguments.get('case_id') is not None:
+        return arguments['case_id'] == case_id
+    return arguments.get('order_id') == order_id
+
+
 def require_allowed(context, name, spec, arguments=None):
     """在账本重放、preflight 和副作用执行之前检查，已有审批不能越过限制。"""
     if context is None:
@@ -106,13 +115,11 @@ def require_allowed(context, name, spec, arguments=None):
     if arguments and set(spec.business_effects) & {BusinessEffect.REFUND, BusinessEffect.FINAL_SUBMISSION}:
         from src.after_sales.goals import current_goals
         for goal in current_goals(context).values():
-            if goal['mode'] != 'CONTINUE' and (arguments.get('case_id') == goal['case_id']
-                    or arguments.get('order_id') == goal['order_id']):
+            if goal['mode'] != 'CONTINUE' and scope_matches(goal['case_id'], goal['order_id'], arguments):
                 context.record('case_goal_execution_blocked', tool=name, case_id=goal['case_id'], mode=goal['mode'])
                 raise AgentError('CASE_GOAL_HELD', '当前案件目标不允许提交或退款，继续处理也不等于确认授权', retryable=False)
     for row in current_boundaries(context):
-        if row.get('case_id') and (not arguments or (arguments.get('case_id') != row['case_id']
-                                                   and arguments.get('order_id') != row['order_id'])):
+        if row.get('case_id') and not scope_matches(row['case_id'], row['order_id'], arguments):
             continue
         restriction = row['restriction']
         blocked = (

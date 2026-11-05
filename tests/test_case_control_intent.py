@@ -174,3 +174,23 @@ def test_case_ban_removes_old_confirmation_from_projection_before_tool_write():
         source=locate_source_span(BAN, BAN).model_dump())]
     assert action_restricted(context, {'tool':'submit_after_sales_case', 'case_id':'a'})
     assert not action_restricted(context, {'tool':'submit_after_sales_case', 'case_id':'b'})
+
+
+def test_case_identity_takes_precedence_when_two_cases_share_an_order():
+    from src.after_sales.control_intent import matches
+    from src.after_sales.goals import CaseGoal, action_held
+    from src.execution_boundaries import require_allowed
+    from src.request_ir import locate_source_span
+    from src.runtime import RunRuntime, tool_spec
+    from src.errors import AgentError
+    context = RunRuntime('same-order')
+    source = locate_source_span(BAN, BAN)
+    context.snapshot['execution_boundaries'] = [dict(restriction='NO_SUBMISSION',origin='control',case_id='a',order_id=1001,source=source.model_dump())]
+    context.snapshot['case_goals'] = {'a':CaseGoal(case_id='a',order_id=1001,mode='DRAFT',revision=1,source=source,run_id='prior').model_dump()}
+    other = {'case_id':'b','order_id':1001}
+    assert not action_held(context,other)
+    assert not matches({'control':{'scope':'CASE','case_id':'a'},'order_id':1001},other)
+    spec = tool_spec('submit_after_sales_case',tools.submit_after_sales_case)
+    require_allowed(context,'submit_after_sales_case',spec,other)
+    with pytest.raises(AgentError): require_allowed(context,'submit_after_sales_case',spec,{'case_id':'a','order_id':1001})
+    with pytest.raises(AgentError): require_allowed(context,'initiate_refund',tool_spec('initiate_refund',tools.initiate_refund),{'order_id':1001})

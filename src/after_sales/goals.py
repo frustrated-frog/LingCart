@@ -52,8 +52,9 @@ def held_goal(context, case_id):
 
 
 def action_held(context, arguments):
-    return any(goal['mode'] != 'CONTINUE' and (arguments.get('case_id') == goal['case_id']
-               or arguments.get('order_id') == goal['order_id']) for goal in current_goals(context).values())
+    from src.execution_boundaries import scope_matches
+    return any(goal['mode'] != 'CONTINUE' and scope_matches(goal['case_id'], goal['order_id'], arguments)
+               for goal in current_goals(context).values())
 
 
 INSTRUCTION = '''For an existing case, saving a draft, pausing or resuming is AFTER_SALES_CONTINUE, not cancel/confirm.

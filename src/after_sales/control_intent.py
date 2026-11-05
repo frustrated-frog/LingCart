@@ -142,8 +142,9 @@ def commit_controls(context, understanding, request):
 
 
 def matches(item, arguments):
+    from src.execution_boundaries import scope_matches
     control = item['control']
-    return control['scope'] == 'SESSION' or arguments.get('case_id') == control['case_id'] or arguments.get('order_id') == item['order_id']
+    return control['scope'] == 'SESSION' or scope_matches(control['case_id'], item['order_id'], arguments)
 
 
 def approval_revoked(context, approval):

@@ -72,6 +72,9 @@ def test_material_and_independent_contract_restore_sources_without_duplicate_wri
     events = [e for e in result['events'] if e['type'] == 'request_sources_resolved']
     assert {e['purpose'] for e in events} == {'dialogue_understanding', 'request_semantics'}
     assert all(b['source']['text'] == DRAFT for e in events for b in e['bindings'])
+    assert any(e['type'] == 'mechanism_applied' and e['slot'] == 'tool_protocol'
+               and e['mechanism_id'] == 'evidence-patch-ledger' and e['mechanism_version'] == '2'
+               for e in result['events'])
 
 
 def test_only_tool_protocol_changes_and_candidate_stays_out_of_product():
