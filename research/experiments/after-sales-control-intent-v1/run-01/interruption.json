@@ -1,0 +1,10 @@
+{
+  "status": "INTERRUPTED",
+  "source_revision": "e6919bee1d488965333a4a78bb720b40dfc1429a",
+  "reason": "新增评测回调错误要求所有旧案例必须提供可选 expected_final_status 字段；首条轨迹完成后汇总失败。",
+  "completed_unscored_trajectories": 1,
+  "model_or_runtime_changed": false,
+  "test_split_started": false,
+  "comparison_eligible": false,
+  "raw_result_limitation": "异常发生在首次逐样本保存前，未形成完整原始结果；保留可用运行日志，不计入收益或成功率。"
+}

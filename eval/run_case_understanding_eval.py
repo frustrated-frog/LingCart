@@ -27,7 +27,7 @@ def check_sample(sample, case):
             turn['failures'].append('本轮材料未入账：' + ','.join(sorted(missing)))
         turn['passed'] = not turn['failures']
     final = sample['turns'][-1]
-    if final['result']['status'] != case['expected_final_status']:
+    if case.get('expected_final_status') and final['result']['status'] != case['expected_final_status']:
         final['failures'].append('最终任务状态不符')
     if case.get('check_fresh_approval'):
         ids = [(t['result'].get('pending_action') or {}).get('action_id') for t in sample['turns']]
@@ -72,9 +72,11 @@ def main():
     reports = {}
     for arm, profile in PROFILES.items():
         def on_sample(sample):
-            check_sample(sample, cases[sample['case_id']])
-            with (args.output_dir / f'{arm}.jsonl').open('a') as handle:
-                handle.write(_report_json_dumps(sample) + '\n')
+            try:
+                check_sample(sample, cases[sample['case_id']])
+            finally:
+                with (args.output_dir / f'{arm}.jsonl').open('a') as handle:
+                    handle.write(_report_json_dumps(sample) + '\n')
             print(arm, sample['case_id'], sample['repetition'], 'PASS' if sample['passed'] else 'FAIL', flush=True)
         report = evaluate(dataset, repeats=2, split=args.split, harness_profile=profile, dataset_path=DATASET,
             max_model_calls_per_run=8, max_provider_attempts_per_call=1, on_sample=on_sample)

@@ -28,3 +28,6 @@ def test_judge_requires_current_committed_evidence_and_fresh_confirmation():
     sample['turns'][1]['result']['pending_action']['action_id'] = 'new'
     check_sample(sample,case)
     assert sample['passed']
+    # 原有材料回归只按每轮断言，不要求另写最终状态。
+    check_sample(sample, {'turns': [{}, {}]})
+    assert sample['passed']
