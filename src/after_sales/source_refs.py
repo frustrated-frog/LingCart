@@ -30,8 +30,10 @@ def schema_with_refs(schema):
         result = {k: visit(v) for k, v in value.items()}
         props = result.get('properties', {})
         if 'source_quote' in props:
-            props.pop('source_quote')
-            props['source_ref'] = {'type': 'string'}
+            original = props.pop('source_quote')
+            nullable = {'type': 'null'} in original.get('anyOf', [])
+            props['source_ref'] = ({'anyOf': [{'type': 'string'}, {'type': 'null'}]}
+                                   if nullable else {'type': 'string'})
             if 'required' in result:
                 result['required'] = ['source_ref' if k == 'source_quote' else k for k in result['required']]
         return result
@@ -50,9 +52,13 @@ def decode(context, payload, request, *, purpose):
             raise AgentError('SOURCE_PROTOCOL_MIXED', '当前协议只接受 source_ref，不能混入 source_quote', retryable=False)
         result = {k: visit(v, [*path, k]) for k, v in value.items() if k != 'source_ref'}
         if 'source_ref' in value:
+            if value['source_ref'] is None:
+                # PRESERVE 的可空来源不引用任何原文；必填来源仍由完整 schema 拒绝。
+                result['source_quote'] = None
+                return result
             source = sources.get(value['source_ref']) if isinstance(value['source_ref'], str) else None
             if source is None:
-                raise AgentError('SOURCE_REFERENCE_UNKNOWN', 'source_ref 不属于本轮 HUMAN 原文目录', retryable=False)
+                raise AgentError('SOURCE_REFERENCE_UNKNOWN', 'source_ref 不属于本轮 HUMAN 原文目录；有效 ID：' + ','.join(sources), retryable=False)
             result['source_quote'] = source['text']
             bindings.append(dict(path=path, source=source))
         return result

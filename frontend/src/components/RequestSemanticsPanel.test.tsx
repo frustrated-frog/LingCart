@@ -68,4 +68,13 @@ describe('RequestSemanticsPanel', () => {
     })} />)
     expect(screen.queryByText('已修订 · 重新核验')).not.toBeInTheDocument()
   })
+
+  it('distinguishes a case restriction from a session restriction', () => {
+    render(<RequestSemanticsPanel detail={detail({ execution_boundaries: [
+      {restriction:'NO_SUBMISSION', origin:'control',source,case_id:'case-a',order_id:1001},
+      {restriction:'NO_PAYMENT', origin:'adaptive',source},
+    ] })} />)
+    expect(screen.getByText('仅案件 case-a · 订单 1001')).toBeInTheDocument()
+    expect(screen.getByText('作用于当前会话')).toBeInTheDocument()
+  })
 })

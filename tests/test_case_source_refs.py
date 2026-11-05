@@ -80,3 +80,17 @@ def test_only_tool_protocol_changes_and_candidate_stays_out_of_product():
     a, b = [get_runner(p).provenance() for p in ['after-sales-goal-revision-v1', PROFILE]]
     assert [m for m in a['mechanisms'] if m['slot'] != 'tool_protocol'] == [m for m in b['mechanisms'] if m['slot'] != 'tool_protocol']
     with pytest.raises(AgentError): get_product_runner(PROFILE)
+
+
+def test_optional_null_reference_preserves_old_contract_but_cannot_supply_material():
+    from src.after_sales.source_refs import schema_with_refs
+    from src.request_semantics import IntentExtraction
+    from src.after_sales.evidence_patch import PATCHES
+    context = RunRuntime('optional')
+    payload = decode(context, {'changes':[dict(operation='PRESERVE',previous_id='prior',source_ref=None)]},
+                     DRAFT, purpose='test')
+    IntentExtraction.model_validate(payload)
+    schema = schema_with_refs(IntentExtraction.model_json_schema())
+    assert {'type':'null'} in schema['$defs']['RequirementChange']['properties']['source_ref']['anyOf']
+    material = decode(context, [dict(operation='PROVIDE',requirement_id='packaging',source_ref=None)], DRAFT, purpose='test')
+    with pytest.raises(ValueError): PATCHES.validate_python(material)

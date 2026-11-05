@@ -1,0 +1,13 @@
+{
+  "status": "INTERRUPTED",
+  "source_revision": "e857d20e521975cdd5d83dae74aba40bebe4e91d",
+  "reason": "开发对照反复 SOURCE_REFERENCE_UNKNOWN；复核发现转换未保留 RequirementChange.source_quote 的可空协议。修复并补回归后重新冻结。",
+  "test_split_started": false,
+  "comparison_eligible": false,
+  "completed": {
+    "baseline": 10,
+    "references": 6,
+    "controls": 0
+  },
+  "limitations": "未知引用的实际模型值未被原报告记录；null 为确认存在的兼容性缺陷，不能断言它解释所有失败。"
+}

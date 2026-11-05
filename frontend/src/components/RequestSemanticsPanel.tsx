@@ -74,7 +74,9 @@ export function RequestSemanticsPanel({ detail }: { detail: RunDetail }) {
     </>}
     <div className="semantic-boundaries"><h4>当前执行限制</h4>
       {boundaries.length ? <ul>{boundaries.map((boundary, index) => <li key={`${boundary.restriction}-${index}`}>
-        <b>{restrictionLabels[boundary.restriction]}</b><q>{boundary.source.text}</q>
+        <b>{restrictionLabels[boundary.restriction]}</b>
+        <span>{boundary.case_id ? `仅案件 ${boundary.case_id} · 订单 ${boundary.order_id}` : '作用于当前会话'}</span>
+        <q>{boundary.source.text}</q>
       </li>)}</ul> : <p>本次运行未记录额外执行限制。支付、退款仍须明确确认。</p>}
     </div>
   </section>
