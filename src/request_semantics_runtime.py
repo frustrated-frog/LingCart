@@ -122,9 +122,9 @@ def extract_contract(context, request, history, *, previous=None, change_text=No
     if control_surface:
         prompt += '\n' + CONTROL_INSTRUCTION
     if reference_surface:
-        from src.after_sales.source_refs import INSTRUCTION as REFERENCE_INSTRUCTION
+        from src.after_sales.source_refs import wire_instructions
         schema = schema_with_refs(schema)
-        prompt = REFERENCE_INSTRUCTION + '\n' + prompt.replace('source_quote', 'source_ref')
+        prompt = wire_instructions(prompt)
     declarations = None
     if native:
         declarations = [function('extract_requirements', '提取 HUMAN 需求与显式修订，不执行动作', schema)]

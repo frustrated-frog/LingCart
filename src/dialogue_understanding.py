@@ -794,9 +794,9 @@ def _prompt(user_message: str, history: list | None, pending_action: dict | None
         prompt = prompt[:start] + prompt[end:]
         prompt = CONTROL_INSTRUCTION + '\n' + prompt
     if reference_surface:
-        from src.after_sales.source_refs import INSTRUCTION as REFERENCE_INSTRUCTION
+        from src.after_sales.source_refs import wire_instructions
         instruction, data = prompt.split('\nSchema:\n', 1)
-        prompt = REFERENCE_INSTRUCTION + '\n' + instruction.replace('source_quote', 'source_ref') + '\nSchema:\n' + data
+        prompt = wire_instructions(instruction) + '\nSchema:\n' + data
     return prompt
 
 

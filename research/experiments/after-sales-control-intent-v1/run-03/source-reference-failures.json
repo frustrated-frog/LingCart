@@ -1,0 +1,72 @@
+[
+  {
+    "purpose": {
+      "purpose": "request_semantics"
+    },
+    "request": "补充订单 1001 的售后材料：我已核对序列号标签，标签清晰完整。",
+    "output": {
+      "changes": [
+        {
+          "operation": "PRESERVE",
+          "previous_id": "as_case_1001",
+          "requirement": null,
+          "source_ref": null
+        },
+        {
+          "operation": "PRESERVE",
+          "previous_id": "verify_order_seq",
+          "requirement": null,
+          "source_ref": null
+        },
+        {
+          "operation": "REPLACE",
+          "previous_id": "missing_pkg_info",
+          "requirement": {
+            "requirement_id": "missing_pkg_info",
+            "kind": "UNKNOWN",
+            "description": "序列号标签已核对为清晰完整；原包装完整性与附件齐全情况仍未核对，信息缺失，需向用户确认",
+            "outcome": null,
+            "predicate": null,
+            "targets": [],
+            "restriction": null,
+            "material_scope": null,
+            "case_goal": null,
+            "source_ref": "我已核对序列号标签，标签清晰完整。"
+          },
+          "source_ref": "我已核对序列号标签，标签清晰完整。"
+        },
+        {
+          "operation": "ADD",
+          "previous_id": null,
+          "requirement": {
+            "requirement_id": "serial_label_provided_1001",
+            "kind": "USER_FACT",
+            "description": "用户已核对订单 1001 的序列号标签，标签清晰完整（对外观/序列号核对材料的要求已提供）",
+            "outcome": null,
+            "predicate": null,
+            "targets": [],
+            "restriction": null,
+            "material_scope": {
+              "case_id": "068aa18a66f14f8b800da7f0d9483e01",
+              "requirement_id": "standard-return-refund:2026-02:SERIAL_LABEL",
+              "disposition": "PROVIDED"
+            },
+            "case_goal": null,
+            "source_ref": "我已核对序列号标签，标签清晰完整。"
+          },
+          "source_ref": "我已核对序列号标签，标签清晰完整。"
+        }
+      ]
+    },
+    "sources": [
+      {
+        "source_ref": "source-7536b7a7c14e9e1f627cb749bc7e9d20564a0c25150984fb4d91f13c6f1fa414",
+        "origin": "CURRENT_TURN",
+        "message_id": "3",
+        "start": 0,
+        "end": 33,
+        "text": "补充订单 1001 的售后材料：我已核对序列号标签，标签清晰完整。"
+      }
+    ]
+  }
+]

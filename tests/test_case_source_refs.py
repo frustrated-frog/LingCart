@@ -94,3 +94,18 @@ def test_optional_null_reference_preserves_old_contract_but_cannot_supply_materi
     assert {'type':'null'} in schema['$defs']['RequirementChange']['properties']['source_ref']['anyOf']
     material = decode(context, [dict(operation='PROVIDE',requirement_id='packaging',source_ref=None)], DRAFT, purpose='test')
     with pytest.raises(ValueError): PATCHES.validate_python(material)
+
+
+def test_reference_wire_does_not_ask_for_literal_quotes_in_id_fields():
+    from src.after_sales.source_refs import wire_instructions
+    from src.request_semantics_runtime import _PROMPT
+    from src.after_sales.goals import SEMANTIC_INSTRUCTION
+    from src.after_sales.evidence_patch import INSTRUCTION
+    prompt = wire_instructions(_PROMPT + SEMANTIC_INSTRUCTION + INSTRUCTION)
+    assert 'source_ref and FAQ question must be exact HUMAN substrings' not in prompt
+    assert 'shortest exact HUMAN quote' not in prompt
+    assert 'an exact current HUMAN source_ref' not in prompt
+    assert 'source_ref must be a listed ID' in prompt
+    assert 'FAQ question must be an exact HUMAN substring' in prompt
+    assert 'verbatim current HUMAN quotes' not in prompt
+    assert 'Parent referenced text covers' in prompt

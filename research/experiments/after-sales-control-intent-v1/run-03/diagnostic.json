@@ -1,0 +1,8 @@
+{
+  "evidence_kind": "dev_diagnostic",
+  "comparison_eligible": false,
+  "source_revision": "24e01f1bebce6d9d8fbd7720c5ce3712e941a92e",
+  "finding": "真实模型在 source_ref 填入原文句子；模板替换只改字段名，保留了要求精确子串的旧指令。统一引用协议说明后再次冻结。",
+  "smoke": "每个候选单条 dev 轨迹；不能作为两组收益对照。",
+  "test_split_started": false
+}

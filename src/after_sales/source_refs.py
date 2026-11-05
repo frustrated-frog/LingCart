@@ -21,6 +21,33 @@ ADD/REPLACE assert CURRENT facts only, never backfill uncommitted history. Refer
 '''
 
 
+def wire_instructions(prompt):
+    """只改可信协议模板，避免 ID 字段仍被要求填写逐字引文；不改用户输入。"""
+    replacements = {
+        'Use smallest exact HUMAN source_quote': 'Choose source_ref IDs from human_sources',
+        'a verbatim quote\nfrom change_text': 'a source_ref ID from human_sources\nfor change_text',
+        'source_quote and FAQ question must be exact HUMAN substrings.':
+            'source_ref must be a listed ID. FAQ question must be an exact HUMAN substring.',
+        'use the shortest exact HUMAN quote\nthat states that condition.':
+            'choose the listed source_ref ID\nwhose text supports that condition.',
+        'Use exact listed IDs and the smallest exact current HUMAN quote.':
+            'Use exact listed case/requirement IDs; source_ref selects an ID from human_sources.',
+        'an exact current HUMAN source_quote': 'a source_ref ID from human_sources',
+        'exact HUMAN quote': 'listed human_sources ID',
+        'verbatim quotes': 'listed human_sources IDs',
+        'verbatim current HUMAN quotes': 'source_ref IDs from human_sources',
+        'Current HUMAN quote required': 'Current human_sources ID required',
+        'new-task quote': 'current source_ref ID',
+        'Parent source_quote covers': 'Parent referenced text covers',
+        'REPLACE quote must': 'REPLACE referenced text must',
+        'its quote must retain': 'its referenced text must retain',
+        'needs ID/quote': 'needs requirement ID/source_ref',
+    }
+    for old, new in replacements.items():
+        prompt = prompt.replace(old, new)
+    return INSTRUCTION + '\n' + prompt.replace('source_quote', 'source_ref')
+
+
 def schema_with_refs(schema):
     def visit(value):
         if isinstance(value, list):
