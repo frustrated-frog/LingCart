@@ -702,6 +702,11 @@ def _prompt(user_message: str, history: list | None, pending_action: dict | None
             objective_properties['material_changes'] = {'type': 'array', 'items': {'type': 'object'}}
             for key in ('Provide', 'Defer', 'Retract', 'Replace'):
                 schema['$defs'].pop(key, None)
+    from src.after_sales.source_refs import enabled as refs_enabled, schema_with_refs, catalog
+    reference_surface = refs_enabled() and bool(session_cases)
+    if reference_surface:
+        schema = schema_with_refs(schema)
+        payload['human_sources'] = catalog(current_runtime(), user_message)
     catalog_context = None
     catalog_capability = next((kind for kind in ("CONSTRAINT_PLAN", "CATALOG_QUERY")
                                if any(item[0] == kind for item in capabilities)), None)
@@ -761,6 +766,10 @@ def _prompt(user_message: str, history: list | None, pending_action: dict | None
     from src.after_sales.goals import enabled as goals_enabled, INSTRUCTION as GOAL_INSTRUCTION
     if goals_enabled() and session_cases:
         prompt = GOAL_INSTRUCTION + '\n' + prompt
+    if reference_surface:
+        from src.after_sales.source_refs import INSTRUCTION as REFERENCE_INSTRUCTION
+        instruction, data = prompt.split('\nSchema:\n', 1)
+        prompt = REFERENCE_INSTRUCTION + '\n' + instruction.replace('source_quote', 'source_ref') + '\nSchema:\n' + data
     return prompt
 
 
@@ -794,6 +803,10 @@ def understand_turn(user_message: str, history: list | None, pending_action: dic
             if getattr(response, "tool_calls", []):
                 raise ValueError("Dialogue understanding cannot call tools")
             raw_payload = json.loads(as_text(response.content))
+            from src.after_sales.source_refs import enabled as refs_enabled, decode
+            from src.after_sales.context import current_case_context
+            if refs_enabled(context) and current_case_context():
+                raw_payload = decode(context, raw_payload, user_message, purpose='dialogue_understanding')
             from src.after_sales.evidence_patch import adapt
             raw_payload = adapt(raw_payload, user_message)
             canonical_payload, protocol_normalizations = _canonicalize_protocol(raw_payload)

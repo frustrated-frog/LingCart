@@ -1,0 +1,61 @@
+{
+  "schema_version": 1,
+  "profile_id": "after-sales-source-refs-v1",
+  "version": "1.0.0",
+  "display_name": "材料原文引用候选",
+  "description": "宿主绑定本轮原文片段，模型选择来源身份；保持原有目标与权限语义。",
+  "engine": {
+    "id": "orchestrator",
+    "version": "1"
+  },
+  "mechanisms": [
+    {
+      "slot": "planning",
+      "id": "model-case-execution",
+      "version": "3"
+    },
+    {
+      "slot": "tool_protocol",
+      "id": "evidence-patch-ledger",
+      "version": "2"
+    },
+    {
+      "slot": "verification",
+      "id": "incremental-case-verification",
+      "version": "1"
+    }
+  ],
+  "capabilities": [
+    "open_set_dialogue_understanding",
+    "after_sales_case_planning",
+    "policy_aware_case_execution",
+    "after_sales_evidence_boundary",
+    "evidence_readiness_ledger",
+    "cross_turn_evidence_readiness",
+    "obligation_graph_planning",
+    "multi_candidate_action_solver",
+    "active_clarification",
+    "counterfactual_answer_branches",
+    "pareto_question_selection",
+    "durable_pending_clarification",
+    "cross_turn_answer_binding",
+    "durable_runtime",
+    "approval_guard",
+    "tool_ledger",
+    "independent_material_scope",
+    "incremental_evidence_verification",
+    "targeted_case_repair",
+    "committed_evidence_transitions",
+    "typed_material_changes",
+    "goal_conditioned_action_selection",
+    "observation_driven_replanning",
+    "goal_clarification_pause",
+    "durable_case_goal_revision",
+    "independent_goal_and_material_updates"
+  ],
+  "research": {
+    "status": "candidate",
+    "source_type": "native",
+    "hypothesis": "原文引用身份减少材料和独立理解的复制错误，需独立对照验证。"
+  }
+}

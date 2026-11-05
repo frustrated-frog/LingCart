@@ -92,9 +92,11 @@ def adapt(payload, request):
                     raise CaseTurnMismatch('撤回或替换材料不属于当前要求',fields={'evidence_id':item.get('evidence_id')},
                                            question='请明确要撤回或更正哪条已有材料。')
                 target = matching[0]
-            if (target not in requirements or patch.source_quote not in request
-                    or patch.source_quote not in objective.get('source_quote','')):
-                raise CaseTurnMismatch('材料变更缺少当前原文或合法要求',fields={'requirement_id':target},
+            issue = ('UNKNOWN_MATERIAL_REQUIREMENT' if target not in requirements else
+                     'QUOTE_NOT_CURRENT' if patch.source_quote not in request else
+                     'QUOTE_OUTSIDE_OBJECTIVE' if patch.source_quote not in objective.get('source_quote','') else None)
+            if issue:
+                raise CaseTurnMismatch('材料变更缺少当前原文或合法要求',fields={'requirement_id':target, 'code':issue},
                                        question='请明确材料名称与本轮实际情况。')
             update = dict(requirement_id=target, disposition={'PROVIDE':'PROVIDED','DEFER':'DEFERRED',
                           'REPLACE':'PROVIDED','RETRACT':'RETRACTED'}[patch.operation], source_quote=patch.source_quote)

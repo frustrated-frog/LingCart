@@ -68,6 +68,10 @@ def extract_contract(context, request, history, *, previous=None, change_text=No
         payload['case_context'] = case_context
     from src.after_sales.reason_taxonomy import REASON_CODE_DESCRIPTIONS
     payload['after_sales_reasons'] = dict(REASON_CODE_DESCRIPTIONS)
+    from src.after_sales.source_refs import enabled as refs_enabled, catalog, schema_with_refs, decode
+    reference_surface = refs_enabled(context) and case_context is not None
+    if reference_surface:
+        payload['human_sources'] = catalog(context, request)
     registry = get_catalog_concept_registry()
     basis = fingerprint(dict(input=payload, protocol='request-semantics/v1', registry=registry.fingerprint))
     cached = context.snapshot.get('semantic_extraction') or {}
@@ -105,6 +109,10 @@ def extract_contract(context, request, history, *, previous=None, change_text=No
                        'the explicit correction and replacement facts. Merely repeating a preserved fact is not ADD/REPLACE.')
     if goal_protocol:
         prompt += '\n' + SEMANTIC_INSTRUCTION
+    if reference_surface:
+        from src.after_sales.source_refs import INSTRUCTION as REFERENCE_INSTRUCTION
+        schema = schema_with_refs(schema)
+        prompt = REFERENCE_INSTRUCTION + '\n' + prompt.replace('source_quote', 'source_ref')
     declarations = None
     if native:
         declarations = [function('extract_requirements', '提取 HUMAN 需求与显式修订，不执行动作', schema)]
@@ -129,6 +137,8 @@ def extract_contract(context, request, history, *, previous=None, change_text=No
                 if getattr(response, 'tool_calls', []):
                     raise ValueError('Semantic extraction cannot request business tools')
                 extracted = json.loads(as_text(response.content))
+            if reference_surface:
+                extracted = decode(context, extracted, request, purpose='request_semantics')
             contract = apply_extraction(decode_conditions(extracted), request, history, previous=previous, change_text=change_text)
         except (ValueError, TypeError, AgentError) as error:
             violations = (error.errors(include_input=False, include_url=False, include_context=False)
