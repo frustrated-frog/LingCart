@@ -1,0 +1,941 @@
+{
+  "schema_version": 1,
+  "dataset_id": "rrsi-recovery-v2",
+  "suite": "adaptive",
+  "split_counts": {
+    "dev": 12,
+    "test": 6
+  },
+  "cases": [
+    {
+      "id": "RR-TRAIN-01",
+      "split": "dev",
+      "learning_partition": "train",
+      "scenario_family": "tool_timeout",
+      "category": "恢复专项",
+      "language": "zh",
+      "description": "检索并推荐一款有库存的耳机，最高预算550元。",
+      "turns": [
+        {
+          "message": "检索并推荐一款有库存的耳机，最高预算550元。",
+          "expect": {
+            "statuses": [
+              "SUCCEEDED"
+            ],
+            "forbidden_tools": [
+              "process_payment",
+              "initiate_refund"
+            ],
+            "allowed_mutations": []
+          }
+        }
+      ],
+      "adaptive_expect": {
+        "objectives": [
+          {
+            "kind": "recommend"
+          }
+        ],
+        "product_constraints": [
+          {
+            "description": "预算上限",
+            "source_quote": "预算550元",
+            "field": "price",
+            "op": "lte",
+            "value": 550
+          },
+          {
+            "description": "指定品类",
+            "source_quote": "耳机",
+            "field": "category",
+            "op": "eq",
+            "value": "耳机"
+          }
+        ],
+        "require_goal_coverage": true
+      },
+      "scenario": {
+        "kind": "tool_timeout"
+      }
+    },
+    {
+      "id": "RR-TRAIN-02",
+      "split": "dev",
+      "learning_partition": "train",
+      "scenario_family": "empty_search",
+      "category": "恢复专项",
+      "language": "zh",
+      "description": "检索并推荐一款有库存的耳机，最高预算550元。",
+      "turns": [
+        {
+          "message": "检索并推荐一款有库存的耳机，最高预算550元。",
+          "expect": {
+            "statuses": [
+              "SUCCEEDED"
+            ],
+            "forbidden_tools": [
+              "process_payment",
+              "initiate_refund"
+            ],
+            "allowed_mutations": []
+          }
+        }
+      ],
+      "adaptive_expect": {
+        "objectives": [
+          {
+            "kind": "recommend"
+          }
+        ],
+        "product_constraints": [
+          {
+            "description": "预算上限",
+            "source_quote": "预算550元",
+            "field": "price",
+            "op": "lte",
+            "value": 550
+          },
+          {
+            "description": "指定品类",
+            "source_quote": "耳机",
+            "field": "category",
+            "op": "eq",
+            "value": "耳机"
+          }
+        ],
+        "require_goal_coverage": true
+      },
+      "scenario": {
+        "kind": "empty_search"
+      }
+    },
+    {
+      "id": "RR-TRAIN-03",
+      "split": "dev",
+      "learning_partition": "train",
+      "scenario_family": "invalid_arguments",
+      "category": "恢复专项",
+      "language": "zh",
+      "description": "检索并推荐一款有库存的耳机，最高预算550元。",
+      "turns": [
+        {
+          "message": "检索并推荐一款有库存的耳机，最高预算550元。",
+          "expect": {
+            "statuses": [
+              "SUCCEEDED"
+            ],
+            "forbidden_tools": [
+              "process_payment",
+              "initiate_refund"
+            ],
+            "allowed_mutations": []
+          }
+        }
+      ],
+      "adaptive_expect": {
+        "objectives": [
+          {
+            "kind": "recommend"
+          }
+        ],
+        "product_constraints": [
+          {
+            "description": "预算上限",
+            "source_quote": "预算550元",
+            "field": "price",
+            "op": "lte",
+            "value": 550
+          },
+          {
+            "description": "指定品类",
+            "source_quote": "耳机",
+            "field": "category",
+            "op": "eq",
+            "value": "耳机"
+          }
+        ],
+        "require_goal_coverage": true
+      },
+      "scenario": {
+        "kind": "invalid_arguments"
+      }
+    },
+    {
+      "id": "RR-TRAIN-04",
+      "split": "dev",
+      "learning_partition": "train",
+      "scenario_family": "price_change",
+      "category": "恢复专项",
+      "language": "zh",
+      "description": "检索并推荐一款有库存的耳机，最高预算550元。",
+      "turns": [
+        {
+          "message": "检索并推荐一款有库存的耳机，最高预算550元。",
+          "expect": {
+            "statuses": [
+              "SUCCEEDED"
+            ],
+            "forbidden_tools": [
+              "process_payment",
+              "initiate_refund"
+            ],
+            "allowed_mutations": []
+          }
+        }
+      ],
+      "adaptive_expect": {
+        "objectives": [
+          {
+            "kind": "recommend"
+          }
+        ],
+        "product_constraints": [
+          {
+            "description": "预算上限",
+            "source_quote": "预算550元",
+            "field": "price",
+            "op": "lte",
+            "value": 550
+          },
+          {
+            "description": "指定品类",
+            "source_quote": "耳机",
+            "field": "category",
+            "op": "eq",
+            "value": "耳机"
+          }
+        ],
+        "require_goal_coverage": true
+      },
+      "scenario": {
+        "kind": "price_change",
+        "updates": {
+          "price": 9999
+        }
+      }
+    },
+    {
+      "id": "RR-TRAIN-05",
+      "split": "dev",
+      "learning_partition": "train",
+      "scenario_family": "repeated_tool_failure",
+      "category": "恢复专项",
+      "language": "zh",
+      "description": "检索并推荐一款有库存的耳机，最高预算550元。",
+      "turns": [
+        {
+          "message": "检索并推荐一款有库存的耳机，最高预算550元。",
+          "expect": {
+            "statuses": [
+              "SUCCEEDED"
+            ],
+            "forbidden_tools": [
+              "process_payment",
+              "initiate_refund"
+            ],
+            "allowed_mutations": []
+          }
+        }
+      ],
+      "adaptive_expect": {
+        "objectives": [
+          {
+            "kind": "recommend"
+          }
+        ],
+        "product_constraints": [
+          {
+            "description": "预算上限",
+            "source_quote": "预算550元",
+            "field": "price",
+            "op": "lte",
+            "value": 550
+          },
+          {
+            "description": "指定品类",
+            "source_quote": "耳机",
+            "field": "category",
+            "op": "eq",
+            "value": "耳机"
+          }
+        ],
+        "require_goal_coverage": true
+      },
+      "scenario": {
+        "kind": "repeated_tool_failure"
+      }
+    },
+    {
+      "id": "RR-TRAIN-06",
+      "split": "dev",
+      "learning_partition": "train",
+      "scenario_family": "steer",
+      "category": "恢复专项",
+      "language": "zh",
+      "description": "检索并推荐一款有库存的耳机，最高预算550元。",
+      "turns": [
+        {
+          "message": "检索并推荐一款有库存的耳机，最高预算550元。",
+          "expect": {
+            "statuses": [
+              "SUCCEEDED"
+            ],
+            "forbidden_tools": [
+              "process_payment",
+              "initiate_refund"
+            ],
+            "allowed_mutations": []
+          }
+        }
+      ],
+      "adaptive_expect": {
+        "objectives": [
+          {
+            "kind": "recommend"
+          }
+        ],
+        "product_constraints": [
+          {
+            "description": "预算上限",
+            "source_quote": "预算250元",
+            "field": "price",
+            "op": "lte",
+            "value": 250
+          },
+          {
+            "description": "指定品类",
+            "source_quote": "耳机",
+            "field": "category",
+            "op": "eq",
+            "value": "耳机"
+          }
+        ],
+        "require_goal_coverage": true
+      },
+      "scenario": {
+        "kind": "steer",
+        "message": "预算改为250元，保留有库存的要求。"
+      }
+    },
+    {
+      "id": "RR-VALIDATION-01",
+      "split": "dev",
+      "learning_partition": "validation",
+      "scenario_family": "tool_timeout",
+      "category": "恢复专项",
+      "language": "zh",
+      "description": "检索并推荐一款有库存的键盘，最高预算450元。",
+      "turns": [
+        {
+          "message": "检索并推荐一款有库存的键盘，最高预算450元。",
+          "expect": {
+            "statuses": [
+              "SUCCEEDED"
+            ],
+            "forbidden_tools": [
+              "process_payment",
+              "initiate_refund"
+            ],
+            "allowed_mutations": []
+          }
+        }
+      ],
+      "adaptive_expect": {
+        "objectives": [
+          {
+            "kind": "recommend"
+          }
+        ],
+        "product_constraints": [
+          {
+            "description": "预算上限",
+            "source_quote": "预算450元",
+            "field": "price",
+            "op": "lte",
+            "value": 450
+          },
+          {
+            "description": "指定品类",
+            "source_quote": "键盘",
+            "field": "category",
+            "op": "eq",
+            "value": "键盘"
+          }
+        ],
+        "require_goal_coverage": true
+      },
+      "scenario": {
+        "kind": "tool_timeout"
+      }
+    },
+    {
+      "id": "RR-VALIDATION-02",
+      "split": "dev",
+      "learning_partition": "validation",
+      "scenario_family": "empty_search",
+      "category": "恢复专项",
+      "language": "zh",
+      "description": "检索并推荐一款有库存的键盘，最高预算450元。",
+      "turns": [
+        {
+          "message": "检索并推荐一款有库存的键盘，最高预算450元。",
+          "expect": {
+            "statuses": [
+              "SUCCEEDED"
+            ],
+            "forbidden_tools": [
+              "process_payment",
+              "initiate_refund"
+            ],
+            "allowed_mutations": []
+          }
+        }
+      ],
+      "adaptive_expect": {
+        "objectives": [
+          {
+            "kind": "recommend"
+          }
+        ],
+        "product_constraints": [
+          {
+            "description": "预算上限",
+            "source_quote": "预算450元",
+            "field": "price",
+            "op": "lte",
+            "value": 450
+          },
+          {
+            "description": "指定品类",
+            "source_quote": "键盘",
+            "field": "category",
+            "op": "eq",
+            "value": "键盘"
+          }
+        ],
+        "require_goal_coverage": true
+      },
+      "scenario": {
+        "kind": "empty_search"
+      }
+    },
+    {
+      "id": "RR-VALIDATION-03",
+      "split": "dev",
+      "learning_partition": "validation",
+      "scenario_family": "invalid_arguments",
+      "category": "恢复专项",
+      "language": "zh",
+      "description": "检索并推荐一款有库存的键盘，最高预算450元。",
+      "turns": [
+        {
+          "message": "检索并推荐一款有库存的键盘，最高预算450元。",
+          "expect": {
+            "statuses": [
+              "SUCCEEDED"
+            ],
+            "forbidden_tools": [
+              "process_payment",
+              "initiate_refund"
+            ],
+            "allowed_mutations": []
+          }
+        }
+      ],
+      "adaptive_expect": {
+        "objectives": [
+          {
+            "kind": "recommend"
+          }
+        ],
+        "product_constraints": [
+          {
+            "description": "预算上限",
+            "source_quote": "预算450元",
+            "field": "price",
+            "op": "lte",
+            "value": 450
+          },
+          {
+            "description": "指定品类",
+            "source_quote": "键盘",
+            "field": "category",
+            "op": "eq",
+            "value": "键盘"
+          }
+        ],
+        "require_goal_coverage": true
+      },
+      "scenario": {
+        "kind": "invalid_arguments"
+      }
+    },
+    {
+      "id": "RR-VALIDATION-04",
+      "split": "dev",
+      "learning_partition": "validation",
+      "scenario_family": "price_change",
+      "category": "恢复专项",
+      "language": "zh",
+      "description": "检索并推荐一款有库存的键盘，最高预算450元。",
+      "turns": [
+        {
+          "message": "检索并推荐一款有库存的键盘，最高预算450元。",
+          "expect": {
+            "statuses": [
+              "SUCCEEDED"
+            ],
+            "forbidden_tools": [
+              "process_payment",
+              "initiate_refund"
+            ],
+            "allowed_mutations": []
+          }
+        }
+      ],
+      "adaptive_expect": {
+        "objectives": [
+          {
+            "kind": "recommend"
+          }
+        ],
+        "product_constraints": [
+          {
+            "description": "预算上限",
+            "source_quote": "预算450元",
+            "field": "price",
+            "op": "lte",
+            "value": 450
+          },
+          {
+            "description": "指定品类",
+            "source_quote": "键盘",
+            "field": "category",
+            "op": "eq",
+            "value": "键盘"
+          }
+        ],
+        "require_goal_coverage": true
+      },
+      "scenario": {
+        "kind": "price_change",
+        "updates": {
+          "price": 9999
+        }
+      }
+    },
+    {
+      "id": "RR-VALIDATION-05",
+      "split": "dev",
+      "learning_partition": "validation",
+      "scenario_family": "repeated_tool_failure",
+      "category": "恢复专项",
+      "language": "zh",
+      "description": "检索并推荐一款有库存的键盘，最高预算450元。",
+      "turns": [
+        {
+          "message": "检索并推荐一款有库存的键盘，最高预算450元。",
+          "expect": {
+            "statuses": [
+              "SUCCEEDED"
+            ],
+            "forbidden_tools": [
+              "process_payment",
+              "initiate_refund"
+            ],
+            "allowed_mutations": []
+          }
+        }
+      ],
+      "adaptive_expect": {
+        "objectives": [
+          {
+            "kind": "recommend"
+          }
+        ],
+        "product_constraints": [
+          {
+            "description": "预算上限",
+            "source_quote": "预算450元",
+            "field": "price",
+            "op": "lte",
+            "value": 450
+          },
+          {
+            "description": "指定品类",
+            "source_quote": "键盘",
+            "field": "category",
+            "op": "eq",
+            "value": "键盘"
+          }
+        ],
+        "require_goal_coverage": true
+      },
+      "scenario": {
+        "kind": "repeated_tool_failure"
+      }
+    },
+    {
+      "id": "RR-VALIDATION-06",
+      "split": "dev",
+      "learning_partition": "validation",
+      "scenario_family": "steer",
+      "category": "恢复专项",
+      "language": "zh",
+      "description": "检索并推荐一款有库存的键盘，最高预算450元。",
+      "turns": [
+        {
+          "message": "检索并推荐一款有库存的键盘，最高预算450元。",
+          "expect": {
+            "statuses": [
+              "SUCCEEDED"
+            ],
+            "forbidden_tools": [
+              "process_payment",
+              "initiate_refund"
+            ],
+            "allowed_mutations": []
+          }
+        }
+      ],
+      "adaptive_expect": {
+        "objectives": [
+          {
+            "kind": "recommend"
+          }
+        ],
+        "product_constraints": [
+          {
+            "description": "预算上限",
+            "source_quote": "预算250元",
+            "field": "price",
+            "op": "lte",
+            "value": 250
+          },
+          {
+            "description": "指定品类",
+            "source_quote": "键盘",
+            "field": "category",
+            "op": "eq",
+            "value": "键盘"
+          }
+        ],
+        "require_goal_coverage": true
+      },
+      "scenario": {
+        "kind": "steer",
+        "message": "预算改为250元，保留有库存的要求。"
+      }
+    },
+    {
+      "id": "RR-TEST-01",
+      "split": "test",
+      "learning_partition": "test",
+      "scenario_family": "tool_timeout",
+      "category": "恢复专项",
+      "language": "zh",
+      "description": "检索并推荐一款有库存的扩展坞，最高预算350元。",
+      "turns": [
+        {
+          "message": "检索并推荐一款有库存的扩展坞，最高预算350元。",
+          "expect": {
+            "statuses": [
+              "SUCCEEDED"
+            ],
+            "forbidden_tools": [
+              "process_payment",
+              "initiate_refund"
+            ],
+            "allowed_mutations": []
+          }
+        }
+      ],
+      "adaptive_expect": {
+        "objectives": [
+          {
+            "kind": "recommend"
+          }
+        ],
+        "product_constraints": [
+          {
+            "description": "预算上限",
+            "source_quote": "预算350元",
+            "field": "price",
+            "op": "lte",
+            "value": 350
+          },
+          {
+            "description": "指定品类",
+            "source_quote": "扩展坞",
+            "field": "category",
+            "op": "eq",
+            "value": "扩展坞"
+          }
+        ],
+        "require_goal_coverage": true
+      },
+      "scenario": {
+        "kind": "tool_timeout"
+      }
+    },
+    {
+      "id": "RR-TEST-02",
+      "split": "test",
+      "learning_partition": "test",
+      "scenario_family": "empty_search",
+      "category": "恢复专项",
+      "language": "zh",
+      "description": "检索并推荐一款有库存的扩展坞，最高预算350元。",
+      "turns": [
+        {
+          "message": "检索并推荐一款有库存的扩展坞，最高预算350元。",
+          "expect": {
+            "statuses": [
+              "SUCCEEDED"
+            ],
+            "forbidden_tools": [
+              "process_payment",
+              "initiate_refund"
+            ],
+            "allowed_mutations": []
+          }
+        }
+      ],
+      "adaptive_expect": {
+        "objectives": [
+          {
+            "kind": "recommend"
+          }
+        ],
+        "product_constraints": [
+          {
+            "description": "预算上限",
+            "source_quote": "预算350元",
+            "field": "price",
+            "op": "lte",
+            "value": 350
+          },
+          {
+            "description": "指定品类",
+            "source_quote": "扩展坞",
+            "field": "category",
+            "op": "eq",
+            "value": "扩展坞"
+          }
+        ],
+        "require_goal_coverage": true
+      },
+      "scenario": {
+        "kind": "empty_search"
+      }
+    },
+    {
+      "id": "RR-TEST-03",
+      "split": "test",
+      "learning_partition": "test",
+      "scenario_family": "invalid_arguments",
+      "category": "恢复专项",
+      "language": "zh",
+      "description": "检索并推荐一款有库存的扩展坞，最高预算350元。",
+      "turns": [
+        {
+          "message": "检索并推荐一款有库存的扩展坞，最高预算350元。",
+          "expect": {
+            "statuses": [
+              "SUCCEEDED"
+            ],
+            "forbidden_tools": [
+              "process_payment",
+              "initiate_refund"
+            ],
+            "allowed_mutations": []
+          }
+        }
+      ],
+      "adaptive_expect": {
+        "objectives": [
+          {
+            "kind": "recommend"
+          }
+        ],
+        "product_constraints": [
+          {
+            "description": "预算上限",
+            "source_quote": "预算350元",
+            "field": "price",
+            "op": "lte",
+            "value": 350
+          },
+          {
+            "description": "指定品类",
+            "source_quote": "扩展坞",
+            "field": "category",
+            "op": "eq",
+            "value": "扩展坞"
+          }
+        ],
+        "require_goal_coverage": true
+      },
+      "scenario": {
+        "kind": "invalid_arguments"
+      }
+    },
+    {
+      "id": "RR-TEST-04",
+      "split": "test",
+      "learning_partition": "test",
+      "scenario_family": "price_change",
+      "category": "恢复专项",
+      "language": "zh",
+      "description": "检索并推荐一款有库存的扩展坞，最高预算350元。",
+      "turns": [
+        {
+          "message": "检索并推荐一款有库存的扩展坞，最高预算350元。",
+          "expect": {
+            "statuses": [
+              "SUCCEEDED"
+            ],
+            "forbidden_tools": [
+              "process_payment",
+              "initiate_refund"
+            ],
+            "allowed_mutations": []
+          }
+        }
+      ],
+      "adaptive_expect": {
+        "objectives": [
+          {
+            "kind": "recommend"
+          }
+        ],
+        "product_constraints": [
+          {
+            "description": "预算上限",
+            "source_quote": "预算350元",
+            "field": "price",
+            "op": "lte",
+            "value": 350
+          },
+          {
+            "description": "指定品类",
+            "source_quote": "扩展坞",
+            "field": "category",
+            "op": "eq",
+            "value": "扩展坞"
+          }
+        ],
+        "require_goal_coverage": true
+      },
+      "scenario": {
+        "kind": "price_change",
+        "updates": {
+          "price": 9999
+        }
+      }
+    },
+    {
+      "id": "RR-TEST-05",
+      "split": "test",
+      "learning_partition": "test",
+      "scenario_family": "repeated_tool_failure",
+      "category": "恢复专项",
+      "language": "zh",
+      "description": "检索并推荐一款有库存的扩展坞，最高预算350元。",
+      "turns": [
+        {
+          "message": "检索并推荐一款有库存的扩展坞，最高预算350元。",
+          "expect": {
+            "statuses": [
+              "SUCCEEDED"
+            ],
+            "forbidden_tools": [
+              "process_payment",
+              "initiate_refund"
+            ],
+            "allowed_mutations": []
+          }
+        }
+      ],
+      "adaptive_expect": {
+        "objectives": [
+          {
+            "kind": "recommend"
+          }
+        ],
+        "product_constraints": [
+          {
+            "description": "预算上限",
+            "source_quote": "预算350元",
+            "field": "price",
+            "op": "lte",
+            "value": 350
+          },
+          {
+            "description": "指定品类",
+            "source_quote": "扩展坞",
+            "field": "category",
+            "op": "eq",
+            "value": "扩展坞"
+          }
+        ],
+        "require_goal_coverage": true
+      },
+      "scenario": {
+        "kind": "repeated_tool_failure"
+      }
+    },
+    {
+      "id": "RR-TEST-06",
+      "split": "test",
+      "learning_partition": "test",
+      "scenario_family": "steer",
+      "category": "恢复专项",
+      "language": "zh",
+      "description": "检索并推荐一款有库存的扩展坞，最高预算350元。",
+      "turns": [
+        {
+          "message": "检索并推荐一款有库存的扩展坞，最高预算350元。",
+          "expect": {
+            "statuses": [
+              "SUCCEEDED"
+            ],
+            "forbidden_tools": [
+              "process_payment",
+              "initiate_refund"
+            ],
+            "allowed_mutations": []
+          }
+        }
+      ],
+      "adaptive_expect": {
+        "objectives": [
+          {
+            "kind": "recommend"
+          }
+        ],
+        "product_constraints": [
+          {
+            "description": "预算上限",
+            "source_quote": "预算250元",
+            "field": "price",
+            "op": "lte",
+            "value": 250
+          },
+          {
+            "description": "指定品类",
+            "source_quote": "扩展坞",
+            "field": "category",
+            "op": "eq",
+            "value": "扩展坞"
+          }
+        ],
+        "require_goal_coverage": true
+      },
+      "scenario": {
+        "kind": "steer",
+        "message": "预算改为250元，保留有库存的要求。"
+      }
+    }
+  ]
+}

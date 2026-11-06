@@ -32,7 +32,10 @@ def main(argv=None):
     parser.add_argument('--output-dir', type=Path)
     parser.add_argument('--live', action='store_true')
     parser.add_argument('--heldout', action='store_true', help='演化结束冻结程序后，执行独立 test 对照；不反馈给学习器')
+    parser.add_argument('--ablation', action='store_true', help='冻结演化后运行原始、固定、调用策略对照和演化四臂 test')
     args = parser.parse_args(argv)
+    if args.heldout and args.ablation:
+        parser.error('--heldout 与 --ablation 二选一，避免重复评测 test')
     spec = RSISpec.model_validate_json(args.spec.read_text())
     dataset = load_dataset(ROOT / spec.dataset)
     spec.validate_dataset(dataset)
@@ -49,7 +52,7 @@ def main(argv=None):
     registry = get_registry()
     profiles = {}
     def evaluator(program, cases, label, split='dev'):
-        if program.fingerprint not in profiles:
+        if program is not None and program.fingerprint not in profiles:
             path = output / f'program-{program.fingerprint}.json'
             write_artifact(path, program.model_dump(mode='json'))
             profile = program_profile(program, path)
@@ -57,7 +60,7 @@ def main(argv=None):
             write_artifact(output / f'profile-{program.fingerprint}.json', profile.model_dump(mode='json'))
             profiles[program.fingerprint] = profile
         return evaluate(dataset, repeats=spec.repeats, split=split, case_ids=cases,
-            execution_mode='adaptive', harness_profile=profiles[program.fingerprint].profile_id,
+            execution_mode='adaptive', harness_profile=profiles[program.fingerprint].profile_id if program else 'adaptive-v1',
             dataset_path=ROOT / spec.dataset, max_model_calls_per_run=spec.max_model_calls_per_run,
             max_prompt_tokens_per_run=128000, max_completion_tokens_per_run=8000,
             max_seconds_per_run=spec.max_seconds_per_run, max_provider_attempts_per_call=1,
@@ -96,6 +99,10 @@ def main(argv=None):
             heldout_valid = False
             result = dict(status='INVALID', code=str(error) if str(error).startswith('RSI_') else 'RSI_HELDOUT_INVALID')
         write_artifact(output / 'heldout-summary.json', result)
+    if report['status'] == 'COMPLETED' and args.ablation:
+        from src.rrsi_ablation import run_ablation
+        result = run_ablation(seed, retained, spec, evaluator=evaluator, output_dir=output)
+        heldout_valid = result['status'] == 'COMPLETED'
     print(json.dumps(report, ensure_ascii=False, indent=2))
     return 0 if report['status'] == 'COMPLETED' and heldout_valid else 1
 

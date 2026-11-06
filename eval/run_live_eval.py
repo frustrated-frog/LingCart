@@ -89,9 +89,9 @@ def _validate_adaptive_cases(dataset):
         scenario = case.get('scenario')
         if scenario is None:
             continue
-        if not isinstance(scenario, dict) or scenario.get('kind') not in {'steer', 'price_change', 'stock_change', 'empty_search'}:
+        if not isinstance(scenario, dict) or scenario.get('kind') not in {'steer', 'price_change', 'stock_change', 'empty_search', 'tool_timeout', 'repeated_tool_failure', 'invalid_arguments'}:
             raise ValueError(f'{label}: scenario.kind 无效')
-        if scenario['kind'] == 'empty_search':
+        if scenario['kind'] in {'empty_search', 'tool_timeout', 'repeated_tool_failure', 'invalid_arguments'}:
             if set(scenario) != {'kind'}:
                 raise ValueError(f'{label}: empty_search 只能声明 kind')
         elif scenario['kind'] == 'steer':
@@ -160,7 +160,7 @@ def environment_manifest(dataset, execution_mode, dataset_path=DATASET):
                                'src/catalog_concepts.py', 'src/constraint_bindings.py', 'src/native_protocol.py'] +
                              [str(p.relative_to(ROOT)) for p in (ROOT / 'src/agents').glob('*.py')]))
     evaluator_files = [ROOT / name for name in ('eval/run_live_eval.py', 'eval/run_task_eval.py',
-                                                'eval/adaptive_checks.py', 'eval/experiment_contract.py')]
+                                                'eval/adaptive_checks.py', 'eval/recovery_faults.py', 'src/recovery_evidence.py', 'eval/experiment_contract.py')]
     business_files = [ROOT / name for name in ('src/tools.py', 'src/backend/db.py', 'src/backend/seed.py')]
     source_files = sorted([*(ROOT / 'src').rglob('*.py'), *(ROOT / 'eval').glob('*.py'),
                            *(ROOT / 'configs/harness').glob('*.json')])

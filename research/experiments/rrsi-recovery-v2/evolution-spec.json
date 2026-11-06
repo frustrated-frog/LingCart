@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "target_module": "recovery",
+  "dataset": "eval/rrsi_recovery_tasks.json",
+  "train_cases": [
+    "RR-TRAIN-01",
+    "RR-TRAIN-02",
+    "RR-TRAIN-03",
+    "RR-TRAIN-04",
+    "RR-TRAIN-05",
+    "RR-TRAIN-06"
+  ],
+  "validation_cases": [
+    "RR-VALIDATION-01",
+    "RR-VALIDATION-02",
+    "RR-VALIDATION-03",
+    "RR-VALIDATION-04",
+    "RR-VALIDATION-05",
+    "RR-VALIDATION-06"
+  ],
+  "test_cases": [
+    "RR-TEST-01",
+    "RR-TEST-02",
+    "RR-TEST-03",
+    "RR-TEST-04",
+    "RR-TEST-05",
+    "RR-TEST-06"
+  ],
+  "repeats": 3,
+  "rounds": 2,
+  "candidates_per_round": 1,
+  "min_edits": 1,
+  "max_edits": 3,
+  "noise_band": 0.0,
+  "beta0": 0.05,
+  "beta1": 1.0,
+  "score_weight": 1.0,
+  "cost_weight": 0.1,
+  "max_model_calls_per_run": 16,
+  "max_seconds_per_run": 90
+}

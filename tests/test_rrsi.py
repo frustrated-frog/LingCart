@@ -272,3 +272,38 @@ def test_empty_result_is_distinct_from_successful_tool_execution_in_training():
         {'type':'tool_result','tool':'search_products','status':'SUCCEEDED'},
         {'type':'rrsi_module_applied','module':'recovery','status':'INLINE','trigger':'empty_results'}])
     assert 'empty_results' in json.dumps(feedback(raw))
+
+
+def test_ablation_freezes_all_arms_and_does_not_change_planning(tmp_path):
+    from src.rrsi_ablation import run_ablation
+    seed=program()
+    retained=program(instruction='新恢复策略')
+    observed=[]
+    def evaluator(p,cases,label,split):
+        observed.append((label,p))
+        raw=report(p or seed,cases)
+        raw['manifest']['split']='test'
+        for sample in raw['samples']: sample['split']='test'
+        if p is None:
+            raw['manifest']['harness_profile']={'profile_id':'adaptive-v1','mechanisms':[]}
+        return raw
+    result=run_ablation(seed,retained,spec(),evaluator=evaluator,output_dir=tmp_path,source='test_harness')
+    assert result['status']=='COMPLETED'
+    assert len(observed)==4
+    assert observed[2][1].planning==seed.planning
+    assert observed[2][1].recovery.instruction==seed.recovery.instruction
+    assert result['observed_improvement'] is False
+    assert (tmp_path/'ablation-contract.json').exists()
+
+
+def test_ablation_rejects_environment_drift(tmp_path):
+    from src.rrsi_ablation import run_ablation
+    def evaluator(p,cases,label,split):
+        raw=report(p or program(),cases)
+        raw['manifest']['split']='test'
+        raw['samples'][0]['split']='test'
+        if p is None: raw['manifest']['harness_profile']={'profile_id':'adaptive-v1'}
+        if label=='ablation-evolved': raw['manifest']['purpose_models']='different-model'
+        return raw
+    result=run_ablation(program(),program(instruction='新策略'),spec(),evaluator=evaluator,output_dir=tmp_path,source='test_harness')
+    assert result['status']=='INVALID' and result['code']=='RSI_ENVIRONMENT_CHANGED'

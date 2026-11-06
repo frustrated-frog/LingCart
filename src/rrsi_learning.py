@@ -126,7 +126,7 @@ def measurement(report, program, cases, repeats, *, split='dev', source='live_pr
             or Counter((s.get('case_id'), s.get('repetition')) for s in samples) != expected):
         raise ValueError('RSI_REPORT_INCOMPLETE')
     mechanisms = manifest.get('harness_profile', {}).get('mechanisms', [])
-    if not any(m.get('id') == 'rrsi-planning-recovery' and
+    if program is not None and not any(m.get('id') == 'rrsi-planning-recovery' and
                m.get('configuration', {}).get('program_sha256') == program.fingerprint for m in mechanisms):
         raise ValueError('RSI_PROGRAM_MISMATCH')
     costs = []
@@ -141,9 +141,9 @@ def measurement(report, program, cases, repeats, *, split='dev', source='live_pr
         outcomes.setdefault(sample['case_id'], []).append((sample['repetition'], sample['passed']))
         events = [e for t in sample.get('turns', []) for e in t.get('result', {}).get('events', [])]
         exposures.update(module for e in events if e.get('type') == 'rrsi_guidance_consumed'
-                         and e.get('program_sha256') == program.fingerprint
+                         and program is not None and e.get('program_sha256') == program.fingerprint
                          for module in e.get('modules', []) if e.get('statuses', {}).get(module) in {'INLINE', 'ANALYZED'})
-        if not any(e.get('type') == 'rrsi_policy_prepared' and e.get('program_sha256') == program.fingerprint for e in events):
+        if program is not None and not any(e.get('type') == 'rrsi_policy_prepared' and e.get('program_sha256') == program.fingerprint for e in events):
             raise ValueError('RSI_PROGRAM_NOT_EXERCISED')
         if source == 'live_provider' and not any(e.get('type') == 'model_call' and e.get('status') == 'SUCCEEDED' for e in events):
             raise ValueError('RSI_NOT_LIVE')
@@ -163,24 +163,8 @@ def measurement(report, program, cases, repeats, *, split='dev', source='live_pr
 
 
 def feedback(report):
-    """跨重复轨迹可对比的脱敏摘要；业务请求、参数、答案不进入提案。"""
-    rows = []
-    for sample in report['samples']:
-        events = [e for t in sample['turns'] for e in t.get('result', {}).get('events', [])]
-        trajectory = []
-        for event in events:
-            if event.get('type') not in {'adaptive_decision', 'decision_rejected', 'tool_result',
-                                        'step_completed', 'rrsi_module_applied', 'rrsi_guidance_consumed'}:
-                continue
-            row = {k: event[k] for k in ('type', 'tool', 'code', 'status', 'module', 'mode', 'trigger', 'modules') if k in event}
-            if event['type'] == 'adaptive_decision':
-                row.update({k: event['decision'][k] for k in ('action', 'tool') if k in event.get('decision', {})})
-            trajectory.append(row)
-        rows.append(dict(passed=sample['passed'], model_attempts=sample['model_attempts'],
-            safety_violations=sample['safety_violations'], protocol_violations=sample['protocol_violations'],
-            sample_ref=f"{sample['case_id']}:{sample['repetition']}",
-            trajectory=trajectory, event_counts=dict(Counter(e['type'] for e in events))))
-    return rows
+    from src.recovery_evidence import training_feedback
+    return training_feedback(report)
 
 
 def select(candidate, incumbent, historical_best, spec):
@@ -222,7 +206,10 @@ def evolve(seed, spec, *, evaluator, proposer, output_dir: Path, source='live_pr
             parent = incumbent
             for index in range(spec.candidates_per_round):
                 label = f'round-{round_index}-candidate-{index}'
-                raw = proposer.propose(parent, feedback(training), history, spec.edit_budget(round_index))
+                training_summary = feedback(training)
+                if index == 0:
+                    write_artifact(output_dir / f'round-{round_index}-feedback.json', training_summary)
+                raw = proposer.propose(parent, training_summary, history, spec.edit_budget(round_index))
                 write_artifact(output_dir / f'{label}-proposal.json', raw)
                 entry = dict(round=round_index, candidate=index, parent_sha256=parent.fingerprint,
                              edit_budget=spec.edit_budget(round_index), status='INVALID_PROPOSAL')

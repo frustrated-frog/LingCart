@@ -78,6 +78,11 @@ def scenario(case, session_id):
     setting = case.get('scenario')
     state = dict(kind=(setting or {}).get('kind'), fired=False, environment_paths=[])
     with ExitStack() as stack:
+        if setting and setting['kind'] in {'tool_timeout', 'repeated_tool_failure', 'invalid_arguments'}:
+            from eval.recovery_faults import recovery_fault
+            stack.enter_context(recovery_fault(setting['kind'], state))
+            yield state
+            return
         if setting:
             names = ('search_products', 'discover_products') if setting['kind'] == 'empty_search' else (
                 'search_products', 'discover_products', 'compare_products')

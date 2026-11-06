@@ -14,6 +14,8 @@ import { ProductsPage } from './pages/ProductsPage'
 import { RunsPage } from './pages/RunsPage'
 import { SandboxPage } from './pages/SandboxPage'
 
+const RSILabPage = lazy(() => import('./pages/RSILabPage').then(module => ({ default: module.RSILabPage })))
+
 const PGLabPage = lazy(() => import('./pages/PGLabPage').then(module => ({ default: module.PGLabPage })))
 
 export default function App() {
@@ -24,6 +26,7 @@ export default function App() {
         <Route path="runs" element={<RunsPage />} />
         <Route path="runs/:runId" element={<RunsPage />} />
         <Route path="experiments" element={<ExperimentsPage />} />
+        <Route path="experiments/rsi" element={<Suspense fallback={<LoadingState label="正在打开自进化对比" />}><RSILabPage /></Suspense>} />
         <Route path="experiments/pg" element={<Suspense fallback={<LoadingState label="正在打开 PG 实验台" />}><PGLabPage /></Suspense>} />
         <Route path="mechanisms" element={<MechanismsPage />} />
         <Route path="datasets" element={<DatasetsPage />} />

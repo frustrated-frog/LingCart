@@ -1600,3 +1600,17 @@ def test_rrsi_recovery_is_consumed_by_real_decision_loop(monkeypatch):
     assert result['harness']['research']['status'] == 'candidate'
     assert any('根据失败观察修订下一步' in prompt for prompt in prompts)
     assert any(e['type'] == 'rrsi_guidance_consumed' and 'recovery' in e['modules'] for e in result['events'])
+
+
+@pytest.mark.parametrize('kind', ['tool_timeout', 'repeated_tool_failure', 'invalid_arguments'])
+def test_recovery_faults_flow_through_actual_adaptive_runtime(monkeypatch, kind):
+    from eval.adaptive_checks import scenario
+    from src.harness import get_runner
+    # 真实模型替身仅决定动作；故障、恢复、工具及核验使用实际 Runtime。
+    model(monkeypatch, search(first=True), search(), search(), clarification)
+    with scenario({'scenario':{'kind':kind}},'recovery-fixture') as environment:
+        result=get_runner('adaptive-rrsi-policy-v1')('推荐预算500的耳机')
+    assert environment['fired']
+    assert any(e['type']=='rrsi_guidance_consumed' and 'recovery' in e['modules'] for e in result['events'])
+    assert result['budget']['consumed']['model_calls'] <= result['budget']['limits']['max_model_calls']
+    assert not any(e.get('tool') in {'process_payment','initiate_refund'} for e in result['events'])

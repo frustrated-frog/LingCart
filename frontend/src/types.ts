@@ -751,3 +751,29 @@ export interface PGJob extends PGJobSummary {
   error: string | null; error_type?: string | null; seed_graph: PGGraph; retained_graph: PGGraph | null
   comparison: { conclusion: string; evidence_valid: boolean; failures: string[]; gates: Record<string, { passed: boolean; failures: string[] }> } | null
 }
+
+export interface RSIRecoveryTrace {
+  episodes: { step_id: string | null; failure_kind: string; error_code: string | null; failure_sequence: number | null;
+    recovery_actions: { tool: string; step_id: string; same_arguments: boolean | null; new_records: number; status: string }[];
+    observation_improved: boolean; outcome: string }[]
+  timeline: { step_id: string; sequence: number | null; tool: string; status: string; failure_kind: string | null; new_records: number }[]
+  task_passed: boolean
+  verified_objectives: number
+  repeated_without_new_records: number
+  note: string
+}
+export interface RSISampleSide { passed: boolean; tokens: number | null; source: string; recovery: RSIRecoveryTrace }
+export interface RSISamplePair { case_id: string; repetition: number; parent: RSISampleSide | null; candidate: RSISampleSide | null }
+export interface RSICandidate {
+  round: number; candidate: number; status: string; selected: boolean; hypothesis: string;
+  parent_sha256: string; program_sha256: string | null;
+  changes: { field: string; before: string; after: string }[];
+  measurement: Record<string, unknown> | null; samples: RSISamplePair[]
+}
+export interface RSIRunSummary { run_id: string; status: string; target_module: string | null }
+export interface RSIRunDetail extends RSIRunSummary {
+  source_revision: string | null; historical: boolean; execution_source: string;
+  candidates: RSICandidate[]; partial: boolean; warnings: string[]; spec: Record<string, unknown>;
+  comparison: { status: string; observed_improvement: boolean; code?: string;
+    measurements?: Record<string, { score: number; tokens: number; stable: number }> } | null
+}

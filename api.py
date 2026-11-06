@@ -636,6 +636,8 @@ def forget_preference(profile_id: str, key: str):
 
 from src.pg_api import router as pg_router
 app.include_router(pg_router)
+from src.rrsi_api import router as rrsi_router
+app.include_router(rrsi_router)
 
 
 # A production build is served by FastAPI so deployment has one process and
