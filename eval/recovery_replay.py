@@ -150,4 +150,7 @@ def replay(point, profile_id, *, source_manifest, repetition=1):
         prefix_budget=point['budget'], suffix_budget=delta, suffix_usage=result.get('usage'),
         suffix_steps=max(0, len((result.get('plan') or {}).get('steps', [])) - prefix_steps),
         passed=not failures, failures=failures, integrity=integrity, changed_db_paths=mutations,
-        environment=fault_state, result=result, observed_tools=observed, recovery=recovery_trace(sample))
+        environment=fault_state, result=result, observed_tools=observed, recovery=recovery_trace(sample),
+        searches=deepcopy(context.snapshot.get('adaptive', {}).get('recovery_searches', [])),
+        suffix_models={key:deepcopy(value) for key,value in context.models.items()
+                       if int(key) > point['adaptive']['model_cursor']})

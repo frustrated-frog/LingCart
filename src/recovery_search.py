@@ -4,7 +4,7 @@ from dataclasses import dataclass, replace
 import json
 from typing import Literal
 
-from pydantic import Field, model_validator
+from pydantic import Field, ValidationError, model_validator
 
 from src.adaptive_decision import Decision, StrictModel
 from src.agents.base import as_text
@@ -232,14 +232,17 @@ class RecoverySearchMechanism(EmbeddedMechanism):
                 raise ValueError('弃权不携带所选分支引用')
             attempt.update(selection=choice.model_dump(), status='SELECTED' if choice.branch_id else 'ABSTAINED')
             _save(context, state, plan)
-        except ValueError:
-            attempt.update(status='INVALID', code='RECOVERY_SEARCH_INVALID')
+        except ValueError as error:
+            issues = ([{'path': '.'.join(map(str, item['loc'])), 'message': item['msg']}
+                       for item in error.errors(include_input=False, include_url=False)[:6]]
+                      if isinstance(error, ValidationError) else [{'path':'proposal_or_selection','message':str(error)}])
+            attempt.update(status='INVALID', code='RECOVERY_SEARCH_INVALID', validation_issues=issues)
             _save(context, state, plan)
         self._publish(context, attempt)
 
     def _publish(self, context, attempt):
         _event(context, 'recovery_search_completed', attempt, status=attempt['status'],
-               selection=attempt['selection'], code=attempt.get('code'))
+               selection=attempt['selection'], code=attempt.get('code'), validation_issues=attempt.get('validation_issues', []))
 
     def choose(self, context, state, plan):
         attempt = next((a for a in state.get('recovery_searches', []) if a['binding'] == binding(state, plan)), None)

@@ -107,6 +107,7 @@ export const MECHANISM_LABELS: Record<string, string> = {
   'independent-request-audit': '独立请求审查', 'native-strict-tools': '原生严格工具协议',
   'liveplan-online-steering': 'LivePlan 在线监控与纠偏',
   'procedural-graph-context': 'PG 程序图上下文',
+  'bounded-recovery-search': '有界恢复搜索',
 }
 
 export const ENGINE_LABELS: Record<string, string> = {
@@ -137,6 +138,11 @@ export const METRIC_LABELS: Record<string, string> = {
 }
 
 const EVENT_LABELS: Record<string, [string, string]> = {
+  recovery_search_started: ['搜索', '展开恢复候选'],
+  recovery_search_probe: ['探查', '记录只读分支结果'],
+  recovery_search_completed: ['选择', '比较恢复方案'],
+  recovery_search_consumed: ['恢复', '采用所选首步'],
+  recovery_replay_origin: ['回放', '恢复冻结的失败起点'],
   case_plan_revised: ['案件', '修订证据与行动计划'],
   case_state_projected: ['案件', '投影政策约束案件状态'],
   case_obligation_verified: ['核验', '核验下一项政策义务'],
@@ -186,6 +192,7 @@ const MODEL_PURPOSE_LABELS: Record<string, string> = {
   dialogue_understanding: '对话理解', evidence_verification: '证据语义核验', goal: '目标提取', planner: '任务规划',
   agent: '智能体执行', final_response: '最终回答', audit: '独立审查', liveplan_advisor: 'LivePlan 纠偏建议',
   pg_guidance: '程序图指导', pg_refiner: '程序图演化',
+  recovery_search_propose: '生成恢复候选', recovery_search_select: '比较实际探查结果',
 }
 
 export function localizeEngineeringText(value: string): string {

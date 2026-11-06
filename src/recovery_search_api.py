@@ -89,7 +89,8 @@ def project_sample(raw):
             choice = event.get('selection') or {}
             item.status=event['status']
             item.chosen_branch=choice.get('branch_id')
-            item.reason=choice.get('reason')
+            item.reason=choice.get('reason') or '；'.join(
+                f"{issue.get('path','')}: {issue.get('message','')}" for issue in event.get('validation_issues', [])) or None
     steps = raw['suffix_steps']
     timeline = raw.get('recovery',{}).get('timeline',[])
     return Sample(**{k:raw[k] for k in ('profile_id','case_id','repetition','origin_sha256','database_sha256','passed','failures','suffix_steps')},

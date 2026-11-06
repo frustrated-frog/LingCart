@@ -50,6 +50,7 @@ export function ExperimentsPage() {
     <PageHeader code="实验契约 / 04" title="实验契约"
       subtitle="先冻结基线、变量和指标，再执行候选。没有可比报告时，界面明确保持“不能下结论”。" marker="研究模式" />
     <Link className="pg-lab-entry" to="/experiments/rsi"><span><b>规划与恢复 · 自进化对比</b><small>版本修改 → 失败恢复轨迹 → 成本与留出验证</small></span><strong>查看演化证据 ↗</strong></Link>
+    <Link className="pg-lab-entry" to="/experiments/recovery"><span><b>恢复搜索 · 同状态回放</b><small>冻结失败起点 → 真实分支探查 → 三组任务结果</small></span><strong>比较恢复策略 ↗</strong></Link>
     <Link className="pg-lab-entry" to="/experiments/pg"><span><b>PG 自演化实验台</b><small>训练轨迹 → 图修改 → 验证选择 → 三组对照</small></span><strong>打开实验台 ↗</strong></Link>
     <label className="standalone-select">实验<select value={experimentId} onChange={(e) => setExperimentId(e.target.value)}>{list.map((item) => <option key={item.experiment_id}>{item.experiment_id}</option>)}</select></label>
     <ViewTransition viewKey={experiment.experiment_id}>

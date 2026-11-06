@@ -1665,6 +1665,8 @@ def test_recovery_search_invalid_selection_falls_back_without_fake_progress(monk
     assert result['status'] == 'SUCCEEDED'
     assert any(e['type'] == 'recovery_search_completed' and e['status'] == 'INVALID' for e in result['events'])
     assert not any(e['type'] == 'recovery_search_consumed' for e in result['events'])
+    rejected = next(e for e in result['events'] if e['type'] == 'recovery_search_completed')
+    assert rejected['validation_issues'] and '真实观察' in rejected['validation_issues'][0]['message']
 
 
 def test_recovery_search_reserves_budget_for_original_decision(monkeypatch):
@@ -1731,6 +1733,8 @@ def test_recovery_replay_freezes_database_context_and_budget(monkeypatch):
         assert not result['changed_db_paths'] and result['integrity']
         assert result['result']['budget']['consumed']['model_calls'] == point['budget']['model_calls'] + result['suffix_budget']['model_calls']
         assert all(e['run_id'] != point['origin_run_id'] for e in result['result']['events'])
+        assert result['suffix_models']
+        assert all(int(key) > point['adaptive']['model_cursor'] for key in result['suffix_models'])
         hashes.append((result['origin_sha256'],result['database_sha256']))
     assert len(set(hashes)) == 1 and fingerprint(point) == original_hash
 
