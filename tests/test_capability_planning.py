@@ -3,7 +3,8 @@ from copy import deepcopy
 import pytest
 
 from src.capability_planner import PlanningAction, search_plan
-from src.capability_planning import CapabilityPlanningMechanism, built_in_contracts, compile_problem
+from src.capability_planning import CapabilityPlanningMechanism, compile_problem
+from src.capability_registry import get_capability_registry
 from src.direct_executor import _READ_ONLY_TOOLS
 from src.errors import AgentError
 from src.harness.registry import get_registry
@@ -54,7 +55,7 @@ def order_step(order_id=1001, tool='get_order_status', **updates):
 
 
 def problem(state, steps=()):
-    return compile_problem(state, TaskPlan([], list(steps)), built_in_contracts(), _READ_ONLY_TOOLS)
+    return compile_problem(state, TaskPlan([], list(steps)), get_capability_registry().planning_contracts(), _READ_ONLY_TOOLS)
 
 
 def test_verified_observation_is_scoped_to_one_order():
@@ -227,7 +228,7 @@ def test_payment_and_refund_writes_are_never_planning_actions():
     def write(order_id: int):
         raise AssertionError('规划不应执行写工具')
     registry = dict(_READ_ONLY_TOOLS, get_order_details=ToolSpec(write, side_effect=True))
-    actions, _, _, _, _ = compile_problem(state_for(order_objective()), TaskPlan([], []), built_in_contracts(), registry)
+    actions, _, _, _, _ = compile_problem(state_for(order_objective()), TaskPlan([], []), get_capability_registry().planning_contracts(), registry)
     assert all(a.tool not in {'get_order_details', 'process_payment', 'initiate_refund'} for a in actions)
 
 

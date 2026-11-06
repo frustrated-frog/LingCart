@@ -17,6 +17,7 @@
         "src/capability_planner.py",
         "src/capability_planning.py",
         "src/capability_registry.py",
+        "src/task_plan.py",
         "src/adaptive.py",
         "src/adaptive_decision.py",
         "src/context_engine.py",

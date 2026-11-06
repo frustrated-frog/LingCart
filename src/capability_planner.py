@@ -9,15 +9,6 @@ class PlanningModel(BaseModel):
     model_config = ConfigDict(extra='forbid', frozen=True, strict=True)
 
 
-class CapabilityContract(PlanningModel):
-    tool: str
-    scope: Literal['order', 'catalog', 'question']
-    requires: tuple[str, ...] = ()
-    # 每个语义输出要求真实结果具备哪些非空字段；False 和 0 都是有效值。
-    provides: dict[str, tuple[str, ...]]
-    automatic: bool = False
-
-
 class PlanningAction(PlanningModel):
     action_id: str
     tool: str

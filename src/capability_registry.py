@@ -8,15 +8,17 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from contextvars import ContextVar
+from copy import deepcopy
 from dataclasses import dataclass, field
 import hashlib
 import json
 import re
 from types import MappingProxyType
-from typing import Callable, Mapping
+from typing import Callable, Literal, Mapping
+
+from pydantic import BaseModel, ConfigDict, model_validator
 
 from src import tools
-from src.capability_planner import CapabilityContract
 from src.catalog_metadata import CATALOG_FACETS_DEPENDENCY, CatalogMetadataProvider, CatalogMetadataSnapshot
 from src.catalog_query import CATALOG_QUERY_OPERATION, compile_catalog_query, query_catalog
 from src.errors import AgentError
@@ -43,6 +45,34 @@ CALCULATE = "CALCULATE"
 AFTER_SALES_CASE = "AFTER_SALES_CASE"
 AFTER_SALES_CONTINUE = "AFTER_SALES_CONTINUE"
 MODEL_ANSWER_OPERATION = "__model_answer__"
+
+
+class CapabilityContract(BaseModel):
+    """固定能力编译与研究规划共同读取的工具语义声明。"""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    tool: str
+    scope: Literal["order", "catalog", "question"]
+    requires: tuple[str, ...] = ()
+    # 每个语义输出要求真实结果具备哪些非空字段；False 和 0 都是有效值。
+    provides: dict[str, tuple[str, ...]]
+    automatic: bool = False
+    specialist: str = "capability"
+    default_for: tuple[str, ...] = ()
+
+    @model_validator(mode="after")
+    def validate_declaration(self):
+        names = (self.tool, self.specialist, *self.requires, *self.provides, *self.default_for)
+        if any(not name.strip() for name in names) or not self.provides:
+            raise ValueError("能力契约名称与输出不能为空")
+        if any(not fields or any(not name.strip() for name in fields) for fields in self.provides.values()):
+            raise ValueError("语义输出必须声明真实结果字段")
+        if len(set(self.requires)) != len(self.requires) or len(set(self.default_for)) != len(self.default_for):
+            raise ValueError("能力契约不能重复声明依赖或默认输出")
+        if not set(self.default_for) <= self.provides.keys() or (self.default_for and not self.automatic):
+            raise ValueError("默认生产者必须支持自动绑定并提供对应输出")
+        return self
 
 
 @dataclass(frozen=True)
@@ -214,14 +244,9 @@ class CapabilityRegistration:
 class CapabilityRegistry:
     """Explicit, inspectable registry used by understanding and execution."""
 
-    def planning_contracts(self):
-        """仅返回当前已注册工具的声明式规划契约；不执行能力编译器。"""
-        from src.capability_planning import built_in_contracts
-        contracts = {c.tool: c for c in built_in_contracts() if c.tool in self._tools}
-        for registration in self._registrations.values():
-            for contract in registration.planning_contracts:
-                contracts[contract.tool] = contract
-        return tuple(contracts.values())
+    def planning_contracts(self) -> tuple[CapabilityContract, ...]:
+        """返回注册契约的独立快照，调用方不能修改注册表权威声明。"""
+        return tuple(contract.model_copy(deep=True) for contract in self._planning_contracts.values())
 
     def __init__(
         self,
@@ -232,6 +257,7 @@ class CapabilityRegistry:
         self._registrations: dict[str, CapabilityRegistration] = {}
         self._tools: dict[str, object] = {}
         self._operations: dict[str, OperationContract] = {}
+        self._planning_contracts: dict[str, CapabilityContract] = {}
         self._metadata_providers = dict(metadata_providers or {})
         for registration in registrations:
             self.register(registration)
@@ -268,10 +294,24 @@ class CapabilityRegistry:
             existing_handler = self._tools.get(name)
             if existing_handler is not None and existing_handler is not contract.handler:
                 raise ValueError(f"Operation {name} has conflicting handlers")
+        pending_contracts = dict(self._planning_contracts)
+        for contract in registration.planning_contracts:
+            existing = pending_contracts.get(contract.tool)
+            if existing is not None and existing != contract:
+                raise ValueError(f"Operation {contract.tool} has conflicting planning contracts")
+            pending_contracts[contract.tool] = contract.model_copy(deep=True)
+        defaults = {}
+        for contract in pending_contracts.values():
+            for output in contract.default_for:
+                key = (contract.scope, output)
+                if key in defaults and defaults[key] != contract.tool:
+                    raise ValueError(f"Planning output {key} has conflicting default providers")
+                defaults[key] = contract.tool
         self._registrations[kind] = registration
         self._tools.update(registration.tools)
         self._operations.update(registration.operations)
         self._tools.update({name: contract.handler for name, contract in registration.operations.items()})
+        self._planning_contracts = pending_contracts
 
     def registration(self, objective_kind: str) -> CapabilityRegistration:
         try:
@@ -284,7 +324,62 @@ class CapabilityRegistry:
             ) from exc
 
     def compile(self, objective: Mapping[str, object], request: str) -> tuple[CompiledOperation, ...]:
-        return self.registration(str(objective["kind"])).compiler(objective, request)
+        # 编译器中的注册表查询必须属于本次实例，不能退回全局默认目录。
+        with use_capability_registry(self):
+            return self.registration(str(objective["kind"])).compiler(objective, request)
+
+    def compile_read_dependencies(self, target: CompiledOperation) -> tuple[CompiledOperation, ...]:
+        """展开已声明的只读依赖；不搜索替代路径，不执行工具，不假造观察。"""
+        from src.runtime import ToolEffect, ToolExecutor, tool_spec
+
+        if target.depends_on:
+            raise AgentError("INVALID_CAPABILITY_DEPENDENCY", "只读依赖目标不能引用外部未展开步骤", retryable=False)
+        operations: list[CompiledOperation] = []
+        completed: dict[str, str] = {}
+        visiting: set[str] = set()
+
+        def expand(tool: str, arguments: dict, ref: str, specialist: str) -> str:
+            contract = self._planning_contracts.get(tool)
+            if contract is None or tool not in self._tools:
+                raise AgentError("CAPABILITY_CONTRACT_MISSING", f"工具 {tool} 没有已注册的能力契约", retryable=False)
+            spec = tool_spec(tool, self._tools[tool])
+            if spec.effect != ToolEffect.READ:
+                raise AgentError("CAPABILITY_DEPENDENCY_NOT_READ_ONLY", "能力依赖只能展开只读工具", retryable=False)
+            try:
+                spec.schema.model_validate(arguments, strict=True)
+            except ValueError as exc:
+                raise AgentError("CAPABILITY_INPUT_MISSING", f"工具 {tool} 缺少有效的依赖输入", retryable=False) from exc
+            identity = ToolExecutor.fingerprint(tool, arguments)
+            if identity in visiting:
+                raise AgentError("CAPABILITY_DEPENDENCY_CYCLE", "能力依赖包含循环", retryable=False)
+            if identity in completed:
+                return completed[identity]
+            if len(visiting) + len(completed) >= 64:
+                raise AgentError("CAPABILITY_DEPENDENCY_LIMIT", "能力依赖展开超过上限", retryable=False)
+            visiting.add(identity)
+            dependencies = []
+            for index, requirement in enumerate(contract.requires):
+                providers = [candidate for candidate in self._planning_contracts.values()
+                             if candidate.scope == contract.scope and requirement in candidate.provides
+                             and candidate.automatic]
+                preferred = [candidate for candidate in providers if requirement in candidate.default_for]
+                choices = preferred or providers
+                if len(choices) != 1:
+                    code = "CAPABILITY_DEPENDENCY_MISSING" if not choices else "CAPABILITY_DEPENDENCY_AMBIGUOUS"
+                    raise AgentError(code, f"前置观察 {requirement} 没有唯一默认生产者", retryable=False)
+                provider = choices[0]
+                schema = tool_spec(provider.tool, self._tools[provider.tool]).schema
+                inputs = {name: deepcopy(value) for name, value in arguments.items() if name in schema.model_fields}
+                dependency = expand(provider.tool, inputs, f"{ref}:dependency-{index + 1}", provider.specialist)
+                if dependency not in dependencies:
+                    dependencies.append(dependency)
+            visiting.remove(identity)
+            operations.append(CompiledOperation(ref, specialist, tool, deepcopy(arguments), tuple(dependencies)))
+            completed[identity] = ref
+            return ref
+
+        expand(target.operation, target.arguments, target.ref, target.specialist)
+        return tuple(operations)
 
     def missing_fields(self, objective: Mapping[str, object]) -> tuple[str, ...]:
         spec = self.registration(str(objective["kind"])).spec
@@ -500,7 +595,10 @@ class CapabilityRegistry:
                     for name, contract in sorted(registration.operations.items())
                 },
             })
-        encoded = json.dumps(manifest, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        encoded = json.dumps({"capabilities": manifest, "planning_contracts": [
+            contract.model_dump(mode="json")
+            for contract in sorted(self._planning_contracts.values(), key=lambda item: item.tool)
+        ]}, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(encoded.encode("utf-8")).hexdigest()[:16]
 
 
@@ -597,9 +695,8 @@ def _single(specialist: str, operation: str, fields: tuple[str, ...]) -> Compile
 
 def _refund_eligibility(objective: Mapping[str, object], _request: str) -> tuple[CompiledOperation, ...]:
     args = _args(objective, ("order_id",))
-    return (
-        CompiledOperation("order-state", "order", "get_order_status", args),
-        CompiledOperation("eligibility", "refund", "check_refund_eligibility", args, ("order-state",)),
+    return get_capability_registry().compile_read_dependencies(
+        CompiledOperation("eligibility", "refund", "check_refund_eligibility", args)
     )
 
 
@@ -779,7 +876,8 @@ def _spec(kind: str, capability_id: str, description: str, target: str, evidence
           semantic_value_catalogs: Mapping[str, SemanticValueCatalog] | None = None,
           missing_question: str = "请补充完成这个请求所需的关键信息。",
           handlers: Mapping[str, object] | None = None, normalizer: Normalizer | None = None,
-          operations: Mapping[str, OperationContract] | None = None) -> CapabilityRegistration:
+          operations: Mapping[str, OperationContract] | None = None,
+          planning_contracts: tuple[CapabilityContract, ...] = ()) -> CapabilityRegistration:
     return CapabilityRegistration(
         CapabilitySpec(
             capability_id=capability_id,
@@ -806,6 +904,7 @@ def _spec(kind: str, capability_id: str, description: str, target: str, evidence
         handlers or {},
         normalizer,
         operations or {},
+        planning_contracts,
     )
 
 
@@ -841,20 +940,36 @@ def _builtin_registrations() -> tuple[CapabilityRegistration, ...]:
         _spec(ORDER_STATUS, "order.status.read", "查询订单当前状态", "order", "BUSINESS_DATA",
               _single("order", "get_order_status", order_fields), required=order_fields,
               accepted=order_fields, missing_question=order_question,
-              handlers={"get_order_status": tools.get_order_status}),
+              handlers={"get_order_status": tools.get_order_status},
+              planning_contracts=(CapabilityContract(
+                  tool="get_order_status", scope="order", specialist="order", automatic=True,
+                  provides={"order.status": ("order_id", "status")}, default_for=("order.status",),
+              ),)),
         _spec(ORDER_DETAILS, "order.details.read", "查询订单详情", "order", "BUSINESS_DATA",
               _single("order", "get_order_details", order_fields), required=order_fields,
               accepted=order_fields, missing_question=order_question,
-              handlers={"get_order_details": tools.get_order_details}),
+              handlers={"get_order_details": tools.get_order_details},
+              planning_contracts=(CapabilityContract(
+                  tool="get_order_details", scope="order", specialist="order", automatic=True,
+                  provides={"order.status": ("order_id", "status"), "order.details": ("order_id", "item", "amount")},
+              ),)),
         _spec(SHIPMENT_TRACKING, "shipment.track", "查询订单物流与轨迹", "order", "BUSINESS_DATA",
               _single("order", "track_shipment", order_fields), required=order_fields,
               accepted=order_fields, missing_question=order_question,
-              handlers={"track_shipment": tools.track_shipment}),
+              handlers={"track_shipment": tools.track_shipment},
+              planning_contracts=(CapabilityContract(
+                  tool="track_shipment", scope="order", specialist="order", automatic=True,
+                  provides={"order.status": ("order_id", "status"), "order.shipment": ("order_id", "tracking_message")},
+              ),)),
         _spec(REFUND_ELIGIBILITY, "refund.eligibility.read", "判断订单是否满足退款条件", "order",
               "BUSINESS_DATA", _refund_eligibility, required=order_fields, accepted=order_fields,
               missing_question=order_question,
               handlers={"get_order_status": tools.get_order_status,
-                        "check_refund_eligibility": tools.check_refund_eligibility}),
+                        "check_refund_eligibility": tools.check_refund_eligibility},
+              planning_contracts=(CapabilityContract(
+                  tool="check_refund_eligibility", scope="order", specialist="refund", automatic=True,
+                  requires=("order.status",), provides={"order.refund_check": ("order_id", "eligible", "reason")},
+              ),)),
         _spec(REFUND_REQUEST, "refund.request.prepare", "核验退款条件并准备退款申请", "order",
               "BUSINESS_DATA", _refund_request, required=order_fields, accepted=order_fields,
               side_effect="REQUIRES_APPROVAL", missing_question=order_question,
@@ -914,7 +1029,11 @@ def _builtin_registrations() -> tuple[CapabilityRegistration, ...]:
         _spec(PAYMENT_STATUS, "payment.status.read", "查询订单支付状态", "order", "BUSINESS_DATA",
               _single("payment", "get_payment_status", order_fields), required=order_fields,
               accepted=order_fields, missing_question=order_question,
-              handlers={"get_payment_status": tools.get_payment_status}),
+              handlers={"get_payment_status": tools.get_payment_status},
+              planning_contracts=(CapabilityContract(
+                  tool="get_payment_status", scope="order", specialist="payment", automatic=True,
+                  provides={"order.payment": ("order_id", "status", "amount", "method")},
+              ),)),
         _spec(PAYMENT_PROCESS, "payment.process.prepare", "查询支付状态并准备付款", "order",
               "BUSINESS_DATA", _payment_process, required=order_fields, accepted=order_fields,
               side_effect="REQUIRES_APPROVAL", missing_question=order_question,
@@ -922,12 +1041,20 @@ def _builtin_registrations() -> tuple[CapabilityRegistration, ...]:
         _spec(FAQ, "policy.answer", "根据已验证服务政策回答问题", "policy", "POLICY",
               _faq, required=("question",), accepted=("question",),
               missing_question="请说明你想了解哪项服务规则。",
-              handlers={"answer_faq": tools.answer_faq}),
+              handlers={"answer_faq": tools.answer_faq},
+              planning_contracts=(CapabilityContract(
+                  tool="answer_faq", scope="question", specialist="faq", automatic=True,
+                  provides={"policy.answer": ("answer", "status")},
+              ),)),
         _spec(PRODUCT_SEARCH, "catalog.search", "按用户明确条件搜索真实商品目录", "product",
               "CATALOG", _search, accepted=("query", "category", "max_price", "excluded_terms"),
               under_specified=True, metadata_dependencies=(CATALOG_FACETS_DEPENDENCY,),
               normalizer=normalize_catalog_objective, normalizer_version="catalog_metadata_alias/v1",
-              handlers={"search_products": tools.search_products}),
+              handlers={"search_products": tools.search_products},
+              planning_contracts=(CapabilityContract(
+                  tool="search_products", scope="catalog", specialist="shopping",
+                  provides={"catalog.candidates": ("products",)},
+              ),)),
         _spec(PRODUCT_DISCOVERY, "catalog.discover", "在偏好不完整时生成真实、差异化的探索候选并继续偏好获取",
               "product", "CATALOG", _discover,
               accepted=("query", "category", "max_price", "soft_preferences", "excluded_terms"),
@@ -937,13 +1064,21 @@ def _builtin_registrations() -> tuple[CapabilityRegistration, ...]:
               },
               under_specified=True, metadata_dependencies=(CATALOG_FACETS_DEPENDENCY,),
               normalizer=normalize_catalog_objective, normalizer_version="catalog_metadata_alias/v1",
-              handlers={"discover_products": tools.discover_products}),
+              handlers={"discover_products": tools.discover_products},
+              planning_contracts=(CapabilityContract(
+                  tool="discover_products", scope="catalog", specialist="shopping",
+                  provides={"catalog.candidates": ("products",)},
+              ),)),
         _spec(PRODUCT_COMPARE, "catalog.compare", "比较用户明确指定的两到三款真实商品", "product",
               "CATALOG", _compare, required=("product_ids",), accepted=("product_ids",),
               min_items={"product_ids": 2}, max_items={"product_ids": 3},
               metadata_dependencies=(CATALOG_FACETS_DEPENDENCY,),
               missing_question="请提供要比较的两到三个商品编号。",
-              handlers={"compare_products": tools.compare_products}),
+              handlers={"compare_products": tools.compare_products},
+              planning_contracts=(CapabilityContract(
+                  tool="compare_products", scope="catalog", specialist="shopping",
+                  requires=("catalog.candidates",), provides={"catalog.comparison": ("products",)},
+              ),)),
         _spec(CATALOG_QUERY, "catalog.query", "对真实商品目录执行受限的筛选、排序、分组、投影、聚合、分页或结果集追问",
               "catalog_result", "CATALOG", _catalog_query,
               required=("catalog_query",), accepted=("catalog_query",),

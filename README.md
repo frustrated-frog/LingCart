@@ -193,7 +193,7 @@ python eval/run_live_eval.py --harness-profile adaptive-v1 --split test --repeat
 
 候选实验必须提供机器可校验的 `experiment-spec.json`，冻结 baseline、candidate、数据分组、重复次数、指标方向和最大回退。报告还记录 Profile、机制实现、Prompt、Python、依赖锁和源码指纹。candidate Profile 只能从研究评测入口执行，产品 `/chat` 与 `/runs` 只接受 `baseline` 或 `promoted`。
 
-CGAP 能力驱动规划候选 `adaptive-cgap-v1` 根据工具契约搜索前置依赖，复用同一对象的真实观察，并在结果返回后重算剩余路径。参数完整的只读步骤经现有执行内核运行，商品检索参数与最终交付继续由模型处理。运行检查新增“能力规划”页，可切换历史版本、查看依赖与实际证据来源；计划就绪不代表目标已经完成。当前仅有离线机制验证，尚无真实模型收益结论。见 [能力驱动动态规划设计](docs/能力驱动动态规划设计.md) 与 [论文接入说明](research/papers/能力驱动规划接入说明.md)。
+CGAP 能力驱动规划候选 `adaptive-cgap-v1` 根据工具契约搜索前置依赖，复用同一对象的真实观察，并在结果返回后重算剩余路径。工具语义契约统一归 `CapabilityRegistry` 管理，固定退款编译与 CGAP 共用依赖声明，快速路径复用注册能力编译器。参数完整的只读步骤经现有执行内核运行，商品检索参数与最终交付继续由模型处理。运行检查新增“能力规划”页，可切换历史版本、查看依赖与实际证据来源；计划就绪不代表目标已经完成。当前仅有离线机制验证，尚无真实模型收益结论。见 [能力驱动动态规划设计](docs/能力驱动动态规划设计.md) 与 [论文接入说明](research/papers/能力驱动规划接入说明.md)。
 
 第一版 ACE（Agentic Context Engineering）纵向切片已经接入：现有 adaptive Agent 产生真实执行轨迹，离线 Reflector/Curator 只从 `dev` 环境反馈增量构建不可变 Playbook，候选 Profile 在 `test` 时只读加载固定版本。它与用户偏好、业务事实和权限分仓，独立审查不会接收 Playbook；代码门禁拒绝具体商品/订单事实和放宽硬约束的策略。
 

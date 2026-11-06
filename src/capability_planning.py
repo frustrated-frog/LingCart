@@ -4,7 +4,7 @@ from dataclasses import dataclass
 import hashlib
 import json
 
-from src.capability_planner import (CapabilityContract, CapabilityPlanNode, CapabilityPlanView,
+from src.capability_planner import (CapabilityPlanNode, CapabilityPlanView,
                                     CapabilityPlanningProjection, PlanningAction, search_plan)
 from src.errors import AgentError
 from src.harness.mechanisms import EmbeddedMechanism
@@ -13,28 +13,6 @@ from src.harness.mechanisms import EmbeddedMechanism
 def digest(value):
     return hashlib.sha256(json.dumps(value, ensure_ascii=False, sort_keys=True,
                                     separators=(',', ':')).encode()).hexdigest()
-
-
-def built_in_contracts():
-    """工具语义声明，不包含按问句或业务场景编排的行动序列。"""
-    return (
-        CapabilityContract(tool='get_order_status', scope='order', automatic=True,
-            provides={'order.status': ('order_id', 'status')}),
-        CapabilityContract(tool='get_order_details', scope='order', automatic=True,
-            provides={'order.status': ('order_id', 'status'), 'order.details': ('order_id', 'item', 'amount')}),
-        CapabilityContract(tool='track_shipment', scope='order', automatic=True,
-            provides={'order.status': ('order_id', 'status'), 'order.shipment': ('order_id', 'tracking_message')}),
-        CapabilityContract(tool='check_refund_eligibility', scope='order', automatic=True,
-            requires=('order.status',), provides={'order.refund_check': ('order_id', 'eligible', 'reason')}),
-        CapabilityContract(tool='get_payment_status', scope='order', automatic=True,
-            provides={'order.payment': ('order_id', 'status', 'amount', 'method')}),
-        CapabilityContract(tool='answer_faq', scope='question', automatic=True,
-            provides={'policy.answer': ('answer', 'status')}),
-        CapabilityContract(tool='search_products', scope='catalog', provides={'catalog.candidates': ('products',)}),
-        CapabilityContract(tool='discover_products', scope='catalog', provides={'catalog.candidates': ('products',)}),
-        CapabilityContract(tool='compare_products', scope='catalog', requires=('catalog.candidates',),
-            provides={'catalog.comparison': ('products',)}),
-    )
 
 
 TARGETS = {'get_order_status': 'order.status', 'get_order_details': 'order.details',

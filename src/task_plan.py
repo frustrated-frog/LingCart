@@ -67,48 +67,40 @@ class TaskPlan:
 
 
 def build_plan(intake):
+    """快速路径只负责把 intake 绑定到能力，步骤与依赖复用注册编译器。"""
+    registry = get_capability_registry()
     steps = []
     known = {}
-    def add(actor, tool, args, dependencies=None):
-        identity = ToolExecutor.fingerprint(tool, args)
-        if identity in known:
-            return known[identity]
-        step = TaskStep(f"step-{len(steps) + 1}", actor, tool, args, dependencies or [])
-        steps.append(step)
-        known[identity] = step.step_id
-        return step.step_id
+
+    def append_capability(kind, arguments):
+        local_refs = {}
+        for operation in registry.compile({"kind": kind, **arguments}, intake.request):
+            identity = ToolExecutor.fingerprint(operation.operation, operation.arguments)
+            if identity not in known:
+                dependencies = [local_refs[ref] for ref in operation.depends_on]
+                step = TaskStep(f"step-{len(steps) + 1}", operation.specialist,
+                                operation.operation, operation.arguments, dependencies)
+                steps.append(step)
+                known[identity] = step.step_id
+            local_refs[operation.ref] = known[identity]
+
     intents = intake.intents
     order_ids = intake.entities.get("order_ids") or ([intake.entities["order_id"]] if "order_id" in intake.entities else [])
     for order_id in order_ids:
         args = {"order_id": order_id}
-        if ORDER_DETAILS in intents:
-            add("order", "get_order_details", args)
-        if ORDER_STATUS in intents:
-            add("order", "get_order_status", args)
-        if SHIPMENT_TRACKING in intents:
-            add("order", "track_shipment", args)
+        for kind in (ORDER_DETAILS, ORDER_STATUS, SHIPMENT_TRACKING):
+            if kind in intents:
+                append_capability(kind, args)
         if REFUND_ELIGIBILITY in intents or REFUND_REQUEST in intents:
-            state = add("order", "get_order_status", args)
-            eligibility = add("refund", "check_refund_eligibility", args, [state])
-            if REFUND_REQUEST in intents:
-                add("refund", "prepare_refund", args, [eligibility])
+            append_capability(REFUND_REQUEST if REFUND_REQUEST in intents else REFUND_ELIGIBILITY, args)
         if PAYMENT_STATUS in intents or PAYMENT_PROCESS in intents:
-            payment = add("payment", "get_payment_status", args)
-            if PAYMENT_PROCESS in intents:
-                add("payment", "prepare_payment", args, [payment])
+            append_capability(PAYMENT_PROCESS if PAYMENT_PROCESS in intents else PAYMENT_STATUS, args)
     if FAQ in intents:
-        add("faq", "answer_faq", {"question": intake.request})
-    if PRODUCT_SEARCH in intents:
-        args = {key: intake.entities[key] for key in ("query", "category", "max_price", "excluded_terms")
-                if intake.entities.get(key) not in (None, [])}
-        add("shopping", "search_products", args)
-    if PRODUCT_DISCOVERY in intents:
-        args = {key: intake.entities[key] for key in ("query", "category", "max_price", "soft_preferences", "excluded_terms")
-                if intake.entities.get(key) not in (None, "", [])}
-        args["context_seed"] = intake.request
-        add("shopping", "discover_products", args)
-    if PRODUCT_COMPARE in intents:
-        add("shopping", "compare_products", {"product_ids": intake.entities.get("product_ids", [])})
+        append_capability(FAQ, {"question": intake.request})
+    for kind in (PRODUCT_SEARCH, PRODUCT_DISCOVERY, PRODUCT_COMPARE):
+        if kind in intents:
+            accepted = registry.registration(kind).spec.accepted_fields
+            append_capability(kind, {name: intake.entities[name] for name in accepted if name in intake.entities})
     return TaskPlan(list(intents), steps)
 
 
