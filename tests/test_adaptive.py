@@ -1627,6 +1627,81 @@ def recovery_selector():
     return dict(branch_id='b1', reason='该分支实际读到了商品，继续原目标', observation_refs=['probe-b1-0'])
 
 
+def strict_recovery_proposal():
+    return dict(branches=[{k:v for k,v in branch.items() if k != 'branch_id'}
+                          for branch in recovery_proposal()['branches']])
+
+
+def test_gated_recovery_skips_search_for_one_transient_failure(monkeypatch):
+    from eval.adaptive_checks import scenario
+    from src.harness import get_runner
+    actor=model(monkeypatch,search(first=True),search(),recommendation)
+    monkeypatch.setattr('src.recovery_search.get_llm',lambda **kw:pytest.fail('单次故障不能消耗搜索模型预算'))
+    with scenario({'scenario':{'kind':'tool_timeout'}},'gate-transient'):
+        result=get_runner('adaptive-recovery-search-v2')('推荐预算500的耳机')
+    assert result['status']=='SUCCEEDED' and len(actor.inputs)==3
+    gates=[e for e in result['events'] if e['type']=='recovery_search_gate']
+    assert len(gates)==1 and gates[0]['status']=='DEFERRED' and gates[0]['failure_count']==1
+    assert not any(e['type']=='recovery_search_started' for e in result['events'])
+
+
+def test_gated_recovery_searches_after_repeated_empty_results(monkeypatch):
+    from src.harness import get_runner
+    actor=model(monkeypatch,search(first=True,query='没有匹配'),search(query='仍无匹配'),recommendation)
+    planner=Script([strict_recovery_proposal(),recovery_selector()])
+    monkeypatch.setattr('src.recovery_search.get_llm',lambda **kw:planner)
+    result=get_runner('adaptive-recovery-search-v2')('推荐预算500的耳机')
+    assert result['status']=='SUCCEEDED' and len(actor.inputs)==3 and len(planner.inputs)==2
+    assert [e['status'] for e in result['events'] if e['type']=='recovery_search_gate']==['DEFERRED','OPEN']
+    assert len([e for e in result['events'] if e['type']=='recovery_search_probe'])==2
+
+
+@pytest.mark.parametrize('malformation',['arguments','duplicate','normalized_duplicate','foreign_ref'])
+def test_strict_recovery_invalid_proposal_never_executes_probes(monkeypatch,malformation):
+    from src.harness import get_runner
+    proposal=strict_recovery_proposal()
+    if malformation=='arguments':
+        proposal['branches'][1]['actions'][0]['args']['limit']='2'
+    elif malformation=='duplicate':
+        proposal['branches'][1]['actions']=deepcopy(proposal['branches'][0]['actions'])
+    elif malformation=='normalized_duplicate':
+        from src.direct_executor import _READ_ONLY_TOOLS
+        default=tool_spec('search_products',_READ_ONLY_TOOLS['search_products']).schema.model_fields['limit'].default
+        proposal['branches'][0]['actions'][0]['args']['limit']=default
+        proposal['branches'][1]['actions']=deepcopy(proposal['branches'][0]['actions'])
+        del proposal['branches'][1]['actions'][0]['args']['limit']
+    else:
+        proposal['branches'][1]['actions']=[dict(action='inspect',evidence_ref='probe-b0-0')]
+    actor=model(monkeypatch,search(first=True,query='没有匹配'),search(),recommendation)
+    planner=Script([proposal])
+    monkeypatch.setattr('src.recovery_search.get_llm',lambda **kw:planner)
+    result=get_runner('adaptive-recovery-eager-v2')('推荐预算500的耳机')
+    assert result['status']=='SUCCEEDED' and len(actor.inputs)==3 and len(planner.inputs)==1
+    invalid=next(e for e in result['events'] if e['type']=='recovery_search_completed')
+    assert invalid['status']=='INVALID' and invalid['validation_issues']
+    assert not any(e['type']=='recovery_search_probe' for e in result['events'])
+
+
+def test_gated_recovery_resumes_active_search_without_reopening_gate(monkeypatch):
+    from src.harness import get_runner
+    actor=model(monkeypatch,search(first=True,query='没有匹配'),search(query='仍无匹配'),recommendation)
+    planner=Script([strict_recovery_proposal(),recovery_selector()])
+    monkeypatch.setattr('src.recovery_search.get_llm',lambda **kw:planner)
+    runner=get_runner('adaptive-recovery-search-v2')
+    class CrashAfterProbe(RunStore):
+        def save_checkpoint(self,run_id,token,snapshot,event=None):
+            super().save_checkpoint(run_id,token,snapshot,event)
+            if event and event['type']=='recovery_search_probe':
+                raise SystemExit('探查后中断')
+    with pytest.raises(SystemExit):
+        run_conversation('推荐预算500的耳机','gated-resume',runner=runner,store=CrashAfterProbe())
+    run_id=RunStore().conversation('gated-resume')['active_run_id']
+    result=resume_run('gated-resume',run_id,runner=runner)
+    assert result['status']=='SUCCEEDED' and len(actor.inputs)==3 and len(planner.inputs)==2
+    assert len([e for e in result['events'] if e['type']=='recovery_search_gate'])==2
+    assert len([e for e in result['events'] if e['type']=='recovery_search_probe'])==2
+
+
 def test_recovery_search_selects_from_real_probes_and_completes(monkeypatch):
     from src.harness import get_registry
     actor = model(monkeypatch, search(first=True, query='没有匹配'), recommendation)
@@ -1723,9 +1798,11 @@ def test_recovery_replay_freezes_database_context_and_budget(monkeypatch):
     original_hash = fingerprint(point)
     assert point['environment']['remaining_faults'] == 0
     hashes=[]
-    for profile in ('adaptive-v1','adaptive-recovery-control-v1','adaptive-recovery-search-v1'):
-        model(monkeypatch, search(), recommendation) if profile != 'adaptive-recovery-search-v1' else model(monkeypatch, recommendation)
-        planner = Script([recovery_proposal(),recovery_selector()])
+    for profile in ('adaptive-v1','adaptive-recovery-control-v1','adaptive-recovery-search-v1',
+                    'adaptive-recovery-eager-v2','adaptive-recovery-search-v2'):
+        searching=profile in {'adaptive-recovery-search-v1','adaptive-recovery-eager-v2'}
+        model(monkeypatch,recommendation) if searching else model(monkeypatch, search(), recommendation)
+        planner = Script([strict_recovery_proposal() if profile.endswith('v2') else recovery_proposal(),recovery_selector()])
         monkeypatch.setattr('src.recovery_search.get_llm',lambda **kw:planner)
         result = replay(point,profile,source_manifest=manifest)
         assert result['passed'], result['failures']

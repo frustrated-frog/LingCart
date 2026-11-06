@@ -786,13 +786,19 @@ export interface RecoveryProbe {
 export interface RecoverySearch {
   search_id: string; status: string; chosen_branch: string | null; reason: string | null; probes: RecoveryProbe[];
 }
+export interface RecoveryGate {
+  gate_id: string; status: string; code: string; failure_count: number; threshold: number;
+}
+export interface RecoveryReplayProfile {
+  profile_id: string; display_name: string; role: 'reference' | 'control' | 'candidate' | 'unknown';
+}
 export interface RecoveryReplaySample {
   profile_id: string; case_id: string; repetition: number; origin_sha256: string; database_sha256: string;
   passed: boolean; failures: string[]; terminal_reason: string | null; tokens: number | null;
-  model_calls: number; tool_calls: number; suffix_steps: number; searches: RecoverySearch[];
+  model_calls: number; tool_calls: number; suffix_steps: number; searches: RecoverySearch[]; gates: RecoveryGate[];
   timeline: Array<{ step_id: string; tool: string; status: string; failure_kind: string | null; new_records: number }>;
 }
 export interface RecoveryReplayDetail extends RecoveryReplaySummary {
   source_revision: string | null; partial: boolean; warnings: string[]; expected_samples: number | null;
-  samples: RecoveryReplaySample[];
+  samples: RecoveryReplaySample[]; profiles: RecoveryReplayProfile[];
 }

@@ -4,13 +4,13 @@ import { GitBranch, RefreshCw, ScanLine } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { api } from '../api/client'
 import { ErrorState, LoadingState, PageHeader, STATUS_LABELS, TERMINAL_REASON_LABELS, TOOL_LABELS } from '../components/SystemUI'
-import type { RecoveryReplaySample, RecoverySearch } from '../types'
+import type { RecoveryReplayProfile, RecoveryReplaySample, RecoverySearch } from '../types'
 import '../styles/recovery-lab.css'
 
-const profiles = ['adaptive-v1', 'adaptive-recovery-control-v1', 'adaptive-recovery-search-v1']
 const names: Record<string, string> = {
   'adaptive-v1': '原始决策', 'adaptive-recovery-control-v1': '配对控制', 'adaptive-recovery-search-v1': '有界恢复搜索',
 }
+const roles = { reference: '参考策略', control: '配对控制', candidate: '研究候选', unknown: '合同身份待核实' }
 const searchStatus: Record<string, string> = {
   SELECTED: '已选择首步', ABSTAINED: '未选出方案', INVALID: '提案或选择无效', BUDGET_SKIPPED: '预算不足，跳过搜索', PARTIAL: '探查进行中',
 }
@@ -32,12 +32,20 @@ function SearchBranches({ search }: { search: RecoverySearch }) {
   </section>
 }
 
-function ReplayCard({ sample, profile }: { sample?: RecoveryReplaySample; profile: string }) {
-  return <section className={`recovery-arm ${profile === profiles[2] ? 'search-arm' : ''}`} aria-label={names[profile]}>
-    <header><span>{names[profile]}</span><small>{profile === profiles[1] ? '同样允许修正，关闭搜索' : profile === profiles[2] ? '真实探查后选择下一步' : '原始 Adaptive'}</small></header>
+function ReplayCard({ sample, profile }: { sample?: RecoveryReplaySample; profile: RecoveryReplayProfile }) {
+  const name = profile.display_name !== profile.profile_id ? profile.display_name : names[profile.profile_id] ?? profile.profile_id
+  return <section className={`recovery-arm ${profile.role === 'candidate' ? 'search-arm' : ''}`} aria-label={name}>
+    <header><span>{name}</span><small>{roles[profile.role]} · {profile.profile_id}</small></header>
     {!sample ? <p className="recovery-empty">尚无这组回放结果。</p> : <>
       <div className={`recovery-result ${sample.passed ? 'passed' : 'failed'}`}><b>{sample.passed ? '任务完成' : '任务未完成'}</b><span>{sample.tokens?.toLocaleString() ?? '未知'} Token</span></div>
       <dl className="recovery-cost"><div><dt>模型调用</dt><dd>{sample.model_calls}</dd></div><div><dt>工具调用</dt><dd>{sample.tool_calls}</dd></div><div><dt>正式步骤</dt><dd>{sample.suffix_steps}</dd></div></dl>
+      {sample.gates.length > 0 && <section className="recovery-gates" aria-label="搜索触发记录"><h3>搜索触发记录</h3>
+        <ol>{sample.gates.map(gate => <li key={gate.gate_id} className={gate.status === 'OPEN' ? 'gate-open' : 'gate-deferred'}>
+          <div><b>{gate.status === 'OPEN' ? '允许展开搜索' : gate.status === 'DEFERRED' ? '先尝试常规恢复' : gate.status}</b>
+            <span>失败 {gate.failure_count} / 阈值 {gate.threshold}</span></div>
+          <p>{gate.code === 'ORDINARY_RECOVERY_FIRST' ? '尚未达到触发阈值，本次门控不调用模型。' : gate.code === 'RECOVERY_STALLED' ? '连续失败且没有新增有效观察，继续检查搜索预算。' : gate.code}</p>
+        </li>)}</ol>
+      </section>}
       {sample.searches.map(search => <SearchBranches key={search.search_id} search={search}/>)}
       <h3>失败后的正式执行</h3>
       <ol className="recovery-timeline">{sample.timeline.map((step, i) => <li key={`${step.step_id}-${i}`} className={step.failure_kind ? 'failed-step' : ''}>
@@ -57,6 +65,7 @@ export function RecoveryLabPage() {
   const runId = list.data?.runs.find(r => r.run_id === selectedRun)?.run_id ?? list.data?.runs[0]?.run_id
   const detail = useQuery({ queryKey: ['recovery-replay', runId], queryFn: () => api.recoveryReplay(runId!), enabled: !!runId, refetchInterval: 15000 })
   const run = detail.data
+  const profiles = run?.profiles ?? []
   const points = [...new Map((run?.samples ?? []).map(s => [`${s.origin_sha256}:${s.repetition}`, s])).entries()]
   const pointId = points.find(([key]) => key === selectedPoint)?.[0] ?? points[0]?.[0]
   const samples = run?.samples.filter(s => `${s.origin_sha256}:${s.repetition}` === pointId) ?? []
@@ -75,11 +84,11 @@ export function RecoveryLabPage() {
     {run && <>
       <div className="recovery-provenance"><span>{run.execution_source === 'live_provider' ? '真实模型实验' : '测试或未知来源'}</span><code>实验源码 {run.source_revision?.slice(0, 8) ?? '未知'}</code><span>{run.status === 'COMPLETED' ? '回放已结束' : run.status === 'INVALID' ? '对照证据不完整或无效' : '部分记录'}</span></div>
       {(run.partial || detail.isRefetchError) && <p className="recovery-notice">部分证据尚不可用或刷新失败，保留已读取内容。{run.warnings.join('；')}</p>}
-      <div className="recovery-point-picker"><h2>同起点 · 三种策略</h2><label>检查点样本<select value={pointId ?? ''} onChange={e => setSelectedPoint(e.target.value)}>
+      <div className="recovery-point-picker"><h2>同起点 · 策略对照</h2><label>检查点样本<select value={pointId ?? ''} onChange={e => setSelectedPoint(e.target.value)}>
         {!points.length && <option value="">尚无后续执行</option>}{points.map(([key, sample]) => <option key={key} value={key}>{sample.case_id} · 第 {sample.repetition} 次</option>)}
       </select></label></div>
       {samples[0] ? <div className="recovery-origin"><ScanLine size={21}/><div><b>冻结的失败检查点</b><span>目标、证据、业务数据、剩余故障与前缀预算</span></div><code>{samples[0].origin_sha256.slice(0, 12)}</code></div> : <p className="recovery-empty">尚未取得可比较的回放样本；可能未遇到可恢复失败，或实验仍在执行。</p>}
-      {!!samples.length && <div className="recovery-arms">{profiles.map(profile => <ReplayCard key={profile} profile={profile} sample={samples.find(s => s.profile_id === profile)}/>)}</div>}
+      {!!samples.length && <div className="recovery-arms">{profiles.map(profile => <ReplayCard key={profile.profile_id} profile={profile} sample={samples.find(s => s.profile_id === profile.profile_id)}/>)}</div>}
       <p className="recovery-footnote">指标仅统计失败点之后，包含全部搜索探查成本。分支读取成功不代表任务完成；同起点对照仍含模型随机性。本页展示对应源码的实验记录，不自动宣布收益或晋升。</p>
     </>}
   </div>

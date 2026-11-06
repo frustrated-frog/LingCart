@@ -1,6 +1,7 @@
 """同状态回放产物的只读工程投影；不暴露数据库快照或模型输入。"""
 from pathlib import Path
 import re
+from typing import Literal
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
@@ -38,6 +39,20 @@ class Search(BaseModel):
     probes: list[Probe] = Field(default_factory=list)
 
 
+class Gate(BaseModel):
+    gate_id: str
+    status: str
+    code: str
+    failure_count: int
+    threshold: int
+
+
+class Profile(BaseModel):
+    profile_id: str
+    display_name: str
+    role: Literal['reference', 'control', 'candidate', 'unknown']
+
+
 class Sample(BaseModel):
     model_config = ConfigDict(strict=True)
     profile_id: str
@@ -53,6 +68,7 @@ class Sample(BaseModel):
     tool_calls: int
     suffix_steps: int
     searches: list[Search]
+    gates: list[Gate] = Field(default_factory=list)
     timeline: list[dict]
 
 
@@ -62,6 +78,7 @@ class Detail(Summary):
     warnings: list[str]
     expected_samples: int | None
     samples: list[Sample]
+    profiles: list[Profile] = Field(default_factory=list)
 
 
 def folder_for(run_id):
@@ -96,7 +113,9 @@ def project_sample(raw):
     return Sample(**{k:raw[k] for k in ('profile_id','case_id','repetition','origin_sha256','database_sha256','passed','failures','suffix_steps')},
         terminal_reason=result.get('terminal_reason'),tokens=(raw.get('suffix_usage') or {}).get('total_tokens'),
         model_calls=raw['suffix_budget']['model_calls'],tool_calls=raw['suffix_budget']['tool_calls'],
-        searches=list(searches.values()),timeline=timeline[-steps:] if steps else [])
+        searches=list(searches.values()),timeline=timeline[-steps:] if steps else [],
+        gates=[Gate(**{key:event[key] for key in Gate.model_fields}) for event in result.get('events',[])
+               if event.get('type')=='recovery_search_gate'])
 
 
 @router.get('',response_model=RunList)
@@ -132,6 +151,26 @@ def detail(run_id: str):
     expected=summary.get('expected_samples')
     if expected is not None and (type(expected) is not int or expected != len(samples)):
         warnings.append('尚未取得合同要求的全部回放样本')
+    profiles=[]
+    declared=contract.get('profiles',[])
+    labels=contract.get('profile_labels',{})
+    if not isinstance(declared,list) or not isinstance(labels,dict):
+        warnings.append('策略合同格式无效')
+        declared,labels=[],{}
+    for index,profile in enumerate(declared):
+        profile_id=profile.get('profile_id') if isinstance(profile,dict) else None
+        if not isinstance(profile_id,str) or any(p.profile_id==profile_id for p in profiles):
+            warnings.append('策略合同身份缺失或重复')
+            continue
+        label=labels.get(profile_id)
+        profiles.append(Profile(profile_id=profile_id,
+            display_name=label if isinstance(label,str) and label else profile_id,
+            role=('reference','control','candidate')[index] if index < 3 else 'unknown'))
+    for sample in samples:
+        if sample.profile_id not in {p.profile_id for p in profiles}:
+            warnings.append('样本策略缺少对应合同身份')
+            profiles.append(Profile(profile_id=sample.profile_id,display_name=sample.profile_id,role='unknown'))
     return Detail(run_id=run_id,status=summary.get('status','PARTIAL'),
         execution_source=contract.get('execution_source','unknown'),source_revision=contract.get('manifest',{}).get('source_revision'),
-        partial=not bool(summary) or bool(warnings),warnings=warnings,expected_samples=expected if type(expected) is int else None,samples=samples)
+        partial=not bool(summary) or bool(warnings),warnings=warnings,expected_samples=expected if type(expected) is int else None,
+        samples=samples,profiles=profiles)

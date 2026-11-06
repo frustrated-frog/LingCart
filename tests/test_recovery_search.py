@@ -90,3 +90,112 @@ def test_replay_projection_excludes_database_model_inputs_and_probe_arguments():
     assert result['searches'][0]['probes'][0]['product_records']==1
     assert result['timeline']==[{'step_id':'suffix'}]
     assert 'private-' not in json.dumps(result) and 'do-not-expose' not in json.dumps(result)
+
+
+def test_strict_probe_schema_bounds_tool_arguments_before_execution():
+    from src.recovery_search_v2 import proposal_schema
+    schema = proposal_schema(2, 1)
+    valid = dict(branches=[
+        dict(expected_observation='检索候选', actions=[dict(action='tool', tool='search_products', args={'query':'耳机'})]),
+        dict(expected_observation='读取证据', actions=[dict(action='inspect', evidence_ref='step-1')]),
+    ])
+    assert schema.model_validate(valid).branches[0].actions[0].args.query == '耳机'
+    for change in (
+        {'tool':'process_payment', 'args':{'order_id':1003}},
+        {'tool':'search_products', 'args':{'query':'耳机','invented':True}},
+        {'tool':'search_products', 'args':{'query':'耳机','limit':'2'}},
+        {'evidence_ref':'step-1'},
+    ):
+        bad=deepcopy(valid);bad['branches'][0]['actions'][0].update(change)
+        with pytest.raises(ValidationError): schema.model_validate(bad)
+    with pytest.raises(ValidationError): schema.model_validate({'branches':valid['branches'][:1]})
+    deep=deepcopy(valid);deep['branches'][0]['actions'] *= 2
+    with pytest.raises(ValidationError): schema.model_validate(deep)
+
+
+def test_gate_counts_distinct_failures_and_resets_only_on_real_progress():
+    from src.recovery_search_v2 import GatedRecoverySearchMechanism
+    from src.task_plan import TaskStep
+    policy=GatedRecoverySearchMechanism()
+    plan=TaskPlan([],[])
+    state=dict(request='原目标',goal={'summary':'原目标'},goal_revision=0,binding_revision=0,
+               model_cursor=0,feedback={'code':'TOOL_TIMEOUT'})
+    runtime=RunRuntime('gate')
+    assert not policy._admit(runtime,state,plan)
+    assert not policy._admit(runtime,state,plan)
+    assert len(state['recovery_search_gates']) == 1
+    # 新一次无效决策可以没有新增 step，也没有增加 repair_count。
+    runtime.model_cursor=1;state['model_cursor']=1
+    assert policy._admit(runtime,state,plan)
+    assert state['recovery_search_gates'][-1]['failure_count']==2
+    plan.steps.append(TaskStep('s1','shopping','search_products',{},status='SUCCEEDED',result={'products':[]}))
+    assert policy._admit(runtime,state,plan)
+    assert state['recovery_search_gates'][-1]['failure_count']==3
+    plan.steps.append(TaskStep('s2','shopping','search_products',{},status='SUCCEEDED',result={'products':[{'product_id':'P1001'}]}))
+    assert not policy._admit(runtime,state,plan)
+    repeated=deepcopy(plan.steps[-1]);repeated.step_id='s3'
+    repeated.result['observation']={'timestamp':'later','reference':'new'}
+    plan.steps.append(repeated)
+    assert policy._admit(runtime,state,plan)
+    assert state['recovery_search_gates'][-1]['failure_count']==2
+    state['goal_revision']=1
+    assert not policy._admit(runtime,state,plan)
+    assert len(runtime.events)==6
+
+
+def test_gate_checkpoint_republishes_without_counting_twice():
+    from src.recovery_search_v2 import GatedRecoverySearchMechanism
+    from src.runtime_state import new_runtime_snapshot, seal_runtime_snapshot
+    from src.errors import AgentError
+    policy=GatedRecoverySearchMechanism();plan=TaskPlan([],[])
+    state=dict(request='原目标',goal={},feedback={'code':'TOOL_TIMEOUT'},model_cursor=0)
+    runtime=RunRuntime('gate-resume',snapshot=new_runtime_snapshot('gate-resume',conversation={},history=[]))
+    policy._admit(runtime,state,plan)
+    restored=RunRuntime('gate-resume',snapshot=seal_runtime_snapshot(runtime.snapshot,'gate-resume'))
+    resumed=deepcopy(runtime.snapshot['adaptive'])
+    assert not policy._admit(restored,resumed,plan)
+    assert len(resumed['recovery_search_gates'])==1
+    with pytest.raises(ValueError): policy.configure({'failure_threshold':True})
+    with pytest.raises(ValueError): policy.configure({'failure_threshold':4})
+    with pytest.raises(AgentError,match='配置'):
+        policy.configure({'failure_threshold':1})._admit(restored,resumed,plan)
+
+
+def test_v2_replay_spec_freezes_arms_and_summary_rejects_reference_drift(capsys):
+    path='research/experiments/recovery-search-v2/smoke-spec.json'
+    assert main(['--spec',path])==0
+    assert json.loads(capsys.readouterr().out)['max_task_runs']==14
+    spec=ReplaySpec.model_validate_json(Path(path).read_text())
+    assert spec.profiles==['adaptive-recovery-control-v1','adaptive-recovery-eager-v2','adaptive-recovery-search-v2']
+    with pytest.raises(ValidationError): ReplaySpec.model_validate({**spec.model_dump(),'profiles':['adaptive-v1']*3})
+    rows=[dict(profile_id=p,origin_sha256='point',database_sha256='db',prefix_budget={'model_calls':3},
+        repetition=1,passed=True,integrity=True,changed_db_paths=[],suffix_usage={'total_tokens':100},
+        suffix_budget={'model_calls':2,'tool_calls':2},suffix_steps=2,result={'events':[]}) for p in spec.profiles]
+    result=summary(rows,expected_points=1,repeats=1,captures_complete=True,profiles=spec.profiles)
+    assert result['status']=='COMPLETED' and result['comparison']['control_profile']=='adaptive-recovery-eager-v2'
+    rows[0]['prefix_budget']['model_calls']=4
+    assert summary(rows,expected_points=1,repeats=1,captures_complete=True,profiles=spec.profiles)['status']=='INVALID'
+
+
+def test_replay_api_reads_contract_profiles_and_gate_evidence(tmp_path,monkeypatch):
+    import api
+    import src.recovery_search_api as module
+    monkeypatch.setattr(module,'ROOT',tmp_path)
+    monkeypatch.setenv('LINGCART_ENGINEERING_KEY','replay-test')
+    client=TestClient(api.app,headers={'X-Engineering-Key':'replay-test'})
+    folder=tmp_path/'v2';folder.mkdir()
+    contract={'profiles':[{'profile_id':p} for p in ['adaptive-recovery-control-v1','adaptive-recovery-eager-v2','adaptive-recovery-search-v2']],
+              'profile_labels':{'adaptive-recovery-search-v2':'按需恢复搜索'}}
+    (folder/'contract.json').write_text(json.dumps(contract))
+    gate=dict(type='recovery_search_gate',gate_id='g1',status='DEFERRED',code='ORDINARY_RECOVERY_FIRST',failure_count=1,threshold=2)
+    sample=dict(profile_id='adaptive-recovery-search-v2',case_id='R1',repetition=1,origin_sha256='same',database_sha256='same-db',
+        passed=True,failures=[],suffix_steps=1,suffix_budget={'model_calls':2,'tool_calls':3},suffix_usage={'total_tokens':100},
+        result={'events':[gate]})
+    (folder/'sample-one.json').write_text(json.dumps(sample))
+    data=client.get('/engineering/recovery-replays/v2').json()
+    assert data['partial'] and data['profiles'][2]['display_name']=='按需恢复搜索'
+    assert data['profiles'][1]['role']=='control'
+    assert data['samples'][0]['gates'][0]['status']=='DEFERRED' and not data['samples'][0]['searches']
+    (folder/'contract.json').write_text(json.dumps({'profiles':'broken'}))
+    data=client.get('/engineering/recovery-replays/v2').json()
+    assert data['partial'] and data['warnings'] and data['profiles'][0]['role']=='unknown'

@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "dataset": "eval/rrsi_recovery_tasks.json",
+  "split": "dev",
+  "case_ids": [
+    "RR-TRAIN-01",
+    "RR-TRAIN-05"
+  ],
+  "repeats": 2,
+  "max_model_calls": 16,
+  "max_seconds": 90,
+  "profiles": [
+    "adaptive-recovery-control-v1",
+    "adaptive-recovery-eager-v2",
+    "adaptive-recovery-search-v2"
+  ]
+}

@@ -139,6 +139,7 @@ export const METRIC_LABELS: Record<string, string> = {
 
 const EVENT_LABELS: Record<string, [string, string]> = {
   recovery_search_started: ['搜索', '展开恢复候选'],
+  recovery_search_gate: ['门控', '判断是否需要展开搜索'],
   recovery_search_probe: ['探查', '记录只读分支结果'],
   recovery_search_completed: ['选择', '比较恢复方案'],
   recovery_search_consumed: ['恢复', '采用所选首步'],

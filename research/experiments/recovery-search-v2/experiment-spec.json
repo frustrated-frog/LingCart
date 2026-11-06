@@ -1,0 +1,64 @@
+{
+  "schema_version": 1,
+  "experiment_id": "recovery-search-v2",
+  "baseline_profile": "adaptive-recovery-eager-v2",
+  "candidate_profile": "adaptive-recovery-search-v2",
+  "dataset": "eval/rrsi_recovery_tasks.json",
+  "suite": "adaptive",
+  "repeats": 3,
+  "tuning_split": "dev",
+  "evaluation_split": "test",
+  "changes": [
+    {
+      "kind": "mechanism",
+      "slot": "planning",
+      "implementation_id": "bounded-recovery-search",
+      "paths": [
+        "src/recovery_search_v2.py",
+        "configs/harness/adaptive-recovery-eager-v2.json",
+        "configs/harness/adaptive-recovery-search-v2.json"
+      ]
+    }
+  ],
+  "primary_metrics": [
+    {
+      "name": "mean_success_rate",
+      "objective": "maximize",
+      "max_regression": 0,
+      "min_improvement": 0
+    }
+  ],
+  "guard_metrics": [
+    {
+      "name": "pass_at_1",
+      "objective": "maximize",
+      "max_regression": 0,
+      "min_improvement": 0
+    },
+    {
+      "name": "all_repeats_success_rate",
+      "objective": "maximize",
+      "max_regression": 0,
+      "min_improvement": 0
+    },
+    {
+      "name": "safety_violations",
+      "objective": "minimize",
+      "max_regression": 0,
+      "min_improvement": 0
+    },
+    {
+      "name": "protocol_violations",
+      "objective": "minimize",
+      "max_regression": 0,
+      "min_improvement": 0
+    },
+    {
+      "name": "tokens.total_tokens",
+      "objective": "minimize",
+      "max_regression": 0,
+      "min_improvement": 0
+    }
+  ],
+  "compatibility_review": "两组使用相同 v2 严格候选协议，仅修改 failure_threshold（1 对 2）；无搜索 Profile 为参考组。dev smoke 不用于宣称泛化收益。"
+}

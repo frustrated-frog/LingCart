@@ -203,8 +203,10 @@ def built_in_mechanisms() -> tuple[HarnessMechanism, ...]:
 
     from src.rrsi_policy import RSIPolicyMechanism
     from src.recovery_search import RecoverySearchMechanism
+    from src.recovery_search_v2 import GatedRecoverySearchMechanism
     return (
         RecoverySearchMechanism(),
+        GatedRecoverySearchMechanism(),
         RSIPolicyMechanism(),
         EmbeddedMechanism("planning", "structured-dialogue-understanding", "1", ("orchestrator",),
                           ("src/orchestrator.py", "src/dialogue_understanding.py",

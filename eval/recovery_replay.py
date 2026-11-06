@@ -152,5 +152,6 @@ def replay(point, profile_id, *, source_manifest, repetition=1):
         passed=not failures, failures=failures, integrity=integrity, changed_db_paths=mutations,
         environment=fault_state, result=result, observed_tools=observed, recovery=recovery_trace(sample),
         searches=deepcopy(context.snapshot.get('adaptive', {}).get('recovery_searches', [])),
+        gates=deepcopy(context.snapshot.get('adaptive', {}).get('recovery_search_gates', [])),
         suffix_models={key:deepcopy(value) for key,value in context.models.items()
                        if int(key) > point['adaptive']['model_cursor']})
