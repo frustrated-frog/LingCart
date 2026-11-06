@@ -16,7 +16,7 @@ const reasons: Record<string, string> = {
 const failures: Record<string, string> = { empty_results: '结果为空', tool_failure: '工具失败', decision_rejected: '决策被拒绝', verification_rejected: '结果核验被拒绝' }
 const fields: Record<string, string> = { mode: '分析调用方式', trigger: '触发时机', instruction: '决策指令' }
 const values: Record<string, string> = { inline: '在原决策中分析', deliberate: '增加独立分析调用', initial: '首次理解目标', after_goal: '目标建立后', every_decision: '每次决策', all_failures: '所有失败', tool_failures: '工具失败', empty_results: '结果为空', decision_rejections: '决策被拒绝' }
-const armNames: Record<string, string> = { baseline: '原始 Agent', fixed: '固定策略', schedule_control: '相同调用策略', evolved: '演化策略', seed: '初始策略', retained: '最终保留' }
+const armNames: Record<string, string> = { baseline: '原始 Agent', fixed: '固定策略', schedule_control: '相同调用策略', evolved: '最终保留', seed: '初始策略', retained: '最终保留' }
 const pretty = (value: string) => values[value] ?? value
 const reason = (value: string) => reasons[value] ?? value
 
@@ -90,7 +90,7 @@ export function RSILabPage() {
         <GitBranch size={20}/><span><b>第 {c.round + 1} 轮 · 候选 {c.candidate + 1}</b><small>{c.selected ? '已保留' : reason(c.status)}</small></span><ArrowRight size={18}/>
       </button>)}</div>
       {candidate ? <CandidateCompare key={`${runId}-${candidate.round}-${candidate.candidate}`} candidate={candidate}/> : <p className="rsi-empty">尚无候选提案，已有记录仍可保留检查。</p>}
-      <section className="rsi-holdout"><div><span className="rsi-kicker">独立留出 / 同预算对照</span><h2>{!run.comparison ? '尚未完成留出对照' : run.comparison.status !== 'COMPLETED' ? '对照证据无效' : run.comparison.observed_improvement ? '观察到改善，等待复核' : '尚未满足收益条件'}</h2><p>一次成功不代表稳定提升；候选不会自动进入产品。</p></div>
+      <section className="rsi-holdout"><div><span className="rsi-kicker">独立留出 / 同预算对照</span><h2>{!run.comparison ? '尚未完成留出对照' : run.comparison.status !== 'COMPLETED' ? '对照证据无效' : run.comparison.observed_improvement ? '观察到改善，等待复核' : '尚未满足收益条件'}</h2><p>一次成功不代表稳定提升；候选不会自动进入产品。</p>{run.comparison?.identical_arms?.map((arms, i) => <p className="rsi-notice" key={i}>{arms.map(a => armNames[a] ?? a).join("、")}使用同一程序；这些运行的差异不能归因于策略演化。</p>)}</div>
         {run.comparison?.measurements && <table><thead><tr><th>对照版本</th><th>任务成功</th><th>重复稳定性</th><th>Token</th></tr></thead><tbody>{Object.entries(run.comparison.measurements).map(([name, m]) => <tr key={name}><td>{armNames[name] ?? name}</td><td>{(m.score*100).toFixed(0)}%</td><td>{(m.stable*100).toFixed(0)}%</td><td>{m.tokens.toLocaleString()}</td></tr>)}</tbody></table>}
       </section>
     </>}

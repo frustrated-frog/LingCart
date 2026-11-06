@@ -774,6 +774,6 @@ export interface RSIRunSummary { run_id: string; status: string; target_module: 
 export interface RSIRunDetail extends RSIRunSummary {
   source_revision: string | null; historical: boolean; execution_source: string;
   candidates: RSICandidate[]; partial: boolean; warnings: string[]; spec: Record<string, unknown>;
-  comparison: { status: string; observed_improvement: boolean; code?: string;
+  comparison: { status: string; observed_improvement: boolean; code?: string; identical_arms?: string[][];
     measurements?: Record<string, { score: number; tokens: number; stable: number }> } | null
 }

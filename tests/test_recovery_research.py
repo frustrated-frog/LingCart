@@ -130,3 +130,13 @@ def test_history_cannot_select_arbitrary_paths(client):
     (run/'evolution-report.json').write_text(json.dumps({'history':[{'round':'../../secret','candidate':0,'status':'ACCEPTED','parent_sha256':'seed'}]}))
     data=http.get('/engineering/rrsi/runs/hostile').json()
     assert data['candidates']==[] and data['partial']
+
+
+def test_api_marks_identical_arm_programs(client):
+    http,root=client
+    run=root/'same-program';run.mkdir()
+    (run/'spec.json').write_text('{}')
+    (run/'ablation-summary.json').write_text(json.dumps({'status':'COMPLETED','observed_improvement':False}))
+    (run/'ablation-contract.json').write_text(json.dumps({'arms':{'fixed':'seed','evolved':'seed','baseline':'adaptive-v1'}}))
+    data=http.get('/engineering/rrsi/runs/same-program').json()
+    assert data['comparison']['identical_arms']==[['fixed','evolved']]

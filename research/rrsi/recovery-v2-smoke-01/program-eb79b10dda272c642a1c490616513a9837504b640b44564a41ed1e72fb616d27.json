@@ -1,0 +1,1 @@
+{"planning":{"instruction":"识别所有独立目标及依赖；先明确缺失信息，再选择可验证的下一步。","mode":"inline","trigger":"initial"},"recovery":{"instruction":"先判定失败类型再行动。工具失败（如超时/无结果）：先用相同参数原样重试一次，若仍失败再调整参数或换工具，并说明改动理由。决策/校验被拒：不要盲目换参数，先回到原始目标与约束逐条核对被拒动作的输入，修正不满足的约束后再提交。任何情况下不重复已确认无效的动作，保留原始目标及约束。","mode":"inline","trigger":"all_failures"},"schema_version":1}

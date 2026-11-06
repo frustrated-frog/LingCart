@@ -37,3 +37,8 @@ it('keeps partial results inspectable',async () => {
  expect(await screen.findByText(/验证报告尚未完整写入/)).toBeInTheDocument()
  expect(screen.getByText('尚未完成留出对照')).toBeInTheDocument()
 })
+
+it('identifies duplicate programs instead of crediting evolution',async () => {
+ vi.mocked(api.rrsiRun).mockResolvedValue({...run,comparison:{status:'COMPLETED',observed_improvement:false,identical_arms:[['fixed','evolved']]}});page()
+ expect(await screen.findByText(/使用同一程序/)).toBeInTheDocument()
+})

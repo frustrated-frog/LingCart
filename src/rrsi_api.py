@@ -187,6 +187,18 @@ def detail(run_id: str):
         if item.get('program_sha256') and candidate:
             programs[item['program_sha256']] = candidate
     comparison = read(folder,'ablation-summary.json',warnings) or read(folder,'heldout-summary.json',warnings)
+    if comparison:
+        contract = read(folder,'ablation-contract.json',warnings) or {}
+        identities = contract.get('arms', {})
+        if not identities:
+            heldout = read(folder,'heldout-contract.json',warnings) or {}
+            identities = {'seed':heldout.get('baseline_program'),'retained':heldout.get('candidate_program')}
+        groups = {}
+        for arm, identity in identities.items():
+            if isinstance(identity,str):
+                groups.setdefault(identity,[]).append(arm)
+        comparison['identical_arms'] = [arms for arms in groups.values() if len(arms)>1]
+
     return RunDetail(run_id=run_id,status=evolution.get('status','PARTIAL'),target_module=spec.get('target_module'),
         source_revision=revision,historical=bool(revision and revision != current_revision),
         execution_source=evolution.get('execution_source',seed_report.get('execution_source','unknown')),
