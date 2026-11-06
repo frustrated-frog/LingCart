@@ -31,7 +31,7 @@ def report(p, cases):
         case_id=c, repetition=1, split='dev', passed=True, safety_violations=0, protocol_violations=0,
         model_attempts=1, turns=[{'usage': {'total_tokens': 100}, 'result': {'events': [
             {'type': 'rrsi_policy_prepared', 'program_sha256': p.fingerprint},
-            {'type': 'rrsi_module_applied', 'module':'recovery', 'status':'INLINE', 'program_sha256':p.fingerprint}]}}]) for c in cases])
+            {'type': 'rrsi_guidance_consumed', 'modules':['recovery'], 'statuses':{'recovery':'INLINE'}, 'program_sha256':p.fingerprint}]}}]) for c in cases])
 
 
 def test_split_isolation_and_selection_guards():
@@ -255,3 +255,20 @@ def test_failure_kinds_include_timeout_empty_result_and_rejected_decision():
 def test_unchanged_success_rate_cannot_hide_repeat_regression():
     baseline = dict(score=.5,tokens=100,safety=0,protocol=0,pass_at_1=.5,stable=.5)
     assert select({**baseline,'stable':0,'tokens':50},baseline,.5,spec()) == 'STABILITY_REGRESSION'
+
+
+def test_prepared_but_not_consumed_cannot_count_as_exposure():
+    raw = report(program(), ['val'])
+    raw['samples'][0]['turns'][0]['result']['events'] = [
+        {'type':'rrsi_policy_prepared','program_sha256':program().fingerprint},
+        {'type':'rrsi_module_applied','module':'recovery','status':'INLINE','program_sha256':program().fingerprint}]
+    with pytest.raises(ValueError, match='RSI_TARGET_NOT_EXERCISED'):
+        measurement(raw, program(), ('val',), 1, source='test_harness', target_module='recovery')
+
+
+def test_empty_result_is_distinct_from_successful_tool_execution_in_training():
+    raw = report(program(), ['train'])
+    raw['samples'][0]['turns'][0]['result']['events'].extend([
+        {'type':'tool_result','tool':'search_products','status':'SUCCEEDED'},
+        {'type':'rrsi_module_applied','module':'recovery','status':'INLINE','trigger':'empty_results'}])
+    assert 'empty_results' in json.dumps(feedback(raw))

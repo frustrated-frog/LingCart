@@ -828,7 +828,7 @@ def _run(context, user_message, history, pending_action):
                         _maybe_resolve_catalog_bindings(context, recorder, state, plan, history)
                         planning = context.mechanisms.get('planning')
                         if planning is not None and hasattr(planning, 'prepare'):
-                            planning.prepare(context, state, plan)
+                            planning.prepare(context, state, plan, history)
                             state['model_cursor'] = context.model_cursor
                             _save(context, state, plan)
                         decision = decide(context, state, plan, history)

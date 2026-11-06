@@ -117,7 +117,7 @@ class RSIPolicyMechanism(EmbeddedMechanism):
                     implementation_sha256=source_fingerprint(files), source_files=list(files),
                     configuration=dict(program_path=self.program_path, program_sha256=self.program_sha256))
 
-    def prepare(self, context, state, plan):
+    def prepare(self, context, state, plan, history=None):
         program = self.program()
         binding = state_binding(state, plan, program)
         saved = state.get('rrsi_guidance')
@@ -144,7 +144,7 @@ class RSIPolicyMechanism(EmbeddedMechanism):
                 from src.context_engine import ContextEngine
                 engine = context.context_engine or ContextEngine(state['request'])
                 messages, _ = engine.decision_messages(prompt + '\n分析策略：' + policy.instruction,
-                    state, plan, [], max_chars=context.limits.max_context_chars)
+                    state, plan, history, max_chars=context.limits.max_context_chars)
                 response = context.model_call(model, messages, purpose=f'rrsi_{module}', agent='shopping', allow_tools=False)
                 try:
                     if getattr(response, 'tool_calls', []):

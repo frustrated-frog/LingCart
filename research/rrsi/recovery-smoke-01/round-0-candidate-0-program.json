@@ -1,0 +1,1 @@
+{"planning":{"instruction":"识别所有独立目标及依赖；先明确缺失信息，再选择可验证的下一步。","mode":"inline","trigger":"initial"},"recovery":{"instruction":"仅在工具调用失败时介入：读取错误信息，判断是参数、工具选择还是前置条件问题；据此换参数或换工具重试一次，仍失败则改用替代路径，且始终保留原始目标与约束。","mode":"inline","trigger":"tool_failures"},"schema_version":1}

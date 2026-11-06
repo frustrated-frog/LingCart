@@ -1599,3 +1599,4 @@ def test_rrsi_recovery_is_consumed_by_real_decision_loop(monkeypatch):
     assert result['plan']['verification'].get('all_goals_satisfied') is not True
     assert result['harness']['research']['status'] == 'candidate'
     assert any('根据失败观察修订下一步' in prompt for prompt in prompts)
+    assert any(e['type'] == 'rrsi_guidance_consumed' and 'recovery' in e['modules'] for e in result['events'])

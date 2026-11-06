@@ -1,0 +1,1 @@
+{"baseline_program":"c29990bf3105bce287f58e68e5abb518f62d0bb9e87e3b99ca16a658d6a43c2f","candidate_program":"c29990bf3105bce287f58e68e5abb518f62d0bb9e87e3b99ca16a658d6a43c2f","cases":["PG13"],"max_stability_regression":0,"max_success_regression":0,"max_token_regression":0.05,"promotion":"manual_review_required","repeats":1,"source":"live_provider"}

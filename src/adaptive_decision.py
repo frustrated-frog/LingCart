@@ -454,6 +454,11 @@ def decide(context, state, plan, history):
         model = model.json_mode()
     response = context.model_call(model, messages,
         purpose='adaptive_decision', agent='shopping', allow_tools=native and not initial, schemas=schema)
+    if planning is not None and hasattr(planning, 'decision_guidance') and planning.decision_guidance(state, plan):
+        guidance = state['rrsi_guidance']
+        context.record('rrsi_guidance_consumed', program_sha256=guidance['program_sha256'],
+                       binding=guidance['binding'], modules=[m['module'] for m in guidance['modules']],
+                       statuses={m['module']: m['status'] for m in guidance['modules']})
     try:
         if native:
             from src.native_protocol import decode_decisions

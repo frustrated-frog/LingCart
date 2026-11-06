@@ -65,6 +65,7 @@ def main(argv=None):
                 repetition=sample['repetition'], passed=sample['passed'])), flush=True))
     retained, report = evolve(seed, spec, evaluator=evaluator, proposer=ModelProposer(spec.target_module), output_dir=output,
         on_progress=lambda label: print(json.dumps(dict(stage=label)), flush=True))
+    heldout_valid = True
     if report['status'] == 'COMPLETED':
         write_artifact(output / 'retained-profile.json', profiles[retained.fingerprint].model_dump(mode='json'))
     if report['status'] == 'COMPLETED' and args.heldout:
@@ -92,10 +93,11 @@ def main(argv=None):
             result = dict(status='COMPLETED', measurements=comparisons, observed_improvement=improved,
                           promotion_status='candidate', note='小样本对照不能自动晋升或宣称稳定泛化收益')
         except ValueError as error:
+            heldout_valid = False
             result = dict(status='INVALID', code=str(error) if str(error).startswith('RSI_') else 'RSI_HELDOUT_INVALID')
         write_artifact(output / 'heldout-summary.json', result)
     print(json.dumps(report, ensure_ascii=False, indent=2))
-    return 0 if report['status'] == 'COMPLETED' else 1
+    return 0 if report['status'] == 'COMPLETED' and heldout_valid else 1
 
 
 if __name__ == '__main__':

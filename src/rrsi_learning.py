@@ -140,8 +140,9 @@ def measurement(report, program, cases, repeats, *, split='dev', source='live_pr
             raise ValueError('RSI_COUNTER_INVALID')
         outcomes.setdefault(sample['case_id'], []).append((sample['repetition'], sample['passed']))
         events = [e for t in sample.get('turns', []) for e in t.get('result', {}).get('events', [])]
-        exposures.update(e['module'] for e in events if e.get('type') == 'rrsi_module_applied'
-                         and e.get('program_sha256') == program.fingerprint and e.get('status') in {'INLINE', 'ANALYZED'})
+        exposures.update(module for e in events if e.get('type') == 'rrsi_guidance_consumed'
+                         and e.get('program_sha256') == program.fingerprint
+                         for module in e.get('modules', []) if e.get('statuses', {}).get(module) in {'INLINE', 'ANALYZED'})
         if not any(e.get('type') == 'rrsi_policy_prepared' and e.get('program_sha256') == program.fingerprint for e in events):
             raise ValueError('RSI_PROGRAM_NOT_EXERCISED')
         if source == 'live_provider' and not any(e.get('type') == 'model_call' and e.get('status') == 'SUCCEEDED' for e in events):
@@ -169,9 +170,9 @@ def feedback(report):
         trajectory = []
         for event in events:
             if event.get('type') not in {'adaptive_decision', 'decision_rejected', 'tool_result',
-                                        'step_completed', 'rrsi_module_applied'}:
+                                        'step_completed', 'rrsi_module_applied', 'rrsi_guidance_consumed'}:
                 continue
-            row = {k: event[k] for k in ('type', 'tool', 'code', 'status', 'module', 'mode') if k in event}
+            row = {k: event[k] for k in ('type', 'tool', 'code', 'status', 'module', 'mode', 'trigger', 'modules') if k in event}
             if event['type'] == 'adaptive_decision':
                 row.update({k: event['decision'][k] for k in ('action', 'tool') if k in event.get('decision', {})})
             trajectory.append(row)
