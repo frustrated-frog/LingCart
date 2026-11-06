@@ -54,6 +54,15 @@ function renderPage() {
 
 beforeEach(() => vi.restoreAllMocks())
 
+it('opens the capability planning tab using the server projection', async () => {
+  vi.spyOn(api, 'runs').mockResolvedValue({ runs: [summary] })
+  vi.spyOn(api, 'run').mockResolvedValue({ ...detail,
+    capability_planning: { status: 'EMPTY', history: [], stale: false, invalid_records: 0 } })
+  renderPage()
+  fireEvent.click(await screen.findByRole('tab', { name: '能力规划' }))
+  expect(screen.getByRole('status')).toHaveTextContent('该运行尚无能力规划记录')
+})
+
 describe('RunsPage LivePlan evidence', () => {
   it('shows persisted monitor evidence, advice and precommit rejection', async () => {
     vi.spyOn(api, 'runs').mockResolvedValue({ runs: [summary] })

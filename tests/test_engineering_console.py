@@ -38,6 +38,8 @@ def test_dataset_view_model_reports_real_case_and_split_counts():
     assert datasets["offline-core-v1"]["case_count"] == 60
     assert datasets["live-support-v1"]["splits"] == {"dev": 10, "test": 10}
     assert datasets["adaptive-agent-v1"]["turn_count"] == 21
+    assert datasets["cgap-dependencies-v1"]["case_count"] == 8
+    assert datasets["cgap-dependencies-v1"]["splits"] == {"dev": 3, "test": 5}
 
 
 def test_experiment_view_does_not_invent_a_comparable_report(monkeypatch, tmp_path):

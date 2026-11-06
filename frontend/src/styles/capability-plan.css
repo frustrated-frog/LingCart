@@ -1,0 +1,38 @@
+.capability-panel { border: 1px solid var(--line); border-radius: 12px; background: var(--surface); overflow: hidden; }
+.capability-heading { display: flex; justify-content: space-between; align-items: center; gap: 24px; padding: 24px; }
+.capability-kicker { display: flex; align-items: center; gap: 7px; color: var(--blue); font-size: 11px; font-weight: 650; }
+.capability-heading h3 { margin: 10px 0 7px; font-size: 21px; font-weight: 600; letter-spacing: -.04em; }
+.capability-heading p { margin: 0; color: var(--muted); font-size: 12px; }
+.capability-heading label { display: grid; gap: 7px; min-width: 260px; color: var(--muted); font-size: 11px; }
+.capability-workspace { display: grid; grid-template-columns: 245px minmax(0, 1fr); border-block: 1px solid var(--line); }
+.capability-facts { padding: 20px; background: var(--surface); border-right: 1px solid var(--line); max-height: 560px; overflow: auto; }
+.capability-facts h4 { display: flex; align-items: center; gap: 7px; margin: 0 0 18px; font-size: 12px; }
+.capability-facts p { color: var(--muted); font-size: 11px; line-height: 1.8; }
+.capability-fact { margin: 0 0 12px; padding-left: 11px; border-left: 2px solid var(--teal); }
+.capability-fact strong { display: block; font-size: 12px; font-weight: 550; }
+.capability-fact span { display: block; margin-top: 6px; font: 10px var(--mono); color: var(--muted); overflow-wrap: anywhere; }
+.capability-footnote { margin-top: 25px; }
+.capability-canvas { overflow: auto; max-height: 560px; background-color: #f5f7fb; background-image: radial-gradient(#cbd3df .7px, transparent .7px); background-size: 16px 16px; }
+.capability-map { position: relative; }
+.capability-map > svg { position: absolute; inset: 0; pointer-events: none; }
+.capability-map > svg path { fill: none; stroke: #8d9db9; stroke-width: 1.6; }
+.capability-node { position: absolute; width: 224px; height: 98px; padding: 13px 15px; text-align: left; border: 1px solid var(--line-strong); border-radius: 9px; color: var(--ink); background: var(--surface); box-shadow: 0 3px 10px #17203308; cursor: pointer; }
+.capability-node > span { display: flex; align-items: center; justify-content: space-between; color: var(--muted); font-size: 10px; }
+.capability-node strong { display: block; margin: 9px 0 6px; font-size: 14px; font-weight: 600; }
+.capability-node small { color: var(--muted); font: 10px var(--mono); }
+.capability-node.ready { border-left: 3px solid var(--teal); }
+.capability-node.needs_arguments { border-left: 3px solid var(--violet); }
+.capability-node.planned { border-style: dashed; }
+.capability-node[aria-pressed="true"] { outline: 2px solid var(--blue); outline-offset: 3px; }
+.capability-node:focus-visible, .capability-canvas:focus-visible { outline: 3px solid var(--blue); outline-offset: -3px; }
+.capability-no-plan { min-height: 220px; display: grid; align-content: center; justify-items: center; gap: 12px; padding: 30px; color: var(--muted); }
+.capability-no-plan strong { font-size: 14px; color: var(--ink-2); }
+.capability-no-plan p { margin: 0; text-align: center; font-size: 12px; }
+.capability-inspector { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 24px; padding: 22px 24px; }
+.capability-inspector > div { display: grid; align-content: start; gap: 9px; min-width: 0; font-size: 12px; line-height: 1.7; }
+.capability-inspector small { color: var(--muted); font-size: 10px; }
+.capability-inspector strong { font-weight: 550; }
+.capability-inspector code { font-size: 10px; color: var(--blue); }
+.capability-notice { margin: 0 24px 18px; padding: 12px 14px; background: var(--amber-soft); color: #82500f; border-radius: 5px; font-size: 12px; line-height: 1.7; }
+.capability-delegated { padding: 0 24px; color: var(--ink-2); font-size: 12px; line-height: 1.8; }
+.capability-footer { display: flex; justify-content: space-between; gap: 16px; padding: 14px 24px; border-top: 1px solid var(--line); color: var(--muted); font-size: 10px; }

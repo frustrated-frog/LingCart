@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { api } from '../api/client'
 import { ResultArtifactViews } from '../components/CatalogResultView'
+import { CapabilityPlanPanel } from '../components/CapabilityPlanPanel'
 import type { RunDetail } from '../types'
 import {
   DefinitionGrid,
@@ -23,7 +24,7 @@ import {
   ViewTransition,
 } from '../components/SystemUI'
 
-type Tab = 'result' | 'evidence' | 'steering' | 'pg' | 'tools' | 'raw'
+type Tab = 'result' | 'capability' | 'evidence' | 'steering' | 'pg' | 'tools' | 'raw'
 
 export function RunsPage({ businessMode = false }: { businessMode?: boolean }) {
   const { runId } = useParams()
@@ -97,10 +98,11 @@ export function RunsPage({ businessMode = false }: { businessMode?: boolean }) {
           </ViewTransition>}
           <SegmentedTabs value={tab} onChange={(value) => setTab(value as Tab)} layoutId="run-detail-tab"
             items={
-              [['result', '结果与计划'], ['evidence', '上下文与证据'], ['steering', '在线监控与纠偏'], ['pg', '程序图指导'], ['tools', '工具账本'], ['raw', '原始记录']]
+              [['result', '结果与计划'], ['capability', '能力规划'], ['evidence', '上下文与证据'], ['steering', '在线监控与纠偏'], ['pg', '程序图指导'], ['tools', '工具账本'], ['raw', '原始记录']]
             } />
           <ViewTransition viewKey={tab} className="tab-panel">
             {tab === 'result' && <ResultTab detail={detail} />}
+            {tab === 'capability' && <CapabilityPlanPanel key={detail.run_id} projection={detail.capability_planning} />}
             {tab === 'evidence' && <EvidenceTab detail={detail} />}
             {tab === 'steering' && <SteeringTab detail={detail} />}
             {tab === 'pg' && <ProceduralGraphTab detail={detail} />}

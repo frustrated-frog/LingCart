@@ -84,6 +84,7 @@ export const CAPABILITY_LABELS: Record<string, string> = {
   deterministic_intake: '确定性请求接入', open_set_dialogue_understanding: '开放集对话理解',
   multi_objective_planning: '多目标规划', durable_runtime: '持久化运行时', approval_guard: '审批保护',
   tool_ledger: '工具调用账本', model_directed_planning: '模型驱动规划', bounded_replanning: '有界重规划',
+  capability_dependency_search: '工具能力依赖搜索', observation_driven_replanning: '观察驱动重规划',
   evidence_retrieval: '证据检索', objective_first_context: '目标证据优先上下文',
   ace_frozen_playbook: 'ACE 冻结策略手册', offline_experience_learning: '离线经验学习',
   procedural_graph_guidance: '程序图情境指导', offline_graph_evolution: '离线程序图演化',
@@ -102,6 +103,7 @@ export const CAPABILITY_LABELS: Record<string, string> = {
 export const MECHANISM_LABELS: Record<string, string> = {
   'structured-dialogue-understanding': '结构化对话理解', 'runtime-tool-ledger': '运行时工具账本',
   'deterministic-business-gates': '确定性业务门禁', 'bounded-model-loop': '有界模型循环',
+  'capability-grounded-planning': '能力驱动动态规划',
   'evidence-reference-context': '证据引用上下文', 'objective-first-context': '目标证据优先上下文',
   'ace-playbook-context': 'ACE 策略手册上下文', 'objective-ledger': '目标账本',
   'independent-request-audit': '独立请求审查', 'native-strict-tools': '原生严格工具协议',
@@ -161,6 +163,7 @@ const EVENT_LABELS: Record<string, [string, string]> = {
   audit_protocol_retry: ['审查', '重试审查协议'], audit_invalidated: ['审查', '审查结果失效'],
   control_applied: ['控制', '运行时调整'], plan_replanned: ['重规划', '完成重规划'],
   replan_requested: ['重规划', '请求重规划'], adaptive_decision: ['决策', '自主决策'],
+  capability_plan_updated: ['规划', '更新工具能力依赖'],
   decision_rejected: ['决策', '拒绝无效决策'], approval_required: ['审批', '需要用户确认'],
   context_compacted: ['上下文', '压缩上下文'], evidence_context: ['证据', '装配证据上下文'],
   pg_guidance: ['程序图', '生成程序图情境指导'],

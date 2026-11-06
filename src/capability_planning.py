@@ -120,6 +120,7 @@ def compile_problem(state, plan, contracts, tools):
             facts.setdefault(fact('catalog', 'comparison:' + digest(ids)[:16]), []).append(step.step_id)
 
     goals, delegated, action_map = [], [], {}
+    verified = {row['objective_id'] for row in state.get('objective_ledger', []) if row['status'] == 'VERIFIED'}
     for objective in (state.get('goal') or {}).get('objectives', []):
         kind, oid = objective['kind'], objective['id']
         if kind not in TARGETS:
@@ -131,7 +132,7 @@ def compile_problem(state, plan, contracts, tools):
         if kind == 'compare_products' and objective.get('product_ids'):
             target = 'comparison:' + digest(sorted(objective['product_ids']))[:16]
         goals.append(fact(scope, target))
-        if kind == 'recommend':
+        if kind == 'recommend' and oid not in verified:
             delegated.append(oid)
         for contract in available.values():
             if contract.scope != scope.split(':')[0]:
@@ -204,7 +205,7 @@ class CapabilityPlanningMechanism(EmbeddedMechanism):
         previous = state.get('capability_plan') or {}
         identity = digest(dict(goal=state['goal'], goal_revision=state['goal_revision'],
             catalog=catalog_sha, facts=facts, nodes=[n.model_dump() for n in nodes], missing=missing,
-            status=status, steps=[(s.step_id, s.status, s.error) for s in plan.steps]))
+            status=status, delegated=delegated, steps=[(s.step_id, s.status, s.error) for s in plan.steps]))
         if previous.get('plan_id') == identity:
             return previous
         reason = ('目标已更新，重新建立依赖' if previous and previous['goal_revision'] != state['goal_revision'] else

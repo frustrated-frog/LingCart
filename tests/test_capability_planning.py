@@ -175,6 +175,9 @@ def test_cgap_runs_real_tools_and_completes_through_existing_audit(monkeypatch):
     assert any(e['type'] == 'adaptive_decision' and e['source'] == 'capability_planner' for e in result['events'])
     assert result['plan']['verification']['all_goals_satisfied']
     assert any('capability_plan' in p for p in script.inputs)
+    final_plan = [e for e in result['events'] if e['type'] == 'capability_plan_updated'][-1]
+    assert final_plan['status'] == 'OBSERVATIONS_READY'
+    assert not final_plan['delegated_objectives']
 
 
 def test_plan_projection_reports_empty_partial_and_stale_without_inventing_state():

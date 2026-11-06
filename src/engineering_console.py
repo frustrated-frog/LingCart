@@ -42,6 +42,7 @@ CATEGORY_LABELS = {
     "stock_change": "库存变化", "steering": "运行时调整", "combined_constraints": "组合约束",
     "multiple_products": "多商品", "two_categories": "跨品类", "conflict": "约束冲突",
     "numeric_constraint": "数值约束", "multi_turn": "多轮任务",
+    "capability_dependencies": "工具能力依赖",
 }
 
 
@@ -143,6 +144,8 @@ def dataset_catalog(*, include_cases: bool = True) -> list[dict]:
          "覆盖自主规划、证据读取、目标核验、重规划与运行时调整的专项任务。"),
         ("pg-challenges-v1", "PG 程序图挑战集", "eval/pg_challenge_tasks.json", "adaptive", "live",
          "18 个独立情境族；训练、验证、测试各 6 项，覆盖恢复、依赖、多目标与环境变化。"),
+        ("cgap-dependencies-v1", "CGAP 能力依赖任务集", "eval/cgap_tasks.json", "adaptive", "live",
+         "8 项复合消费任务；开发集 3 项、留出集 5 项，比较跨工具依赖与观察复用，尚未产生真实模型对照结论。"),
     )
     datasets = []
     for dataset_id, display_name, relative_path, suite, execution_source, description in definitions:
