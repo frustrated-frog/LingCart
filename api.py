@@ -435,6 +435,7 @@ def engineering_runs(limit: int = Query(100, ge=1, le=500), status: str | None =
 def engineering_run(run_id: str):
     from src.engineering_console import run_detail
     from src.session_control import ControlStore
+    from src.capability_planning import project_capability_planning
 
     detail = run_detail(run_id)
     if detail is None:
@@ -448,6 +449,7 @@ def engineering_run(run_id: str):
         'tool_ledger': RunStore().outcomes(run_id) if saved else [],
         'commands': ControlStore().commands(saved['session_id'], run_id) if saved else [],
         'trace_projection': project_trace(events),
+        'capability_planning': project_capability_planning(events, (saved or {}).get('checkpoint', {})),
     }
 
 

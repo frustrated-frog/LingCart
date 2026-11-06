@@ -117,6 +117,7 @@ def test_engineering_run_detail_is_session_independent_but_contains_runtime_evid
     assert payload['profile']['profile_id'] == 'adaptive-v1'
     assert payload['event_count'] == len(payload['result']['events'])
     assert payload['trace_projection']['integrity']['sequential'] is True
+    assert payload['capability_planning'] == {'status': 'EMPTY', 'history': [], 'stale': False, 'invalid_records': 0}
     assert client.get('/engineering/runs/missing').status_code == 404
 
 

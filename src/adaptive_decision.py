@@ -424,6 +424,13 @@ def decide(context, state, plan, history):
         if max_chars < 1:
             from src.context_budget import ContextBudgetError
             raise ContextBudgetError()
+    if not initial and state.get('capability_plan'):
+        prompt += ('\nCAPABILITY_PLAN is a runtime dependency plan, not factual evidence or task completion. '
+                   'Choose currently applicable tools; bind concrete arguments from the user or observations. '
+                   'NEEDS_ARGUMENTS requires your grounded parameters; future nodes are predictions. '
+                   'Empty results do not establish output facts. '
+                   'After observations are ready, inspect evidence and deliver every objective through the existing '
+                   'recommend/complete protocol. For missing capabilities clarify or finish honestly.')
     messages, manifest = engine.decision_messages(prompt, state, plan, history, max_chars=max_chars)
     surface = None
     if not initial:

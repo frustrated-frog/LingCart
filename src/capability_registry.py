@@ -16,6 +16,7 @@ from types import MappingProxyType
 from typing import Callable, Mapping
 
 from src import tools
+from src.capability_planner import CapabilityContract
 from src.catalog_metadata import CATALOG_FACETS_DEPENDENCY, CatalogMetadataProvider, CatalogMetadataSnapshot
 from src.catalog_query import CATALOG_QUERY_OPERATION, compile_catalog_query, query_catalog
 from src.errors import AgentError
@@ -207,10 +208,20 @@ class CapabilityRegistration:
     tools: Mapping[str, object] = field(default_factory=dict)
     normalizer: Normalizer | None = None
     operations: Mapping[str, OperationContract] = field(default_factory=dict)
+    planning_contracts: tuple[CapabilityContract, ...] = ()
 
 
 class CapabilityRegistry:
     """Explicit, inspectable registry used by understanding and execution."""
+
+    def planning_contracts(self):
+        """仅返回当前已注册工具的声明式规划契约；不执行能力编译器。"""
+        from src.capability_planning import built_in_contracts
+        contracts = {c.tool: c for c in built_in_contracts() if c.tool in self._tools}
+        for registration in self._registrations.values():
+            for contract in registration.planning_contracts:
+                contracts[contract.tool] = contract
+        return tuple(contracts.values())
 
     def __init__(
         self,
@@ -226,6 +237,9 @@ class CapabilityRegistry:
             self.register(registration)
 
     def register(self, registration: CapabilityRegistration) -> None:
+        if any(c.tool not in {*registration.tools, *registration.operations}
+               for c in registration.planning_contracts):
+            raise ValueError('规划契约必须绑定同一注册项中的真实工具')
         kind = registration.spec.objective_kind
         if not kind or kind in self._registrations:
             raise ValueError(f"Capability objective kind is missing or duplicated: {kind}")

@@ -180,11 +180,50 @@ export interface RunDetail extends RunSummary {
   checkpoint: Record<string, unknown>
   tool_ledger: Array<Record<string, unknown>>
   commands: Array<Record<string, unknown>>
+  capability_planning?: CapabilityPlanningProjection
   trace_projection: {
     integrity: Record<string, unknown>
     summary: Record<string, unknown>
     timeline: Array<Record<string, unknown>>
   }
+}
+
+export interface CapabilityPlanNode {
+  action_id: string
+  tool: string
+  scope: string
+  objective_ids: string[]
+  requires: string[]
+  provides: string[]
+  depends_on: string[]
+  evidence_refs: string[]
+  status: 'READY' | 'PLANNED' | 'NEEDS_ARGUMENTS'
+  automatic: boolean
+}
+
+export interface CapabilityPlanView {
+  schema_version: 1
+  plan_id: string
+  catalog_sha256: string
+  goal_revision: number
+  revision: number
+  previous_plan_id: string | null
+  status: 'READY' | 'NEEDS_MODEL' | 'OBSERVATIONS_READY' | 'PARTIAL' | 'UNREACHABLE' | 'SEARCH_LIMIT'
+  reason: string
+  nodes: CapabilityPlanNode[]
+  facts: Record<string, string[]>
+  missing: string[]
+  delegated_objectives: string[]
+  objective_labels: Record<string, string>
+  expanded: number
+  completion_verified: false
+}
+
+export interface CapabilityPlanningProjection {
+  status: 'READY' | 'EMPTY' | 'PARTIAL'
+  history: CapabilityPlanView[]
+  stale: boolean
+  invalid_records: number
 }
 
 export interface EngineeringOverview {

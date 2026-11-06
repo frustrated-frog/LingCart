@@ -1,0 +1,54 @@
+{
+  "schema_version": 1,
+  "profile_id": "adaptive-cgap-v1",
+  "version": "1.0.0",
+  "display_name": "能力驱动动态规划 · CGAP",
+  "description": "从工具语义契约搜索只读依赖，按真实观察滚动重规划；商品参数与最终交付由模型处理。",
+  "engine": {
+    "id": "adaptive",
+    "version": "1"
+  },
+  "mechanisms": [
+    {
+      "slot": "planning",
+      "id": "capability-grounded-planning",
+      "version": "1"
+    },
+    {
+      "slot": "context",
+      "id": "evidence-reference-context",
+      "version": "1"
+    },
+    {
+      "slot": "memory",
+      "id": "objective-ledger",
+      "version": "1"
+    },
+    {
+      "slot": "verification",
+      "id": "independent-request-audit",
+      "version": "2"
+    },
+    {
+      "slot": "tool_protocol",
+      "id": "native-strict-tools",
+      "version": "1"
+    }
+  ],
+  "capabilities": [
+    "model_directed_planning",
+    "bounded_replanning",
+    "evidence_retrieval",
+    "goal_verification",
+    "durable_resume",
+    "runtime_steering",
+    "capability_dependency_search",
+    "observation_driven_replanning"
+  ],
+  "research": {
+    "status": "candidate",
+    "source_type": "paper",
+    "paper_id": "arxiv:2610.41040",
+    "hypothesis": "能力依赖搜索能减少缺失前置观察与重复调用，改善复合任务执行。"
+  }
+}

@@ -1,0 +1,383 @@
+{
+  "schema_version": 1,
+  "suite": "adaptive",
+  "description": "CGAP 能力规划冻结任务集；只按最终目标判分，不要求特定行动顺序；开发集3项，留出集5项。",
+  "split_counts": {
+    "dev": 3,
+    "test": 5
+  },
+  "cases": [
+    {
+      "id": "CGAP-D1",
+      "split": "dev",
+      "category": "capability_dependencies",
+      "language": "zh",
+      "description": "推荐预算500的耳机，同时查询订单1001详情和退款资格",
+      "turns": [
+        {
+          "message": "推荐预算500的耳机，同时查询订单1001详情和退款资格",
+          "expect": {
+            "statuses": [
+              "SUCCEEDED"
+            ],
+            "forbidden_tools": [
+              "process_payment",
+              "initiate_refund"
+            ]
+          }
+        }
+      ],
+      "adaptive_expect": {
+        "objectives": [
+          {
+            "kind": "recommend"
+          },
+          {
+            "kind": "get_order_details",
+            "order_id": 1001
+          },
+          {
+            "kind": "check_refund_eligibility",
+            "order_id": 1001
+          }
+        ],
+        "product_constraints": [
+          {
+            "description": "价格不超过500元",
+            "source_quote": "500",
+            "field": "price",
+            "op": "lte",
+            "value": 500
+          }
+        ]
+      }
+    },
+    {
+      "id": "CGAP-D2",
+      "split": "dev",
+      "category": "capability_dependencies",
+      "language": "zh",
+      "description": "推荐预算500的耳机，分别查订单1002和1003的退款资格",
+      "turns": [
+        {
+          "message": "推荐预算500的耳机，分别查订单1002和1003的退款资格",
+          "expect": {
+            "statuses": [
+              "SUCCEEDED"
+            ],
+            "forbidden_tools": [
+              "process_payment",
+              "initiate_refund"
+            ]
+          }
+        }
+      ],
+      "adaptive_expect": {
+        "objectives": [
+          {
+            "kind": "recommend"
+          },
+          {
+            "kind": "check_refund_eligibility",
+            "order_id": 1002
+          },
+          {
+            "kind": "check_refund_eligibility",
+            "order_id": 1003
+          }
+        ],
+        "product_constraints": [
+          {
+            "description": "价格不超过500元",
+            "source_quote": "500",
+            "field": "price",
+            "op": "lte",
+            "value": 500
+          }
+        ]
+      }
+    },
+    {
+      "id": "CGAP-D3",
+      "split": "dev",
+      "category": "capability_dependencies",
+      "language": "zh",
+      "description": "推荐预算500的耳机，并查询订单1004的物流和当前状态",
+      "turns": [
+        {
+          "message": "推荐预算500的耳机，并查询订单1004的物流和当前状态",
+          "expect": {
+            "statuses": [
+              "SUCCEEDED"
+            ],
+            "forbidden_tools": [
+              "process_payment",
+              "initiate_refund"
+            ]
+          }
+        }
+      ],
+      "adaptive_expect": {
+        "objectives": [
+          {
+            "kind": "recommend"
+          },
+          {
+            "kind": "track_shipment",
+            "order_id": 1004
+          },
+          {
+            "kind": "get_order_status",
+            "order_id": 1004
+          }
+        ],
+        "product_constraints": [
+          {
+            "description": "价格不超过500元",
+            "source_quote": "500",
+            "field": "price",
+            "op": "lte",
+            "value": 500
+          }
+        ]
+      }
+    },
+    {
+      "id": "CGAP-H1",
+      "split": "test",
+      "category": "capability_dependencies",
+      "language": "zh",
+      "description": "查订单1006的详情及退款资格，再推荐一款500元以内的耳机；只提供查询结果",
+      "turns": [
+        {
+          "message": "查订单1006的详情及退款资格，再推荐一款500元以内的耳机；只提供查询结果",
+          "expect": {
+            "statuses": [
+              "SUCCEEDED"
+            ],
+            "forbidden_tools": [
+              "process_payment",
+              "initiate_refund"
+            ]
+          }
+        }
+      ],
+      "adaptive_expect": {
+        "objectives": [
+          {
+            "kind": "recommend"
+          },
+          {
+            "kind": "get_order_details",
+            "order_id": 1006
+          },
+          {
+            "kind": "check_refund_eligibility",
+            "order_id": 1006
+          }
+        ],
+        "product_constraints": [
+          {
+            "description": "价格不超过500元",
+            "source_quote": "500",
+            "field": "price",
+            "op": "lte",
+            "value": 500
+          }
+        ]
+      }
+    },
+    {
+      "id": "CGAP-H2",
+      "split": "test",
+      "category": "capability_dependencies",
+      "language": "zh",
+      "description": "推荐预算500的耳机，同时分别判断订单1007和1009是否符合退款条件",
+      "turns": [
+        {
+          "message": "推荐预算500的耳机，同时分别判断订单1007和1009是否符合退款条件",
+          "expect": {
+            "statuses": [
+              "SUCCEEDED"
+            ],
+            "forbidden_tools": [
+              "process_payment",
+              "initiate_refund"
+            ]
+          }
+        }
+      ],
+      "adaptive_expect": {
+        "objectives": [
+          {
+            "kind": "recommend"
+          },
+          {
+            "kind": "check_refund_eligibility",
+            "order_id": 1007
+          },
+          {
+            "kind": "check_refund_eligibility",
+            "order_id": 1009
+          }
+        ],
+        "product_constraints": [
+          {
+            "description": "价格不超过500元",
+            "source_quote": "500",
+            "field": "price",
+            "op": "lte",
+            "value": 500
+          }
+        ]
+      }
+    },
+    {
+      "id": "CGAP-H3",
+      "split": "test",
+      "category": "capability_dependencies",
+      "language": "zh",
+      "description": "推荐预算500的耳机；查询订单1008的支付状态和订单1010的详情",
+      "turns": [
+        {
+          "message": "推荐预算500的耳机；查询订单1008的支付状态和订单1010的详情",
+          "expect": {
+            "statuses": [
+              "SUCCEEDED"
+            ],
+            "forbidden_tools": [
+              "process_payment",
+              "initiate_refund"
+            ]
+          }
+        }
+      ],
+      "adaptive_expect": {
+        "objectives": [
+          {
+            "kind": "recommend"
+          },
+          {
+            "kind": "get_payment_status",
+            "order_id": 1008
+          },
+          {
+            "kind": "get_order_details",
+            "order_id": 1010
+          }
+        ],
+        "product_constraints": [
+          {
+            "description": "价格不超过500元",
+            "source_quote": "500",
+            "field": "price",
+            "op": "lte",
+            "value": 500
+          }
+        ]
+      }
+    },
+    {
+      "id": "CGAP-H4",
+      "split": "test",
+      "category": "capability_dependencies",
+      "language": "zh",
+      "description": "请查订单1006的物流、状态和退款资格，另外推荐一款500元内的耳机",
+      "turns": [
+        {
+          "message": "请查订单1006的物流、状态和退款资格，另外推荐一款500元内的耳机",
+          "expect": {
+            "statuses": [
+              "SUCCEEDED"
+            ],
+            "forbidden_tools": [
+              "process_payment",
+              "initiate_refund"
+            ]
+          }
+        }
+      ],
+      "adaptive_expect": {
+        "objectives": [
+          {
+            "kind": "recommend"
+          },
+          {
+            "kind": "track_shipment",
+            "order_id": 1006
+          },
+          {
+            "kind": "get_order_status",
+            "order_id": 1006
+          },
+          {
+            "kind": "check_refund_eligibility",
+            "order_id": 1006
+          }
+        ],
+        "product_constraints": [
+          {
+            "description": "价格不超过500元",
+            "source_quote": "500",
+            "field": "price",
+            "op": "lte",
+            "value": 500
+          }
+        ]
+      }
+    },
+    {
+      "id": "CGAP-H5",
+      "split": "test",
+      "category": "capability_dependencies",
+      "language": "zh",
+      "description": "给我推荐预算500的耳机，并分别列出订单1009与1010的详情和退款资格",
+      "turns": [
+        {
+          "message": "给我推荐预算500的耳机，并分别列出订单1009与1010的详情和退款资格",
+          "expect": {
+            "statuses": [
+              "SUCCEEDED"
+            ],
+            "forbidden_tools": [
+              "process_payment",
+              "initiate_refund"
+            ]
+          }
+        }
+      ],
+      "adaptive_expect": {
+        "objectives": [
+          {
+            "kind": "recommend"
+          },
+          {
+            "kind": "get_order_details",
+            "order_id": 1009
+          },
+          {
+            "kind": "check_refund_eligibility",
+            "order_id": 1009
+          },
+          {
+            "kind": "get_order_details",
+            "order_id": 1010
+          },
+          {
+            "kind": "check_refund_eligibility",
+            "order_id": 1010
+          }
+        ],
+        "product_constraints": [
+          {
+            "description": "价格不超过500元",
+            "source_quote": "500",
+            "field": "price",
+            "op": "lte",
+            "value": 500
+          }
+        ]
+      }
+    }
+  ]
+}

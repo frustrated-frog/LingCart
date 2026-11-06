@@ -200,6 +200,7 @@ def built_in_mechanisms() -> tuple[HarnessMechanism, ...]:
 
     from src.liveplan import LivePlanSteeringMechanism
     from src.pg_context import PGContextMechanism
+    from src.capability_planning import CapabilityPlanningMechanism
 
     return (
         EmbeddedMechanism("planning", "structured-dialogue-understanding", "1", ("orchestrator",),
@@ -215,6 +216,7 @@ def built_in_mechanisms() -> tuple[HarnessMechanism, ...]:
                            "src/after_sales/actions.py", "src/after_sales/policy.py", "src/tools.py")),
         EmbeddedMechanism("planning", "bounded-model-loop", "1", ("adaptive",),
                           ("src/adaptive.py", "src/adaptive_decision.py")),
+        CapabilityPlanningMechanism(),
         ContextMechanism("context", "evidence-reference-context", "1", ("adaptive",),
                          ("src/context_engine.py", "src/harness/mechanisms.py"), "recent-first"),
         ContextMechanism("context", "objective-first-context", "1", ("adaptive",),

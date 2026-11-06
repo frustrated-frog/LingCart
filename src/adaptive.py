@@ -308,6 +308,9 @@ def _present(context, recorder, intake, state, plan, *, reason, message, error=N
     success = plan.verification['all_goals_satisfied']
     if not success and state.get('objective_ledger'):
         message += '\n\n' + outcome_report(state, plan)
+    planning = context.mechanisms.get('planning')
+    if planning is not None and hasattr(planning, 'refresh'):
+        planning.refresh(context, state, plan)
     _save(context, state, plan)
     recorder.record('verification', **plan.verification)
     trace = [dict(run_id=context.run_id, agent='shopping', tool=e['tool'], args=e.get('args', {}),
@@ -452,7 +455,8 @@ def _normalize_goal_catalog_aliases(goal, request, history):
     return payload, provenance
 
 
-def _accept(context, recorder, state, plan, decision, history, *, validated_tool=None, pg_review=None):
+def _accept(context, recorder, state, plan, decision, history, *, validated_tool=None, pg_review=None,
+            decision_source='model'):
     if state['goal'] is None:
         if decision.goal is None:
             if decision.action in {'clarify', 'respond', 'handoff', 'unsupported'}:
@@ -530,6 +534,9 @@ def _accept(context, recorder, state, plan, decision, history, *, validated_tool
                                      else _validate_tool(decision, state, plan, history))
         step = TaskStep(f'step-{len(plan.steps) + 1}', 'shopping', decision.tool, args,
                         argument_provenance=argument_provenance)
+        planning = context.mechanisms.get('planning')
+        if planning is not None and hasattr(planning, 'bind_step'):
+            planning.bind_step(state, plan, step)
         if argument_provenance:
             recorder.record('tool_arguments_normalized', tool=decision.tool,
                 raw_args=deepcopy(decision.args), normalized_args=deepcopy(args),
@@ -557,7 +564,7 @@ def _accept(context, recorder, state, plan, decision, history, *, validated_tool
     state['model_cursor'] = context.model_cursor
     state['feedback'] = None
     _save(context, state, plan)
-    recorder.record('adaptive_decision', source='model', decision=decision.model_dump(),
+    recorder.record('adaptive_decision', source=decision_source, decision=decision.model_dump(),
                     goal_revision=state['goal_revision'], step_id=step.step_id if step else None,
                     native_submission=state.get('active_native_submission'),
                     pg_review_id=(pg_review or {}).get('review_id'),
@@ -793,6 +800,7 @@ def _run(context, user_message, history, pending_action):
                          native_queue=[], active_native_submission=None,
                          liveplan=None,
                          version=state['version'] + 1)
+            state['capability_step_floor'] = len(plan.steps)
             plan.goals = []
             plan.verification = {}
             _save(context, state, plan)
@@ -820,7 +828,16 @@ def _run(context, user_message, history, pending_action):
             if state['pending'] is None:
                 try:
                     _apply_liveplan(context, state, plan)
-                    if state.get('native_queue'):
+                    planning = context.mechanisms.get('planning')
+                    planned = (planning.next_decision(context, state, plan)
+                               if planning is not None and hasattr(planning, 'next_decision') else None)
+                    decision_source = 'capability_planner' if planned else 'model'
+                    if planning is not None and hasattr(planning, 'refresh'):
+                        _save(context, state, plan)
+                    if planned is not None:
+                        _discard_native_queue(context, state, 'CAPABILITY_PLAN_UPDATED')
+                        decision = planned
+                    elif state.get('native_queue'):
                         queued = state['native_queue'].pop(0)
                         decision = Decision.model_validate(queued['decision'])
                         state['active_native_submission'] = queued['submission']
@@ -848,11 +865,12 @@ def _run(context, user_message, history, pending_action):
                     if pg_review and pg_review.get('blocked'):
                         continue
                     _accept(context, recorder, state, plan, decision, history,
-                            validated_tool=validated_tool, pg_review=pg_review)
+                            validated_tool=validated_tool, pg_review=pg_review, decision_source=decision_source)
                     apply_controls(context)
                 except AgentError as error:
                     if error.code in {'MODEL_FORMAT_ERROR', 'UNKNOWN_TOOL', 'INVALID_TOOL_ARGUMENTS', 'REQUEST_AUDIT_REJECTED', 'AUDIT_FORMAT_ERROR',
-                                      'INVALID_CONSTRAINT_BINDING', 'UNREAD_BINDING_EVIDENCE', 'UNOBSERVED_BINDING_FIELD', 'BINDING_AUDIT_REJECTED'}:
+                                      'INVALID_CONSTRAINT_BINDING', 'UNREAD_BINDING_EVIDENCE', 'UNOBSERVED_BINDING_FIELD', 'BINDING_AUDIT_REJECTED',
+                                      'CAPABILITY_PRECONDITION_MISSING', 'CAPABILITY_INPUT_MISSING', 'CAPABILITY_INPUT_UNGROUNDED'}:
                         _repair(context, recorder, state, plan, error)
                         continue
                     if error.code not in {'UNREAD_RECOMMENDATION_EVIDENCE', 'INVALID_RECOMMENDATION_OBJECTIVE', 'BINDING_ALREADY_CURRENT'}:
