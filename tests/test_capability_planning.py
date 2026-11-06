@@ -106,6 +106,15 @@ def test_goal_revision_does_not_reuse_old_observations():
     assert problem(state, [order_step()])[1] == {}
 
 
+def test_old_plan_is_not_injected_into_new_intent_understanding():
+    import json
+    from src.context_engine import ContextEngine
+    state = dict(request='更换任务', goal=None, goal_revision=1, next_steps=None,
+                 capability_plan={'goal_revision': 0, 'nodes': [{'tool': 'get_order_details'}]})
+    messages, _ = ContextEngine('更换任务').decision_messages('理解目标', state, TaskPlan([], []), [], max_chars=32000)
+    assert 'capability_plan' not in json.loads(messages[-1].content)
+
+
 def test_precommit_check_blocks_missing_dependency_and_links_actual_evidence():
     mechanism = CapabilityPlanningMechanism()
     state = state_for(order_objective())

@@ -126,7 +126,9 @@ class ContextEngine:
             guidance = steering.guidance(state)
             if guidance:
                 payload['runtime_guidance'] = guidance
-        if state.get('capability_plan') and not (state.get('feedback') or {}).get('audit_phase'):
+        if (state.get('goal') and state.get('capability_plan')
+                and state['capability_plan'].get('goal_revision') == state['goal_revision']
+                and not (state.get('feedback') or {}).get('audit_phase')):
             payload['capability_plan'] = deepcopy(state['capability_plan'])
         if state.get('constraint_bindings') and not (state.get('feedback') or {}).get('audit_phase'):
             from src.constraint_bindings import effective_goal
