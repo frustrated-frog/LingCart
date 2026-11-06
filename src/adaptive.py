@@ -819,6 +819,9 @@ def _run(context, user_message, history, pending_action):
             context.require()
             if state['pending'] is None:
                 try:
+                    if state.get('feedback'):
+                        # 显式研究回放可在已提交失败边界采集；普通运行没有此回调。
+                        context.hooks.emit(context, 'recovery_checkpoint', {'adaptive': state})
                     _apply_liveplan(context, state, plan)
                     if state.get('native_queue'):
                         queued = state['native_queue'].pop(0)
@@ -831,7 +834,10 @@ def _run(context, user_message, history, pending_action):
                             planning.prepare(context, state, plan, history)
                             state['model_cursor'] = context.model_cursor
                             _save(context, state, plan)
-                        decision = decide(context, state, plan, history)
+                        decision = (planning.choose(context, state, plan)
+                                    if planning is not None and hasattr(planning, 'choose') else None)
+                        if decision is None:
+                            decision = decide(context, state, plan, history)
                     # 插话也使审查中的旧目标失效，执行任何动作前再次检查。
                     apply_controls(context)
                     if _review_liveplan_candidate(context, recorder, state, plan, decision):
@@ -856,6 +862,9 @@ def _run(context, user_message, history, pending_action):
                             validated_tool=validated_tool, pg_review=pg_review)
                     apply_controls(context)
                 except AgentError as error:
+                    if error.code in getattr(context.mechanisms.get('planning'), 'recoverable_decision_codes', ()):
+                        _repair(context, recorder, state, plan, error)
+                        continue
                     if error.code in {'MODEL_FORMAT_ERROR', 'UNKNOWN_TOOL', 'INVALID_TOOL_ARGUMENTS', 'REQUEST_AUDIT_REJECTED', 'AUDIT_FORMAT_ERROR',
                                       'INVALID_CONSTRAINT_BINDING', 'UNREAD_BINDING_EVIDENCE', 'UNOBSERVED_BINDING_FIELD', 'BINDING_AUDIT_REJECTED'}:
                         _repair(context, recorder, state, plan, error)

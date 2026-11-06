@@ -145,6 +145,8 @@ function query(params: Record<string, string | number | boolean | undefined | nu
 export const api = {
   rrsiRuns: () => request<{ runs: import('../types').RSIRunSummary[] }>('/engineering/rrsi/runs'),
   rrsiRun: (id: string) => request<import('../types').RSIRunDetail>(`/engineering/rrsi/runs/${encodeURIComponent(id)}`),
+  recoveryReplays: () => request<{ runs: import('../types').RecoveryReplaySummary[] }>('/engineering/recovery-replays'),
+  recoveryReplay: (id: string) => request<import('../types').RecoveryReplayDetail>(`/engineering/recovery-replays/${encodeURIComponent(id)}`),
   pgCatalog: () => request<PGCatalog>('/engineering/pg/catalog'),
   pgJobs: () => request<{ jobs: PGJobSummary[] }>('/engineering/pg/jobs'),
   pgJob: (id: string) => request<PGJob>(`/engineering/pg/jobs/${encodeURIComponent(id)}`),

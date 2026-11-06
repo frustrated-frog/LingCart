@@ -1614,3 +1614,190 @@ def test_recovery_faults_flow_through_actual_adaptive_runtime(monkeypatch, kind)
     assert any(e['type']=='rrsi_guidance_consumed' and 'recovery' in e['modules'] for e in result['events'])
     assert result['budget']['consumed']['model_calls'] <= result['budget']['limits']['max_model_calls']
     assert not any(e.get('tool') in {'process_payment','initiate_refund'} for e in result['events'])
+
+
+def recovery_proposal():
+    return dict(branches=[
+        dict(branch_id='b0', expected_observation='检索词能否匹配', actions=[dict(action='tool', tool='search_products', args=dict(query='不存在的型号', category='耳机', limit=2))]),
+        dict(branch_id='b1', expected_observation='读取品类候选', actions=[dict(action='tool', tool='search_products', args=dict(query='', category='耳机', limit=2))]),
+    ])
+
+
+def recovery_selector():
+    return dict(branch_id='b1', reason='该分支实际读到了商品，继续原目标', observation_refs=['probe-b1-0'])
+
+
+def test_recovery_search_selects_from_real_probes_and_completes(monkeypatch):
+    from src.harness import get_registry
+    actor = model(monkeypatch, search(first=True, query='没有匹配'), recommendation)
+    planner = Script([recovery_proposal(), recovery_selector()])
+    monkeypatch.setattr('src.recovery_search.get_llm', lambda **kw: planner)
+    result = get_registry().resolve('adaptive-recovery-search-v1')('推荐预算500的耳机')
+    assert result['status'] == 'SUCCEEDED'
+    assert len(actor.inputs) == 2 and len(planner.inputs) == 2
+    assert len([e for e in result['events'] if e['type'] == 'recovery_search_probe']) == 2
+    assert any(e['type'] == 'recovery_search_consumed' and e['branch_id'] == 'b1' for e in result['events'])
+    assert all(not s['step_id'].startswith('probe-') for s in result['plan']['steps'])
+    assert result['budget']['consumed']['tool_calls'] >= 5
+
+
+def test_recovery_search_rejects_write_probe_without_calling_it(monkeypatch):
+    from src.harness import get_registry
+    proposal = recovery_proposal()
+    proposal['branches'][0]['actions'] = [dict(action='tool',tool='process_payment',args=dict(order_id=1003))]
+    model(monkeypatch, search(first=True, query='没有匹配'), recommendation)
+    monkeypatch.setattr('src.recovery_search.get_llm', lambda **kw: Script([]))
+    planner = Script([proposal, recovery_selector()])
+    monkeypatch.setattr('src.recovery_search.get_llm', lambda **kw: planner)
+    result = get_registry().resolve('adaptive-recovery-search-v1')('推荐预算500的耳机')
+    assert result['status'] == 'SUCCEEDED'
+    probes = [e for e in result['events'] if e['type'] == 'recovery_search_probe']
+    assert probes[0]['code'] == 'UNKNOWN_TOOL'
+    assert not any(e.get('tool') == 'process_payment' for e in result['events'])
+
+
+def test_recovery_search_invalid_selection_falls_back_without_fake_progress(monkeypatch):
+    from src.harness import get_registry
+    model(monkeypatch, search(first=True, query='没有匹配'), search(), recommendation)
+    planner = Script([recovery_proposal(), dict(branch_id='b9',reason='无效',observation_refs=['probe-b1-0'])])
+    monkeypatch.setattr('src.recovery_search.get_llm', lambda **kw: planner)
+    result = get_registry().resolve('adaptive-recovery-search-v1')('推荐预算500的耳机')
+    assert result['status'] == 'SUCCEEDED'
+    assert any(e['type'] == 'recovery_search_completed' and e['status'] == 'INVALID' for e in result['events'])
+    assert not any(e['type'] == 'recovery_search_consumed' for e in result['events'])
+
+
+def test_recovery_search_reserves_budget_for_original_decision(monkeypatch):
+    from dataclasses import replace
+    from src.harness import get_registry
+    model(monkeypatch, search(first=True, query='没有匹配'), clarification)
+    monkeypatch.setattr('src.recovery_search.get_llm', lambda **kw: pytest.fail('预算不足不展开搜索'))
+    result = get_registry().resolve('adaptive-recovery-search-v1')('推荐预算500的耳机', limits=replace(BudgetLimits.adaptive(),max_model_calls=4))
+    assert any(e['type'] == 'recovery_search_completed' and e['status'] == 'BUDGET_SKIPPED' for e in result['events'])
+    assert result['terminal_reason'] == 'MODEL_CLARIFICATION'
+
+
+def test_recovery_search_resumes_saved_probes(monkeypatch):
+    from src.harness import get_registry
+    actor = model(monkeypatch, search(first=True, query='没有匹配'), recommendation)
+    planner = Script([recovery_proposal(), recovery_selector()])
+    monkeypatch.setattr('src.recovery_search.get_llm', lambda **kw: planner)
+    runner = get_registry().resolve('adaptive-recovery-search-v1')
+    class CrashAfterProbe(RunStore):
+        def save_checkpoint(self, run_id, token, snapshot, event=None):
+            super().save_checkpoint(run_id, token, snapshot, event)
+            if event and event['type'] == 'recovery_search_probe':
+                raise SystemExit('模拟探查已提交后中断')
+    with pytest.raises(SystemExit):
+        run_conversation('推荐预算500的耳机','recovery-search-resume',runner=runner,store=CrashAfterProbe())
+    run_id = RunStore().conversation('recovery-search-resume')['active_run_id']
+    result = resume_run('recovery-search-resume',run_id,runner=runner)
+    assert result['status'] == 'SUCCEEDED'
+    assert len(planner.inputs) == 2 and len(actor.inputs) == 2
+    assert len([e for e in result['events'] if e['type'] == 'recovery_search_probe']) == 2
+
+
+def test_recovery_control_has_same_repair_eligibility_without_search():
+    from src.harness import get_registry
+    search_policy = get_registry().resolve('adaptive-recovery-search-v1').mechanisms['planning']
+    control = get_registry().resolve('adaptive-recovery-control-v1').mechanisms['planning']
+    assert control.recoverable_decision_codes == search_policy.recoverable_decision_codes
+    assert control.max_searches == 0
+
+
+def replay_case(kind='tool_timeout'):
+    case = json.loads(Path('eval/rrsi_recovery_tasks.json').read_text())['cases'][0]
+    case['turns'][0]['message'] = '推荐预算500的耳机'
+    case['scenario'] = dict(kind=kind)
+    return case
+
+
+def test_recovery_replay_freezes_database_context_and_budget(monkeypatch):
+    from eval.recovery_replay import capture_case, replay
+    from src.procedural_graph import fingerprint
+    model(monkeypatch, search(first=True))
+    manifest = dict(source_tree_sha256='test-source',dataset_sha256='test-dataset',dependency_lock_sha256='test-lock',purpose_models={})
+    point = capture_case(replay_case(), BudgetLimits.adaptive(), source_manifest=manifest)['point']
+    original_hash = fingerprint(point)
+    assert point['environment']['remaining_faults'] == 0
+    hashes=[]
+    for profile in ('adaptive-v1','adaptive-recovery-control-v1','adaptive-recovery-search-v1'):
+        model(monkeypatch, search(), recommendation) if profile != 'adaptive-recovery-search-v1' else model(monkeypatch, recommendation)
+        planner = Script([recovery_proposal(),recovery_selector()])
+        monkeypatch.setattr('src.recovery_search.get_llm',lambda **kw:planner)
+        result = replay(point,profile,source_manifest=manifest)
+        assert result['passed'], result['failures']
+        assert result['prefix_budget'] == point['budget']
+        assert not result['changed_db_paths'] and result['integrity']
+        assert result['result']['budget']['consumed']['model_calls'] == point['budget']['model_calls'] + result['suffix_budget']['model_calls']
+        assert all(e['run_id'] != point['origin_run_id'] for e in result['result']['events'])
+        hashes.append((result['origin_sha256'],result['database_sha256']))
+    assert len(set(hashes)) == 1 and fingerprint(point) == original_hash
+
+
+def test_recovery_replay_preserves_remaining_failures_in_each_arm(monkeypatch):
+    from eval.recovery_replay import capture_case, replay
+    model(monkeypatch,search(first=True))
+    manifest = dict(source_tree_sha256='test-source')
+    point = capture_case(replay_case('repeated_tool_failure'),BudgetLimits.adaptive(),source_manifest=manifest)['point']
+    assert point['environment']['remaining_faults'] == 2
+    for _ in range(2):
+        model(monkeypatch,search(),search(),recommendation)
+        result = replay(point,'adaptive-recovery-control-v1',source_manifest=manifest)
+        assert result['passed'], result['failures']
+        assert len(result['environment']['faults']) == 2
+        assert result['environment']['remaining_faults'] == 0
+
+
+def test_recovery_replay_rejects_modified_point_and_environment(monkeypatch):
+    from eval.recovery_replay import capture_case, replay
+    model(monkeypatch,search(first=True))
+    manifest = dict(source_tree_sha256='test-source')
+    point = capture_case(replay_case(),BudgetLimits.adaptive(),source_manifest=manifest)['point']
+    with pytest.raises(ValueError,match='ENVIRONMENT_CHANGED'):
+        replay(point,'adaptive-v1',source_manifest=dict(source_tree_sha256='different'))
+    point['adaptive']['request'] = '篡改原始任务'
+    with pytest.raises(ValueError,match='POINT_CORRUPT'):
+        replay(point,'adaptive-v1',source_manifest=manifest)
+
+
+def test_recovery_capture_never_fabricates_missing_checkpoint(monkeypatch):
+    from eval.recovery_replay import capture_case
+    case = replay_case(); case.pop('scenario')
+    model(monkeypatch,search(first=True),recommendation)
+    result = capture_case(case,BudgetLimits.adaptive(),source_manifest={})
+    assert result['status'] == 'NOT_CAPTURED' and 'point' not in result
+
+
+def test_recovery_search_reuses_model_result_after_selection_crash(monkeypatch):
+    from src.harness import get_registry
+    model(monkeypatch,search(first=True,query='没有匹配'),recommendation)
+    planner=Script([recovery_proposal(),recovery_selector()])
+    monkeypatch.setattr('src.recovery_search.get_llm',lambda **kw:planner)
+    runner=get_registry().resolve('adaptive-recovery-search-v1')
+    class CrashAfterSelectionModel(RunStore):
+        def save_checkpoint(self,run_id,token,snapshot,event=None):
+            super().save_checkpoint(run_id,token,snapshot,event)
+            if event and event['type']=='model_call' and event.get('purpose')=='recovery_search_select':
+                raise SystemExit('模拟选择响应落盘后中断')
+    with pytest.raises(SystemExit):
+        run_conversation('推荐预算500的耳机','search-model-resume',runner=runner,store=CrashAfterSelectionModel())
+    run_id=RunStore().conversation('search-model-resume')['active_run_id']
+    result=resume_run('search-model-resume',run_id,runner=runner)
+    assert result['status']=='SUCCEEDED'
+    assert len(planner.inputs)==2
+    assert any(e['type']=='model_reused' and e.get('purpose')=='recovery_search_select' for e in result['events'])
+
+
+def test_recovery_search_probe_ledger_is_scoped_to_each_search(monkeypatch):
+    from src.harness import get_registry
+    first=recovery_proposal()
+    first['branches'][1]['actions'][0]['args']['query']='仍然没有匹配'
+    planner=Script([first,recovery_selector(),recovery_proposal(),recovery_selector()])
+    model(monkeypatch,search(first=True,query='没有匹配'),recommendation)
+    monkeypatch.setattr('src.recovery_search.get_llm',lambda **kw:planner)
+    result=get_registry().resolve('adaptive-recovery-search-v1')('推荐预算500的耳机')
+    assert result['status']=='SUCCEEDED'
+    probes=[e for e in result['events'] if e['type']=='recovery_search_probe']
+    assert len(probes)==4 and len({e['search_id'] for e in probes})==2
+    assert not probes[1]['step']['result']['products'] and probes[3]['step']['result']['products']

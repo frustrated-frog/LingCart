@@ -638,6 +638,8 @@ from src.pg_api import router as pg_router
 app.include_router(pg_router)
 from src.rrsi_api import router as rrsi_router
 app.include_router(rrsi_router)
+from src.recovery_search_api import router as recovery_search_router
+app.include_router(recovery_search_router)
 
 
 # A production build is served by FastAPI so deployment has one process and

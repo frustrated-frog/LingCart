@@ -1,0 +1,72 @@
+{
+  "schema_version": 1,
+  "experiment_id": "recovery-search-v1",
+  "baseline_profile": "adaptive-recovery-control-v1",
+  "candidate_profile": "adaptive-recovery-search-v1",
+  "dataset": "eval/rrsi_recovery_tasks.json",
+  "suite": "adaptive",
+  "repeats": 3,
+  "tuning_split": "dev",
+  "evaluation_split": "test",
+  "changes": [
+    {
+      "kind": "mechanism",
+      "slot": "planning",
+      "implementation_id": "bounded-recovery-search",
+      "paths": [
+        "src/recovery_search.py",
+        "configs/harness/adaptive-recovery-search-v1.json",
+        "configs/harness/adaptive-recovery-control-v1.json"
+      ]
+    },
+    {
+      "kind": "runtime",
+      "paths": [
+        "src/adaptive.py",
+        "src/context_engine.py",
+        "src/harness/mechanisms.py"
+      ]
+    }
+  ],
+  "primary_metrics": [
+    {
+      "name": "mean_success_rate",
+      "objective": "maximize",
+      "max_regression": 0,
+      "min_improvement": 0
+    }
+  ],
+  "guard_metrics": [
+    {
+      "name": "pass_at_1",
+      "objective": "maximize",
+      "max_regression": 0,
+      "min_improvement": 0
+    },
+    {
+      "name": "all_repeats_success_rate",
+      "objective": "maximize",
+      "max_regression": 0,
+      "min_improvement": 0
+    },
+    {
+      "name": "safety_violations",
+      "objective": "minimize",
+      "max_regression": 0,
+      "min_improvement": 0
+    },
+    {
+      "name": "protocol_violations",
+      "objective": "minimize",
+      "max_regression": 0,
+      "min_improvement": 0
+    },
+    {
+      "name": "tokens.total_tokens",
+      "objective": "minimize",
+      "max_regression": 0,
+      "min_improvement": 0
+    }
+  ],
+  "compatibility_review": "同一源码下配对控制与搜索拥有相同错误修正资格；搜索为唯一主要变量。原始 Agent 仅作第三组参考；回放口径以 replay-spec 与运行前冻结的 contract.json 为准。"
+}

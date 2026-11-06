@@ -777,3 +777,22 @@ export interface RSIRunDetail extends RSIRunSummary {
   comparison: { status: string; observed_improvement: boolean; code?: string; identical_arms?: string[][];
     measurements?: Record<string, { score: number; tokens: number; stable: number }> } | null
 }
+
+export interface RecoveryReplaySummary { run_id: string; status: string; execution_source: string }
+export interface RecoveryProbe {
+  branch_id: string; probe_id: string; status: string; tool: string | null;
+  code: string | null; product_records: number | null;
+}
+export interface RecoverySearch {
+  search_id: string; status: string; chosen_branch: string | null; reason: string | null; probes: RecoveryProbe[];
+}
+export interface RecoveryReplaySample {
+  profile_id: string; case_id: string; repetition: number; origin_sha256: string; database_sha256: string;
+  passed: boolean; failures: string[]; terminal_reason: string | null; tokens: number | null;
+  model_calls: number; tool_calls: number; suffix_steps: number; searches: RecoverySearch[];
+  timeline: Array<{ step_id: string; tool: string; status: string; failure_kind: string | null; new_records: number }>;
+}
+export interface RecoveryReplayDetail extends RecoveryReplaySummary {
+  source_revision: string | null; partial: boolean; warnings: string[]; expected_samples: number | null;
+  samples: RecoveryReplaySample[];
+}

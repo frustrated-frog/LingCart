@@ -6,15 +6,21 @@ from src.errors import AgentError
 
 
 @contextmanager
-def recovery_fault(kind, state):
+def recovery_fault(kind, state, *, remaining_faults=None):
     import src.adaptive as adaptive
     import src.direct_executor as direct
     from src.runtime import ToolSpec, tool_spec, current_runtime
     remaining = 4 if kind == 'repeated_tool_failure' else 2 if kind == 'tool_timeout' else 1
+    if remaining_faults is not None:
+        if type(remaining_faults) is not int or not 0 <= remaining_faults <= remaining:
+            raise ValueError('剩余故障次数无效')
+        remaining = remaining_faults
+    state['remaining_faults'] = remaining
     state['faults'] = []
     def inject(code, tool):
         nonlocal remaining
         remaining -= 1
+        state['remaining_faults'] = remaining
         state['fired'] = True
         state['faults'].append(dict(code=code, tool=tool))
         runtime = current_runtime()

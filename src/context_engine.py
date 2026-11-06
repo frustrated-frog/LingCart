@@ -15,7 +15,7 @@ class HookDecision:
 
 
 class LifecycleHooks:
-    STAGES = {'before_model', 'before_tool', 'after_tool', 'verify'}
+    STAGES = {'before_model', 'before_tool', 'after_tool', 'verify', 'recovery_checkpoint'}
     def __init__(self):
         self._hooks = {stage: [] for stage in self.STAGES}
 

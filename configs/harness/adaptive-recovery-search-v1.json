@@ -1,0 +1,57 @@
+{
+  "schema_version": 1,
+  "profile_id": "adaptive-recovery-search-v1",
+  "version": "1.0.0",
+  "display_name": "有界恢复搜索候选",
+  "description": "失败点只读探查和同状态回放；尚无真实收益结论。",
+  "engine": {
+    "id": "adaptive",
+    "version": "1"
+  },
+  "mechanisms": [
+    {
+      "slot": "planning",
+      "id": "bounded-recovery-search",
+      "version": "1",
+      "configuration": {
+        "max_branches": 2,
+        "max_depth": 1,
+        "max_searches": 2
+      }
+    },
+    {
+      "slot": "context",
+      "id": "evidence-reference-context",
+      "version": "1"
+    },
+    {
+      "slot": "memory",
+      "id": "objective-ledger",
+      "version": "1"
+    },
+    {
+      "slot": "verification",
+      "id": "independent-request-audit",
+      "version": "2"
+    },
+    {
+      "slot": "tool_protocol",
+      "id": "native-strict-tools",
+      "version": "1"
+    }
+  ],
+  "capabilities": [
+    "model_directed_planning",
+    "bounded_replanning",
+    "evidence_retrieval",
+    "goal_verification",
+    "durable_resume",
+    "runtime_steering"
+  ],
+  "research": {
+    "status": "candidate",
+    "source_type": "paper",
+    "paper_id": "arXiv:2310.04406",
+    "hypothesis": "在相同预算与相同错误修正资格下，有界真实探查可能改善失败后的行动选择。"
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "dataset": "eval/rrsi_recovery_tasks.json",
+  "split": "test",
+  "case_ids": [
+    "RR-TEST-01",
+    "RR-TEST-02",
+    "RR-TEST-03",
+    "RR-TEST-04",
+    "RR-TEST-05"
+  ],
+  "repeats": 3,
+  "max_model_calls": 16,
+  "max_seconds": 90
+}

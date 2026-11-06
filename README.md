@@ -243,3 +243,5 @@ docker run --rm -p 8000:8000 -e LLM_API_KEY=your_key lingcart
 运行 `venv/bin/python -m eval.run_rrsi_eval` 只校验冻结配置。真实演化需显式 `--live`，留出对照需 `--heldout`。它是 RRSI 的受限 Harness 适配，尚未证明稳定泛化收益，也不是任意代码或模型权重自修改。详见 [设计与运行说明](docs/规划与失败恢复自进化设计.md)。
 
 恢复专项任务与四组消融对照见 [失败恢复专项评测与演化对比页](docs/失败恢复专项评测与演化对比页.md)。Web 的 `/experiments/rsi` 可读取已保存的真实演化记录，查看同任务父子轨迹、策略差异和拒绝原因；界面不会自动启动计费实验。
+
+有界恢复搜索与同起点策略比较见 [有界恢复搜索与同状态回放设计](docs/有界恢复搜索与同状态回放设计.md)。`venv/bin/python -m eval.run_recovery_replay` 默认仅校验；显式 `--live` 才从隔离任务采集失败检查点并运行三组对照。
