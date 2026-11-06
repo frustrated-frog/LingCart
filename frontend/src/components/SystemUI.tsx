@@ -76,7 +76,7 @@ export const TOOL_LABELS: Record<string, string> = {
   prepare_after_sales_case: '建立并核验售后案件', prepare_case_submission: '准备售后提交',
   submit_after_sales_case: '提交售后案件',
   continue_after_sales_case: '补证并重新核验案件',
-  select_product: '核验并选择商品', read_clock: '读取当前时间', calculate: '执行计算',
+  select_product: '核验并选择商品', read_clock: '读取当前时间', calculate: '执行计算', read_evidence: '读取归档证据',
   __model_answer__: '生成知识回答',
 }
 

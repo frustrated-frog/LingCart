@@ -22,7 +22,7 @@ function SearchBranches({ search }: { search: RecoverySearch }) {
     <div className="recovery-branch-grid">{branches.map(branch => <article key={branch} className={search.chosen_branch === branch ? 'chosen' : ''}>
       <div><b>{branch.toUpperCase()}</b><span>{search.chosen_branch === branch ? '选择首步' : '备选探查'}</span></div>
       {search.probes.filter(p => p.branch_id === branch).map(probe => <p key={probe.probe_id}>
-        <strong>{probe.tool ? TOOL_LABELS[probe.tool] ?? probe.tool : '未执行工具'}</strong>
+        <strong>{probe.tool ? TOOL_LABELS[probe.tool] ?? probe.tool : '工具信息未记录'}</strong>
         <span>{STATUS_LABELS[probe.status] ?? probe.status}{probe.product_records !== null ? ` · ${probe.product_records} 条商品记录` : ''}</span>
         {probe.code && <code>{probe.code}</code>}
       </p>)}
