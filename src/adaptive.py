@@ -826,6 +826,11 @@ def _run(context, user_message, history, pending_action):
                         state['active_native_submission'] = queued['submission']
                     else:
                         _maybe_resolve_catalog_bindings(context, recorder, state, plan, history)
+                        planning = context.mechanisms.get('planning')
+                        if planning is not None and hasattr(planning, 'prepare'):
+                            planning.prepare(context, state, plan)
+                            state['model_cursor'] = context.model_cursor
+                            _save(context, state, plan)
                         decision = decide(context, state, plan, history)
                     # 插话也使审查中的旧目标失效，执行任何动作前再次检查。
                     apply_controls(context)

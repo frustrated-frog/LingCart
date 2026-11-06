@@ -1577,3 +1577,25 @@ def test_unavailable_final_audit_cannot_turn_a_recommendation_into_success(monke
     assert result['status']=='PARTIAL'
     assert result['terminal_reason']=='MODEL_UNAVAILABLE'
     assert not result['plan']['verification']['all_goals_satisfied']
+
+
+def test_rrsi_recovery_is_consumed_by_real_decision_loop(monkeypatch):
+    from src.harness import get_runner
+    calls = []
+    def empty_search(**kwargs):
+        calls.append(kwargs)
+        return {'products': [], 'total': 0, 'filters': kwargs, 'data_source': 'TEST_CATALOG'}
+    install(monkeypatch, 'search_products', empty_search)
+    script = model(monkeypatch, search(first=True), clarification)
+    prompts = []
+    invoke = script.invoke
+    def capture(messages):
+        prompts.append(messages[0].content)
+        return invoke(messages)
+    script.invoke = capture
+    result = get_runner('adaptive-rrsi-policy-v1')('推荐预算500的耳机')
+    assert len(calls) == 1
+    assert any(e['type'] == 'rrsi_module_applied' and e['module'] == 'recovery' for e in result['events'])
+    assert result['plan']['verification'].get('all_goals_satisfied') is not True
+    assert result['harness']['research']['status'] == 'candidate'
+    assert any('根据失败观察修订下一步' in prompt for prompt in prompts)

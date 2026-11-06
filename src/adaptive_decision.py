@@ -424,6 +424,9 @@ def decide(context, state, plan, history):
         if max_chars < 1:
             from src.context_budget import ContextBudgetError
             raise ContextBudgetError()
+    planning = context.mechanisms.get('planning')
+    if planning is not None and hasattr(planning, 'decision_guidance'):
+        prompt += planning.decision_guidance(state, plan)
     messages, manifest = engine.decision_messages(prompt, state, plan, history, max_chars=max_chars)
     surface = None
     if not initial:

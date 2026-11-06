@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "target_module": "recovery",
+  "dataset": "eval/pg_challenge_tasks.json",
+  "train_cases": [
+    "PG01",
+    "PG02",
+    "PG03"
+  ],
+  "validation_cases": [
+    "PG07",
+    "PG08",
+    "PG09"
+  ],
+  "test_cases": [
+    "PG13",
+    "PG14",
+    "PG16"
+  ],
+  "repeats": 3,
+  "rounds": 3,
+  "candidates_per_round": 2,
+  "min_edits": 1,
+  "max_edits": 3,
+  "noise_band": 0.0,
+  "beta0": 0.05,
+  "beta1": 1.0,
+  "score_weight": 1.0,
+  "cost_weight": 0.1,
+  "max_model_calls_per_run": 16,
+  "max_seconds_per_run": 90
+}

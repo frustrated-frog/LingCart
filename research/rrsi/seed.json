@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "planning": {
+    "mode": "inline",
+    "trigger": "initial",
+    "instruction": "识别所有独立目标及依赖；先明确缺失信息，再选择可验证的下一步。"
+  },
+  "recovery": {
+    "mode": "inline",
+    "trigger": "all_failures",
+    "instruction": "根据失败观察修订下一步，不重复无效动作；保留原始目标及约束。"
+  }
+}

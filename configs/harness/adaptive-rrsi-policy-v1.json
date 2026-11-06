@@ -1,0 +1,55 @@
+{
+  "schema_version": 1,
+  "profile_id": "adaptive-rrsi-policy-v1",
+  "version": "1.0.0",
+  "display_name": "规划与失败恢复自进化候选",
+  "description": "冻结的规划与恢复 Harness，可在研究入口使用，尚无稳定收益证据。",
+  "engine": {
+    "id": "adaptive",
+    "version": "1"
+  },
+  "mechanisms": [
+    {
+      "slot": "planning",
+      "id": "rrsi-planning-recovery",
+      "version": "1",
+      "configuration": {
+        "program_path": "research/rrsi/seed.json"
+      }
+    },
+    {
+      "slot": "context",
+      "id": "evidence-reference-context",
+      "version": "1"
+    },
+    {
+      "slot": "memory",
+      "id": "objective-ledger",
+      "version": "1"
+    },
+    {
+      "slot": "verification",
+      "id": "independent-request-audit",
+      "version": "2"
+    },
+    {
+      "slot": "tool_protocol",
+      "id": "native-strict-tools",
+      "version": "1"
+    }
+  ],
+  "capabilities": [
+    "model_directed_planning",
+    "bounded_replanning",
+    "evidence_retrieval",
+    "goal_verification",
+    "durable_resume",
+    "runtime_steering"
+  ],
+  "research": {
+    "status": "candidate",
+    "source_type": "paper",
+    "paper_id": "arXiv:2609.24972v3",
+    "hypothesis": "独立演化规划或恢复模块，在同等预算下改善未见任务的成功率与效率。"
+  }
+}

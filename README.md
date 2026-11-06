@@ -235,3 +235,9 @@ docker run --rm -p 8000:8000 -e LLM_API_KEY=your_key lingcart
 ```
 
 镜像先在 Node 阶段构建 React，再把静态产物复制进 Python 运行时。正式论文实验可用不可变的 Python 镜像 digest 构建，并通过 `LINGCART_IMAGE_DIGEST` 写入报告。
+
+### 规划与失败恢复的 RRSI 候选
+
+`adaptive-rrsi-policy-v1` 在同一个 Adaptive Runtime 中装配版本化的规划与恢复模块。离线演化可修改单个模块的触发时机、内联/独立分析控制及决策指令，经过独立 Critic 和真实任务验证后选择下一代；普通产品入口仍拒绝 candidate。
+
+运行 `venv/bin/python -m eval.run_rrsi_eval` 只校验冻结配置。真实演化需显式 `--live`，留出对照需 `--heldout`。它是 RRSI 的受限 Harness 适配，尚未证明稳定泛化收益，也不是任意代码或模型权重自修改。详见 [设计与运行说明](docs/规划与失败恢复自进化设计.md)。

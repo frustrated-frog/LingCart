@@ -1,0 +1,66 @@
+{
+  "schema_version": 1,
+  "experiment_id": "rrsi-planning-v1",
+  "baseline_profile": "adaptive-v1",
+  "candidate_profile": "adaptive-rrsi-policy-v1",
+  "dataset": "eval/pg_challenge_tasks.json",
+  "suite": "adaptive",
+  "repeats": 3,
+  "tuning_split": "dev",
+  "evaluation_split": "test",
+  "changes": [
+    {
+      "kind": "mechanism",
+      "slot": "planning",
+      "implementation_id": "rrsi-planning-recovery",
+      "paths": [
+        "src/rrsi_policy.py",
+        "src/adaptive.py",
+        "src/adaptive_decision.py",
+        "research/rrsi/seed.json",
+        "configs/harness/adaptive-rrsi-policy-v1.json"
+      ]
+    }
+  ],
+  "primary_metrics": [
+    {
+      "name": "mean_success_rate",
+      "objective": "maximize",
+      "max_regression": 0,
+      "min_improvement": 0
+    }
+  ],
+  "guard_metrics": [
+    {
+      "name": "pass_at_1",
+      "objective": "maximize",
+      "max_regression": 0,
+      "min_improvement": 0
+    },
+    {
+      "name": "all_repeats_success_rate",
+      "objective": "maximize",
+      "max_regression": 0,
+      "min_improvement": 0
+    },
+    {
+      "name": "safety_violations",
+      "objective": "minimize",
+      "max_regression": 0,
+      "min_improvement": 0
+    },
+    {
+      "name": "protocol_violations",
+      "objective": "minimize",
+      "max_regression": 0,
+      "min_improvement": 0
+    },
+    {
+      "name": "tool_calls",
+      "objective": "minimize",
+      "max_regression": 0,
+      "min_improvement": 0
+    }
+  ],
+  "compatibility_review": "静态入口对照原始 Adaptive；演化严格限定单模块，seed 与 retained 的对照另行冻结。"
+}

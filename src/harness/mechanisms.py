@@ -201,7 +201,9 @@ def built_in_mechanisms() -> tuple[HarnessMechanism, ...]:
     from src.liveplan import LivePlanSteeringMechanism
     from src.pg_context import PGContextMechanism
 
+    from src.rrsi_policy import RSIPolicyMechanism
     return (
+        RSIPolicyMechanism(),
         EmbeddedMechanism("planning", "structured-dialogue-understanding", "1", ("orchestrator",),
                           ("src/orchestrator.py", "src/dialogue_understanding.py",
                            "src/catalog_request_audit.py", "src/catalog_query.py",
