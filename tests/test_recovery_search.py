@@ -12,6 +12,10 @@ from src.runtime import RunRuntime
 from src.task_plan import TaskPlan
 
 
+def usage_events():
+    return [dict(type='model_started'),dict(type='model_call',usage=dict(input_tokens=30,output_tokens=20,total_tokens=50))]*2
+
+
 def test_search_protocol_and_dimensions_are_closed():
     for configuration in ({'max_depth':3},{'max_searches':True},{'max_branches':4},{'permission':'write'}):
         with pytest.raises(ValueError): RecoverySearchMechanism().configure(configuration)
@@ -48,13 +52,13 @@ def test_replay_summary_rejects_missing_unknown_cost_and_unpaired_samples():
     def row(profile):
         return dict(profile_id=profile,origin_sha256='origin',database_sha256='db',prefix_budget={'model_calls':3},
             repetition=1,passed=True,integrity=True,changed_db_paths=[],suffix_usage={'total_tokens':100},
-            suffix_budget={'model_calls':2,'tool_calls':2},suffix_steps=2)
+            suffix_budget={'model_calls':2,'tool_calls':2},suffix_steps=2,result={'events':usage_events()})
     rows=[row(p) for p in PROFILES]
     assert summary(rows,expected_points=1,repeats=1,captures_complete=True)['status']=='COMPLETED'
     assert summary(rows[:-1],expected_points=1,repeats=1,captures_complete=True)['status']=='INVALID'
-    rows[-1]['suffix_usage']=None
+    rows[-1]['result']['events'][-1]['usage']={}
     assert summary(rows,expected_points=1,repeats=1,captures_complete=True)['status']=='INVALID'
-    rows[-1]['suffix_usage']={'total_tokens':100};rows[-1]['database_sha256']='changed'
+    rows[-1]['result']['events']=usage_events();rows[-1]['database_sha256']='changed'
     assert summary(rows,expected_points=1,repeats=1,captures_complete=True)['status']=='INVALID'
 
 
@@ -170,7 +174,7 @@ def test_v2_replay_spec_freezes_arms_and_summary_rejects_reference_drift(capsys)
     with pytest.raises(ValidationError): ReplaySpec.model_validate({**spec.model_dump(),'profiles':['adaptive-v1']*3})
     rows=[dict(profile_id=p,origin_sha256='point',database_sha256='db',prefix_budget={'model_calls':3},
         repetition=1,passed=True,integrity=True,changed_db_paths=[],suffix_usage={'total_tokens':100},
-        suffix_budget={'model_calls':2,'tool_calls':2},suffix_steps=2,result={'events':[]}) for p in spec.profiles]
+        suffix_budget={'model_calls':2,'tool_calls':2},suffix_steps=2,result={'events':usage_events()}) for p in spec.profiles]
     result=summary(rows,expected_points=1,repeats=1,captures_complete=True,profiles=spec.profiles)
     assert result['status']=='COMPLETED' and result['comparison']['control_profile']=='adaptive-recovery-eager-v2'
     rows[0]['prefix_budget']['model_calls']=4
@@ -199,3 +203,25 @@ def test_replay_api_reads_contract_profiles_and_gate_evidence(tmp_path,monkeypat
     (folder/'contract.json').write_text(json.dumps({'profiles':'broken'}))
     data=client.get('/engineering/recovery-replays/v2').json()
     assert data['partial'] and data['warnings'] and data['profiles'][0]['role']=='unknown'
+
+
+def test_partial_provider_usage_is_not_a_complete_replay_cost():
+    from src.recovery_usage import recovery_usage
+    from src.recovery_search_api import project_sample
+    events=usage_events()+[dict(type='model_started'),dict(type='error',source='model',code='MODEL_ERROR')]
+    raw=dict(profile_id='search',case_id='R1',repetition=1,origin_sha256='origin',database_sha256='db',
+        passed=False,failures=['model failed'],suffix_steps=0,integrity=True,changed_db_paths=[],prefix_budget={},
+        suffix_budget={'model_calls':3,'tool_calls':0},suffix_usage={'total_tokens':100},
+        result={'events':events})
+    usage=recovery_usage(raw)
+    assert not usage['complete'] and usage['usage'] is None and usage['known_calls']==2
+    assert usage['observed_usage']['total_tokens']==100
+    projected=project_sample(raw)
+    assert projected.tokens is None and projected.known_tokens==100 and not projected.usage_complete
+    # 即使旧产物有正数的总量字段，也不能通过完整成本 Gate。
+    rows=[dict(raw,profile_id=p) for p in PROFILES]
+    assert summary(rows,expected_points=1,repeats=1,captures_complete=True)['status']=='INVALID'
+    raw['suffix_budget']['model_calls']=2;raw['result']['events']=usage_events()
+    assert recovery_usage(raw)['complete']
+    raw['result']['events'][0]['type']='model_reused'
+    assert not recovery_usage(raw)['complete']

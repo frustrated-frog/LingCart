@@ -14,6 +14,7 @@ from src.context_engine import HookDecision
 from src.harness import get_registry
 from src.procedural_graph import fingerprint
 from src.rrsi_policy import failure_kind
+from src.recovery_usage import recovery_usage
 from src.runtime import BudgetLimits, RunRuntime, runtime_scope
 from src.runtime_state import new_runtime_snapshot, seal_runtime_snapshot
 from src.task_plan import TaskPlan, TaskStep
@@ -145,9 +146,11 @@ def replay(point, profile_id, *, source_manifest, repetition=1):
     from src.recovery_evidence import recovery_trace
     sample = dict(case_id=case['id'], repetition=repetition, passed=not failures,
         turns=[dict(result=result)])
+    usage = recovery_usage(dict(result=result, suffix_budget=delta))
     return dict(profile_id=profile_id, case_id=case['id'], split=case['split'], repetition=repetition,
         origin_sha256=point['origin_sha256'], database_sha256=fingerprint(point['database']),
-        prefix_budget=point['budget'], suffix_budget=delta, suffix_usage=result.get('usage'),
+        prefix_budget=point['budget'], suffix_budget=delta, suffix_usage=usage['usage'],
+        observed_suffix_usage=usage['observed_usage'], usage_complete=usage['complete'],
         suffix_steps=max(0, len((result.get('plan') or {}).get('steps', [])) - prefix_steps),
         passed=not failures, failures=failures, integrity=integrity, changed_db_paths=mutations,
         environment=fault_state, result=result, observed_tools=observed, recovery=recovery_trace(sample),

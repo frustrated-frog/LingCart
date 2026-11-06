@@ -12,7 +12,7 @@ const names: Record<string, string> = {
 }
 const roles = { reference: '参考策略', control: '配对控制', candidate: '研究候选', unknown: '合同身份待核实' }
 const searchStatus: Record<string, string> = {
-  SELECTED: '已选择首步', ABSTAINED: '未选出方案', INVALID: '提案或选择无效', BUDGET_SKIPPED: '预算不足，跳过搜索', PARTIAL: '探查进行中',
+  SELECTED: '已选择首步', ABSTAINED: '未选出方案', INVALID: '提案或选择无效', BUDGET_SKIPPED: '预算不足，跳过搜索', PARTIAL: '探查记录未完成',
 }
 
 function SearchBranches({ search }: { search: RecoverySearch }) {
@@ -38,6 +38,9 @@ function ReplayCard({ sample, profile }: { sample?: RecoveryReplaySample; profil
     <header><span>{name}</span><small>{roles[profile.role]} · {profile.profile_id}</small></header>
     {!sample ? <p className="recovery-empty">尚无这组回放结果。</p> : <>
       <div className={`recovery-result ${sample.passed ? 'passed' : 'failed'}`}><b>{sample.passed ? '任务完成' : '任务未完成'}</b><span>{sample.tokens?.toLocaleString() ?? '未知'} Token</span></div>
+      {!sample.usage_complete && <p className="recovery-usage-notice">{sample.known_tokens !== null
+        ? `已记录 ${sample.known_tokens.toLocaleString()} Token，仍有调用缺少用量，不能作为总成本。`
+        : '缺少完整模型用量，总成本未知。'}</p>}
       <dl className="recovery-cost"><div><dt>模型调用</dt><dd>{sample.model_calls}</dd></div><div><dt>工具调用</dt><dd>{sample.tool_calls}</dd></div><div><dt>正式步骤</dt><dd>{sample.suffix_steps}</dd></div></dl>
       {sample.gates.length > 0 && <section className="recovery-gates" aria-label="搜索触发记录"><h3>搜索触发记录</h3>
         <ol>{sample.gates.map(gate => <li key={gate.gate_id} className={gate.status === 'OPEN' ? 'gate-open' : 'gate-deferred'}>

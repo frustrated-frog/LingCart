@@ -795,6 +795,7 @@ export interface RecoveryReplayProfile {
 export interface RecoveryReplaySample {
   profile_id: string; case_id: string; repetition: number; origin_sha256: string; database_sha256: string;
   passed: boolean; failures: string[]; terminal_reason: string | null; tokens: number | null;
+  known_tokens: number | null; usage_complete: boolean;
   model_calls: number; tool_calls: number; suffix_steps: number; searches: RecoverySearch[]; gates: RecoveryGate[];
   timeline: Array<{ step_id: string; tool: string; status: string; failure_kind: string | null; new_records: number }>;
 }

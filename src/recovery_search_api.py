@@ -7,6 +7,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 
 from src.rrsi_api import read
+from src.recovery_usage import recovery_usage
 
 ROOT = Path(__file__).resolve().parents[1] / 'research/recovery_search'
 router = APIRouter(prefix='/engineering/recovery-replays', tags=['Recovery replay'])
@@ -64,6 +65,8 @@ class Sample(BaseModel):
     failures: list[str]
     terminal_reason: str | None
     tokens: int | None
+    known_tokens: int | None
+    usage_complete: bool
     model_calls: int
     tool_calls: int
     suffix_steps: int
@@ -110,8 +113,10 @@ def project_sample(raw):
                 f"{issue.get('path','')}: {issue.get('message','')}" for issue in event.get('validation_issues', [])) or None
     steps = raw['suffix_steps']
     timeline = raw.get('recovery',{}).get('timeline',[])
+    usage=recovery_usage(raw)
     return Sample(**{k:raw[k] for k in ('profile_id','case_id','repetition','origin_sha256','database_sha256','passed','failures','suffix_steps')},
-        terminal_reason=result.get('terminal_reason'),tokens=(raw.get('suffix_usage') or {}).get('total_tokens'),
+        terminal_reason=result.get('terminal_reason'),tokens=(usage['usage'] or {}).get('total_tokens'),
+        known_tokens=(usage['observed_usage'] or {}).get('total_tokens'),usage_complete=usage['complete'],
         model_calls=raw['suffix_budget']['model_calls'],tool_calls=raw['suffix_budget']['tool_calls'],
         searches=list(searches.values()),timeline=timeline[-steps:] if steps else [],
         gates=[Gate(**{key:event[key] for key in Gate.model_fields}) for event in result.get('events',[])

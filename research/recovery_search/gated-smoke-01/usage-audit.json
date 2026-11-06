@@ -1,0 +1,282 @@
+{
+  "corrected_summary": {
+    "comparison": {
+      "candidate_profile": "adaptive-recovery-search-v2",
+      "control_profile": "adaptive-recovery-eager-v2"
+    },
+    "metrics": {
+      "adaptive-recovery-control-v1": {
+        "deferred_gates": 0,
+        "invalid_searches": 0,
+        "model_calls": 15,
+        "passed": 3,
+        "samples": 4,
+        "searches": 0,
+        "selected_searches": 0,
+        "success_rate": 0.75,
+        "suffix_steps": 9,
+        "suffix_tokens": null,
+        "tool_calls": 9
+      },
+      "adaptive-recovery-eager-v2": {
+        "deferred_gates": 0,
+        "invalid_searches": 1,
+        "model_calls": 21,
+        "passed": 3,
+        "samples": 4,
+        "searches": 5,
+        "selected_searches": 3,
+        "success_rate": 0.75,
+        "suffix_steps": 11,
+        "suffix_tokens": null,
+        "tool_calls": 16
+      },
+      "adaptive-recovery-search-v2": {
+        "deferred_gates": 7,
+        "invalid_searches": 0,
+        "model_calls": 19,
+        "passed": 3,
+        "samples": 4,
+        "searches": 2,
+        "selected_searches": 2,
+        "success_rate": 0.75,
+        "suffix_steps": 11,
+        "suffix_tokens": null,
+        "tool_calls": 17
+      }
+    },
+    "note": "同起点配对结果仍含模型随机性；本报告不自动作稳定收益或晋升结论。",
+    "observed_improvement": false,
+    "pairs": [
+      {
+        "control_passed": true,
+        "origin_sha256": "c89f54a825ca74e609b96cb6beb9003f312e153f485871a8fc97221160443ec1",
+        "repetition": 1,
+        "search_passed": true
+      },
+      {
+        "control_passed": false,
+        "origin_sha256": "c89f54a825ca74e609b96cb6beb9003f312e153f485871a8fc97221160443ec1",
+        "repetition": 2,
+        "search_passed": false
+      },
+      {
+        "control_passed": true,
+        "origin_sha256": "d9ffb95c1d64dc8a1cfa73a872b5b049e76df636d27cffcd50ed985ad979e7bd",
+        "repetition": 1,
+        "search_passed": true
+      },
+      {
+        "control_passed": true,
+        "origin_sha256": "d9ffb95c1d64dc8a1cfa73a872b5b049e76df636d27cffcd50ed985ad979e7bd",
+        "repetition": 2,
+        "search_passed": true
+      }
+    ],
+    "promotion_status": "candidate",
+    "status": "INVALID"
+  },
+  "note": "离线派生审计，原始文件保持不变；预算中的估算值不能补齐失败调用的 provider 用量。",
+  "original_contract_sha256": "6c1adba0fff7766d45ec82e274410ff5aca27819473a1adabf8afa19168565cc",
+  "original_summary_sha256": "c882bb61a5cfc296b755e29f7c6429ea8426af25efba50d5688daacc0244c2ad",
+  "rows": [
+    {
+      "case_id": "RR-TRAIN-01",
+      "complete": true,
+      "expected_calls": 3,
+      "known_calls": 3,
+      "observed_usage": {
+        "input_tokens": 12940,
+        "output_tokens": 538,
+        "total_tokens": 13478
+      },
+      "profile_id": "adaptive-recovery-control-v1",
+      "repetition": 1,
+      "usage": {
+        "input_tokens": 12940,
+        "output_tokens": 538,
+        "total_tokens": 13478
+      }
+    },
+    {
+      "case_id": "RR-TRAIN-01",
+      "complete": true,
+      "expected_calls": 4,
+      "known_calls": 4,
+      "observed_usage": {
+        "input_tokens": 16428,
+        "output_tokens": 645,
+        "total_tokens": 17073
+      },
+      "profile_id": "adaptive-recovery-eager-v2",
+      "repetition": 1,
+      "usage": {
+        "input_tokens": 16428,
+        "output_tokens": 645,
+        "total_tokens": 17073
+      }
+    },
+    {
+      "case_id": "RR-TRAIN-01",
+      "complete": true,
+      "expected_calls": 3,
+      "known_calls": 3,
+      "observed_usage": {
+        "input_tokens": 12925,
+        "output_tokens": 535,
+        "total_tokens": 13460
+      },
+      "profile_id": "adaptive-recovery-search-v2",
+      "repetition": 1,
+      "usage": {
+        "input_tokens": 12925,
+        "output_tokens": 535,
+        "total_tokens": 13460
+      }
+    },
+    {
+      "case_id": "RR-TRAIN-01",
+      "complete": true,
+      "expected_calls": 3,
+      "known_calls": 3,
+      "observed_usage": {
+        "input_tokens": 12937,
+        "output_tokens": 531,
+        "total_tokens": 13468
+      },
+      "profile_id": "adaptive-recovery-control-v1",
+      "repetition": 2,
+      "usage": {
+        "input_tokens": 12937,
+        "output_tokens": 531,
+        "total_tokens": 13468
+      }
+    },
+    {
+      "case_id": "RR-TRAIN-01",
+      "complete": true,
+      "expected_calls": 4,
+      "known_calls": 4,
+      "observed_usage": {
+        "input_tokens": 16381,
+        "output_tokens": 649,
+        "total_tokens": 17030
+      },
+      "profile_id": "adaptive-recovery-eager-v2",
+      "repetition": 2,
+      "usage": {
+        "input_tokens": 16381,
+        "output_tokens": 649,
+        "total_tokens": 17030
+      }
+    },
+    {
+      "case_id": "RR-TRAIN-01",
+      "complete": true,
+      "expected_calls": 3,
+      "known_calls": 3,
+      "observed_usage": {
+        "input_tokens": 12931,
+        "output_tokens": 529,
+        "total_tokens": 13460
+      },
+      "profile_id": "adaptive-recovery-search-v2",
+      "repetition": 2,
+      "usage": {
+        "input_tokens": 12931,
+        "output_tokens": 529,
+        "total_tokens": 13460
+      }
+    },
+    {
+      "case_id": "RR-TRAIN-05",
+      "complete": true,
+      "expected_calls": 8,
+      "known_calls": 8,
+      "observed_usage": {
+        "input_tokens": 42910,
+        "output_tokens": 1323,
+        "total_tokens": 44233
+      },
+      "profile_id": "adaptive-recovery-control-v1",
+      "repetition": 1,
+      "usage": {
+        "input_tokens": 42910,
+        "output_tokens": 1323,
+        "total_tokens": 44233
+      }
+    },
+    {
+      "case_id": "RR-TRAIN-05",
+      "complete": true,
+      "expected_calls": 12,
+      "known_calls": 12,
+      "observed_usage": {
+        "input_tokens": 82771,
+        "output_tokens": 1763,
+        "total_tokens": 84534
+      },
+      "profile_id": "adaptive-recovery-eager-v2",
+      "repetition": 1,
+      "usage": {
+        "input_tokens": 82771,
+        "output_tokens": 1763,
+        "total_tokens": 84534
+      }
+    },
+    {
+      "case_id": "RR-TRAIN-05",
+      "complete": true,
+      "expected_calls": 8,
+      "known_calls": 8,
+      "observed_usage": {
+        "input_tokens": 37971,
+        "output_tokens": 1335,
+        "total_tokens": 39306
+      },
+      "profile_id": "adaptive-recovery-search-v2",
+      "repetition": 1,
+      "usage": {
+        "input_tokens": 37971,
+        "output_tokens": 1335,
+        "total_tokens": 39306
+      }
+    },
+    {
+      "case_id": "RR-TRAIN-05",
+      "complete": false,
+      "expected_calls": 1,
+      "known_calls": 0,
+      "observed_usage": null,
+      "profile_id": "adaptive-recovery-control-v1",
+      "repetition": 2,
+      "usage": null
+    },
+    {
+      "case_id": "RR-TRAIN-05",
+      "complete": false,
+      "expected_calls": 1,
+      "known_calls": 0,
+      "observed_usage": null,
+      "profile_id": "adaptive-recovery-eager-v2",
+      "repetition": 2,
+      "usage": null
+    },
+    {
+      "case_id": "RR-TRAIN-05",
+      "complete": false,
+      "expected_calls": 5,
+      "known_calls": 4,
+      "observed_usage": {
+        "input_tokens": 16786,
+        "output_tokens": 544,
+        "total_tokens": 17330
+      },
+      "profile_id": "adaptive-recovery-search-v2",
+      "repetition": 2,
+      "usage": null
+    }
+  ],
+  "schema_version": 1,
+  "usage_audit_source_sha256": "54226af671d29fbb1e4b42188c23867b8be14d6cc8ddb0a6932c293b59e708e5"
+}

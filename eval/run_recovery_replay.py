@@ -11,6 +11,7 @@ from eval.run_live_eval import environment_manifest, load_dataset
 from src.adaptive_decision import StrictModel
 from src.procedural_graph import fingerprint
 from src.pg_learning import write_artifact
+from src.recovery_usage import recovery_usage
 
 ROOT = Path(__file__).resolve().parents[1]
 PROFILES = ('adaptive-v1', 'adaptive-recovery-control-v1', 'adaptive-recovery-search-v1')
@@ -58,7 +59,7 @@ def summary(samples, *, expected_points, repeats, captures_complete, profiles=PR
         if expected_pairs is None:
             expected_pairs = pairs
         valid &= pairs == expected_pairs
-        costs = [(s.get('suffix_usage') or {}).get('total_tokens') for s in rows]
+        costs = [(recovery_usage(s)['usage'] or {}).get('total_tokens') for s in rows]
         complete = (len(rows) == expected_points * repeats == len(pairs)
                     and all(type(t) is int and t > 0 for t in costs))
         valid &= complete and all(s['integrity'] and not s['changed_db_paths'] for s in rows)

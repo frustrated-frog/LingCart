@@ -28,3 +28,4 @@
 .recovery-gates li>div { display:flex; justify-content:space-between; gap:8px; align-items:baseline; font-size:11px; }
 .recovery-gates li span { color:var(--recovery-muted); white-space:nowrap; font:10px var(--mono); }
 .recovery-gates p { font-size:11px; line-height:1.8; color:var(--recovery-muted); margin:7px 0 0; }
+.recovery-usage-notice { font-size:11px; color:#855819; background:#fcf5e9; border-left:3px solid #b77c24; padding:10px 12px; line-height:1.8; }
