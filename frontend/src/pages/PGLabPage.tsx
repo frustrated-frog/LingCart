@@ -4,8 +4,9 @@ import { Link, useSearchParams } from 'react-router-dom'
 import { ArrowRight, GitBranch, Play, Square, RefreshCw, Check, X } from 'lucide-react'
 import { api } from '../api/client'
 import { ErrorState, JsonBlock, LoadingState, PageHeader, SectionHeading, TOOL_LABELS } from '../components/SystemUI'
+import { SIMMemoryPanel } from '../components/SIMMemoryPanel'
 import { EdgeCreditPanel, HypothesisPanel } from '../components/PGCreditPanel'
-import type { PGArm, PGGraph, PGJob, PGPreset, PGSample, PGSelection } from '../types'
+import type { PGArm, PGGraph, PGJob, PGPreset, PGSample, PGSelection, PGPolicy, SIMMode } from '../types'
 import '../styles/pg-lab.css'
 
 const arms: { id: PGArm; label: string; note: string }[] = [
@@ -23,7 +24,7 @@ const reasons: Record<string, string> = {
   VALIDATION_NON_REGRESSION: '独立验证未退化，保留修改', VALIDATION_REGRESSION: '验证成功率退化',
   COST_REGRESSION: '调用成本超出允许值', PG_NOT_EXPOSED: '指导未覆盖全部样本',
   SAFETY_OR_PROTOCOL_VIOLATION: '安全或协议检查未通过', REPEATED_REJECTED_STRUCTURE: '重复提出已拒绝结构',
-  INVALID_PROPOSAL_OR_REPORT: '提案或验证报告无效', INCOMPARABLE_VALIDATION: '验证条件不一致',
+  INVALID_PROPOSAL_OR_REPORT: '提案或验证报告无效', INCOMPARABLE_VALIDATION: '验证条件不一致', INCOMPARABLE_TRAINING: '训练复测条件不一致',
   REFINER_FAILED: '图修改模型调用失败', REFINER_CONTEXT_TOO_LARGE: '训练轨迹超过上下文上限',
   REPEATED_REJECTED_HYPOTHESIS: '已否定的修改方向再次提出，跳过验证调用',
   HYPOTHESIS_SOURCE_MISMATCH: '假设样本引用与 Patch 训练案例不匹配',
@@ -40,7 +41,7 @@ const errors: Record<string, string> = {
 const phase = (value: string) => value === 'seed-validation' ? '种子图验证' : value === 'refinement' ? '生成图修改'
   : value === 'queued' ? '等待进程启动' : value === 'completed' ? '冻结计划完成'
     : value.startsWith('test-') ? `${arms.find(a => value === `test-${a.id}`)?.label ?? value} · 最终测试`
-      : value.replace(/iteration-(\d+)-training/, '第 $1 轮 · 训练轨迹').replace(/iteration-(\d+)-validation/, '第 $1 轮 · 候选验证')
+      : value.replace(/iteration-(\d+)-candidate-training/, '第 $1 轮 · 训练复测').replace(/iteration-(\d+)-training/, '第 $1 轮 · 训练轨迹').replace(/iteration-(\d+)-validation/, '第 $1 轮 · 候选验证')
 const number = (value: number | null | undefined) => value == null ? '—' : value.toLocaleString('zh-CN', { maximumFractionDigits: 1 })
 const percent = (value: number | null | undefined) => value == null ? '—' : `${(value * 100).toFixed(1)}%`
 const node = (value: string) => TOOL_LABELS[value] ?? ({ Start: '开始', End: '结束', set_goal: '建立目标', recommend: '推荐候选', complete: '完成核验', inspect: '检查证据', clarify: '澄清需求', revise_plan: '修订计划', refine_constraints: '细化约束', finish: '结束执行', respond: '回应用户', handoff: '转交处理', unsupported: '说明能力范围' }[value] ?? value)
@@ -188,20 +189,24 @@ export function PGLabPage() {
   const samples = useQuery({ queryKey: ['pg-samples', jobId], queryFn: () => api.pgSamples(jobId), enabled: !!jobId,
     refetchInterval: active(jobQuery.data?.status) ? 5_000 : false })
   const [preset, setPreset] = useState<PGPreset>('smoke')
-  const [policy, setPolicy] = useState<'basic-v1' | 'credit-memory-v1'>('basic-v1')
+  const [policy, setPolicy] = useState<PGPolicy>('basic-v1')
+  const [memoryMode, setMemoryMode] = useState<SIMMode>('full')
+  const [sourceJobId, setSourceJobId] = useState('')
   const [confirmFullCost, setConfirmFullCost] = useState(false)
   const [round, setRound] = useState(0)
   const [graphView, setGraphView] = useState<'seed' | 'retained' | 'training'>('seed')
   const [partition, setPartition] = useState<'train' | 'validation' | 'test'>('test')
   const [sampleKey, setSampleKey] = useState('')
-  const request = useRef({ preset, policy, id: crypto.randomUUID() })
+  const configKey = JSON.stringify([preset, policy, ...(policy === 'sim-v1' ? [memoryMode, sourceJobId] : [])])
+  const request = useRef({ configKey, id: crypto.randomUUID() })
   const start = useMutation({ mutationFn: () => {
-    if (request.current.preset !== preset || request.current.policy !== policy) request.current = { preset, policy, id: crypto.randomUUID() }
+    if (request.current.configKey !== configKey) request.current = { configKey, id: crypto.randomUUID() }
     return api.pgStart({ preset, request_id: request.current.id, confirm_full_cost: preset === 'full' && confirmFullCost,
-      ...(policy === 'credit-memory-v1' ? { evolution_policy: policy } : {}) })
+      ...(policy !== 'basic-v1' ? { evolution_policy: policy } : {}),
+      ...(policy === 'sim-v1' ? { sim_memory_mode: memoryMode, ...(sourceJobId ? { sim_source_job_id: sourceJobId } : {}) } : {}) })
   }, onSuccess: job => {
     setParams({ job: job.job_id }); queryClient.setQueryData(['pg-job', job.job_id], job)
-    request.current = { preset, policy, id: crypto.randomUUID() }
+    request.current = { configKey, id: crypto.randomUUID() }
     void queryClient.invalidateQueries({ queryKey: ['pg-jobs'] })
   } })
   const cancel = useMutation({ mutationFn: () => api.pgCancel(jobId), onSuccess: job => {
@@ -215,7 +220,7 @@ export function PGLabPage() {
     const savedPolicy = jobQuery.data?.frozen.evolution_policy
     if (savedPolicy) {
       setPolicy(savedPolicy)
-      setPartition(savedPolicy === 'credit-memory-v1' ? 'train' : 'test')
+      setPartition(savedPolicy !== 'basic-v1' ? 'train' : 'test')
     }
   }, [jobId, jobQuery.data?.frozen.evolution_policy])
   if (catalog.isPending) return <LoadingState label="正在读取 PG 冻结任务与程序图" />
@@ -223,12 +228,12 @@ export function PGLabPage() {
   const data = catalog.data
   const job = jobQuery.data
   const busy = jobs.data?.jobs.some(j => active(j.status)) || active(job?.status)
-  const launchPlan = (policy === 'credit-memory-v1' ? data.learning_plans : data.plans)?.[preset] ?? data.plans[preset]
+  const launchPlan = (policy === 'sim-v1' ? data.sim_plans : policy === 'credit-memory-v1' ? data.learning_plans : data.plans)?.[preset] ?? data.plans[preset]
   const frozen = job?.frozen ?? launchPlan
   const selection = job?.history.find(r => r.iteration === round) ?? job?.history.at(-1)
   const graph = graphView === 'training' && selection?.training_graph ? selection.training_graph
     : graphView === 'retained' && job?.retained_graph ? job.retained_graph
-    : job?.seed_graph ?? (policy === 'credit-memory-v1' ? data.learning_seed_graph : data.seed_graph) ?? data.seed_graph
+    : job?.seed_graph ?? (policy !== 'basic-v1' ? data.learning_seed_graph : data.seed_graph) ?? data.seed_graph
   const key = (s: PGSample) => `${s.stage}/${s.case_id}/${s.repetition}`
   const selectedSample = samples.data?.samples.find(s => key(s) === sampleKey)
   const refresh = () => { void catalog.refetch(); void jobs.refetch(); if (jobId) { void jobQuery.refetch(); void samples.refetch() } }
@@ -239,8 +244,17 @@ export function PGLabPage() {
     <section className="pg-launch" aria-label="启动实验">
       <div><span className="pg-kicker">冻结配置</span><h2>从一轮小实验开始</h2><p>每项任务使用独立种子数据库。实验将调用真实模型，可能产生费用。</p>
         <label>演化策略<select value={policy} disabled={start.isPending} onChange={e => { setPolicy(e.target.value as typeof policy); setConfirmFullCost(false) }}>
-          <option value="basic-v1">基础图演化 · 原有三组对照</option><option value="credit-memory-v1" disabled={!data.learning_plans}>贡献与假设记忆 · V4 开发闭环</option></select></label>
+          <option value="basic-v1">基础图演化 · 原有三组对照</option><option value="credit-memory-v1" disabled={!data.learning_plans}>贡献与假设记忆 · V4 开发闭环</option><option value="sim-v1" disabled={!data.sim_plans}>持续自改进记忆 · SIM</option></select></label>
         {policy === 'credit-memory-v1' && <p>仅训练与验证；测试集保持冻结。支持、反例和失败假设按轮次保留。</p>}
+        {policy === 'sim-v1' && <div className="pg-sim-options">
+          <label>记忆条件<select value={memoryMode} disabled={start.isPending} onChange={e => setMemoryMode(e.target.value as SIMMode)}>
+            <option value="full">完整历史 · 问题与修改结果</option><option value="problems">仅问题 · 隐藏修改历史</option><option value="none">无记忆 · 不读取 SIM</option></select></label>
+          <label>继承来源<select value={sourceJobId} disabled={start.isPending} onChange={e => setSourceJobId(e.target.value)}>
+            <option value="">冷启动 · 原始种子图</option>
+            {jobs.data?.jobs.filter(j => j.sim_available && j.execution_source === 'live_provider').map(j => <option key={j.job_id} value={j.job_id}>
+              {new Date(j.created_at).toLocaleString('zh-CN')} · {j.job_id.slice(-8)}</option>)}</select></label>
+          <p>继承时同时冻结来源的保留图和记忆。候选额外复测训练样本；公平对照请从同一来源分别启动三个条件。</p>
+        </div>}
         <label>实验规模<select value={preset} disabled={start.isPending} onChange={e => { setPreset(e.target.value as PGPreset); setConfirmFullCost(false) }}>
           <option value="smoke">冒烟 · 1 轮演化 × 1 次重复</option><option value="full">完整 · 3 轮演化 × 3 次重复</option></select></label></div>
       <div className="pg-launch-budget"><div><strong>{launchPlan.max_samples}</strong><span>最多任务样本</span></div><div><strong>{launchPlan.max_model_attempts.toLocaleString()}</strong><span>最多模型尝试（含重试）</span></div>
@@ -278,6 +292,7 @@ export function PGLabPage() {
         : job?.comparison ? '结论仅适用于本次冻结挑战集，未进行统计显著性检验；机制仍为 candidate。' : '完成训练、验证和三组测试后，这里会展示门禁结论。'}</p>
       {job?.comparison && frozen.evaluation_scope !== 'dev_only' && <details><summary>检查对照门禁与失败原因</summary>{job.comparison.failures.map(f => <p key={f}>{f}</p>)}
         {Object.entries(job.comparison.gates).map(([name, gate]) => <div key={name}><b>{arms.find(a => a.id === name)?.label}：{gate.passed ? '门禁通过' : '门禁未通过'}</b>{gate.failures.map(f => <p key={f}>{f}</p>)}</div>)}</details>}</div></div>
+    {job?.frozen.evolution_policy === 'sim-v1' && <SIMMemoryPanel job={job} />}
     <SectionHeading index="02" title="程序图与演化记录" note="查看学习实际修改了什么" />
     <div className="pg-graph-toolbar"><div className="pg-tabs" role="tablist" aria-label="图版本"><button role="tab" aria-selected={graphView === 'seed'} onClick={() => setGraphView('seed')}>种子图</button>
       <button role="tab" aria-selected={graphView === 'retained'} disabled={!job?.retained_graph} onClick={() => setGraphView('retained')}>保留图</button>

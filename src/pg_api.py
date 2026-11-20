@@ -5,7 +5,7 @@ import re
 from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 from src.pg_sim import SIMMemory
 from src.pg_jobs import JobStore, LabError, StartExperiment, catalog, detail
@@ -40,6 +40,12 @@ class JobResponse(BaseModel):
     contracts: dict | None = None
     sim_source: SIMMemory | None = None
     stale: bool = False
+
+    @field_validator('sim_source', mode='before')
+    @classmethod
+    def persisted_sim(cls, value):
+        # SQLite JSON 使用数组；严格不可变模型须按 JSON 契约解析为元组。
+        return SIMMemory.model_validate_json(json.dumps(value)) if isinstance(value, dict) else value
 
 
 class LabCatalog(BaseModel):

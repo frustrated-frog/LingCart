@@ -210,3 +210,24 @@ it('opens the persisted training sample from a selected graph contribution', asy
   await waitFor(() => expect(read).toHaveBeenCalledWith(job.job_id, expect.objectContaining({ stage: 'iteration-01-training', case_id: 'PG01', repetition: 1 })))
   expect(await screen.findByText(/training-evidence/)).toBeInTheDocument()
 })
+
+it('freezes SIM condition and source in the launch request and rotates its idempotency key', async () => {
+  const simPlan: PGPlan = { ...plan, evolution_policy: 'sim-v1', evaluation_scope: 'dev_only',
+    groups: { ...plan.groups, test: [] }, max_samples: 4, max_model_attempts: 34 }
+  vi.mocked(api.pgCatalog).mockResolvedValue({ ...catalog, sim_plans: { smoke: simPlan, full: simPlan } })
+  vi.mocked(api.pgJobs).mockResolvedValue({ jobs: [{ ...job, sim_available: true, execution_source: 'live_provider' },
+    { ...job, job_id: 'fixture-source', sim_available: true, execution_source: 'test_harness' }] })
+  const start = vi.spyOn(api, 'pgStart').mockRejectedValue(new Error('SIM 网络中断'))
+  page()
+  fireEvent.change(await screen.findByLabelText('演化策略'), { target: { value: 'sim-v1' } })
+  fireEvent.change(screen.getByLabelText('继承来源'), { target: { value: job.job_id } })
+  fireEvent.change(screen.getByLabelText('记忆条件'), { target: { value: 'problems' } })
+  expect(screen.getByLabelText('继承来源').querySelector('option[value="fixture-source"]')).toBeNull()
+  fireEvent.click(screen.getByRole('button', { name: '启动真实实验' }))
+  await screen.findByText('SIM 网络中断')
+  expect(start.mock.calls[0][0]).toMatchObject({ evolution_policy: 'sim-v1', sim_memory_mode: 'problems', sim_source_job_id: job.job_id })
+  fireEvent.change(screen.getByLabelText('记忆条件'), { target: { value: 'none' } })
+  fireEvent.click(screen.getByRole('button', { name: '启动真实实验' }))
+  await waitFor(() => expect(start).toHaveBeenCalledTimes(2))
+  expect(start.mock.calls[1][0].request_id).not.toBe(start.mock.calls[0][0].request_id)
+})

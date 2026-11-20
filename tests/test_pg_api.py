@@ -79,3 +79,18 @@ def test_sim_api_modes_and_candidate_training_samples(client):
     sample = dict(case_id='PG01', repetition=1, passed=True, turns=[])
     (folder / 'PG01-1.json').write_text(json.dumps(sample))
     assert client.get(f"/engineering/pg/jobs/{job['job_id']}/samples/iteration-01-candidate-training/PG01/1").json() == sample
+
+
+def test_inherited_sim_round_trips_through_typed_response(client, tmp_path):
+    from tests.test_pg_sim import initial
+    retained, evolution = initial(tmp_path)
+    store = JobStore()
+    source = store.create(StartExperiment(request_id='api-sim-source', preset='smoke', evolution_policy='sim-v1'), launch=False)
+    store.update(source['job_id'], status='COMPLETED', execution_source='test_harness', evolution=evolution,
+                 retained_graph=retained.model_dump(mode='json'))
+    payload = dict(request_id='api-sim-target', preset='smoke', evolution_policy='sim-v1', sim_source_job_id=source['job_id'])
+    target = store.create(StartExperiment(**payload), launch=False)
+    fetched = client.get(f"/engineering/pg/jobs/{target['job_id']}")
+    assert fetched.status_code == 200 and fetched.json()['sim_source'] == evolution['sim_memory']
+    retried = client.post('/engineering/pg/jobs', json=payload)
+    assert retried.status_code == 202 and retried.json()['sim_source'] == evolution['sim_memory']

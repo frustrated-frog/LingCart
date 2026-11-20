@@ -43,6 +43,8 @@ def main(argv=None):
     dataset = load_dataset(dataset_path)
     spec.validate_dataset(dataset)
     graph = ProceduralGraph.from_path(args.base_graph)
+    if spec.online_profile == 'adaptive-pg-context-v4' and graph.schema_version != 2:
+        parser.error('V4 演化需要 --base-graph 指向类型化条件图')
     sim_source = SIMMemory.model_validate_json(args.sim_source.read_text()) if args.sim_source else None
     if sim_source is not None:
         if spec.evolution_policy != 'sim-v1':
@@ -83,16 +85,17 @@ def main(argv=None):
         max_completion_tokens=spec.max_refiner_completion_tokens,
         max_provider_attempts=spec.max_provider_attempts_per_call), output_dir=output, sim_source=sim_source)
     write_artifact(output / "retained-profile.json", profiles[retained.fingerprint].model_dump(mode="json"))
-    # 冻结后的 test 对照契约：区分 PG 指导效果与图演化效果。
-    template = json.loads((ROOT / "research/experiments/pg-localization-v2/experiment-spec.json").read_text())
-    for label, baseline in (("baseline", "adaptive-v1"), ("static", profiles[graph.fingerprint].profile_id)):
-        contract = json.loads(json.dumps(template))
-        contract.update(experiment_id=f"pg-evolved-vs-{label}", baseline_profile=baseline,
-                        candidate_profile=profiles[retained.fingerprint].profile_id)
-        contract["changes"][0]["paths"] += [
-            (output / f"graph-{retained.fingerprint}.json").relative_to(ROOT).as_posix(),
-            f"configs/harness/{profiles[retained.fingerprint].profile_id}.json"]
-        write_artifact(output / f"test-vs-{label}-spec.json", contract)
+    if spec.evolution_policy != 'sim-v1':
+        # 冻结后的 test 对照契约：区分 PG 指导效果与图演化效果。
+        template = json.loads((ROOT / "research/experiments/pg-localization-v2/experiment-spec.json").read_text())
+        for label, baseline in (("baseline", "adaptive-v1"), ("static", profiles[graph.fingerprint].profile_id)):
+            contract = json.loads(json.dumps(template))
+            contract.update(experiment_id=f"pg-evolved-vs-{label}", baseline_profile=baseline,
+                            candidate_profile=profiles[retained.fingerprint].profile_id)
+            contract["changes"][0]["paths"] += [
+                (output / f"graph-{retained.fingerprint}.json").relative_to(ROOT).as_posix(),
+                f"configs/harness/{profiles[retained.fingerprint].profile_id}.json"]
+            write_artifact(output / f"test-vs-{label}-spec.json", contract)
     print(json.dumps({"status": report["status"], "report": str(output / "evolution-report.json"),
         "retained_graph": str(output / "retained.json"), "retained_sha256": retained.fingerprint,
         "accepted_iterations": sum(r["status"] == "ACCEPTED" for r in report["history"]),

@@ -204,3 +204,65 @@ def test_sim_strategy_cannot_persist_business_facts(tmp_path):
     _, result = initial(tmp_path, refiner=Refiner(response))
     assert result['history'][0]['status'] == 'REJECTED'
     assert result['sim_memory']['problems'] == []
+
+
+def test_sim_cli_dry_run_checks_online_graph_and_never_calls_provider(capsys):
+    from eval.run_pg_evolution import main
+    args = ['--spec', 'research/experiments/pg-sim-v1/evolution-spec.json']
+    with pytest.raises(SystemExit):
+        main(args)
+    assert main([*args, '--base-graph', 'research/graphs/pg-seed-v2.json']) == 0
+    assert json.loads(capsys.readouterr().out)['model_calls'] == 0
+
+
+def test_worker_continuation_keeps_fixed_prediction_even_when_validation_rejects(tmp_path):
+    import tempfile
+    from pathlib import Path
+    from eval.run_pg_lab import run_job
+    from eval.run_live_eval import summarize, environment_manifest
+    from src.pg_jobs import JobStore, StartExperiment
+    from src.pg_experiment import ROOT
+    from src.harness import get_runner
+    from tests.test_pg_experiment import test_worker_three_arms_are_after_learning_and_test_never_reaches_refiner
+    test_worker_three_arms_are_after_learning_and_test_never_reaches_refiner(tmp_path, True, 'sim-v1')
+    store = JobStore(tmp_path)
+    source = store.list()[0]
+    job = store.create(StartExperiment(request_id='sim-worker-continuation', preset='smoke', evolution_policy='sim-v1',
+        sim_source_job_id=source['job_id']), launch=False)
+    assert job['seed_graph'] == source['retained_graph']
+    calls = []
+    class ContinuedRefiner:
+        def propose(self, current, training, rejected):
+            assert len(training['self_improvement_memory']['problems']) == 1 and rejected == []
+            response = proposal(current)
+            response['patch'].update(source_cases=['PG01'], delete_edges=['search-retry'])
+            response['patch']['add_edges'][0]['guidance'] = '补充观察后再选择新的恢复方向'
+            response['hypothesis']['source_samples'] = ['PG01:1']
+            response.update(problem_id=source['evolution']['sim_memory']['problems'][0]['problem_id'], predicted_fixes=['PG01:1'])
+            return dict(proposal=canonical(response), error=None, events=[])
+    def evaluate(dataset, **kwargs):
+        calls.append(tuple(kwargs['case_ids']))
+        provenance = get_runner(kwargs['harness_profile']).provenance()
+        context = next(m for m in provenance['mechanisms'] if m['slot'] == 'context')
+        manifest = dict(environment_manifest(dataset, 'adaptive', kwargs['dataset_path']), suite='adaptive', split='dev',
+            repeats=1, limits={'max_model_calls': 8}, purpose_models={'planner': 'scripted-next-model'}, harness_profile=provenance)
+        passed = len(calls) in {1, 3}
+        sample = dict(case_id=kwargs['case_ids'][0], split='dev', repetition=1, passed=passed, adaptive_verified=True,
+            model_attempts=4, tool_calls=1, safety_violations=0, protocol_violations=0, latency_ms=1,
+            turns=[{'failures': [] if passed else ['脚本判据未通过'], 'message': '测试替身', 'result': {'events': [
+                {'type': 'mechanism_applied', 'slot': 'context', 'mechanism_id': context['id'],
+                 'graph_sha256': context['configuration']['graph_sha256']}]}}])
+        kwargs['on_sample'](sample)
+        return dict(status='COMPLETED', execution_source='test_harness', live_verified=False, providers=['scripted-next-model'],
+                    manifest=manifest, samples=[sample], metrics=summarize([sample], 1))
+    with tempfile.TemporaryDirectory(dir=ROOT / 'research/graphs') as graphs:
+        run_job(job['job_id'], store=store, evaluator=evaluate, refiner=ContinuedRefiner(),
+                execution_source='test_harness', graph_root=Path(graphs))
+    result = store.get(job['job_id'])
+    assert result['status'] == 'COMPLETED', result
+    assert result['completed_samples'] == 4 and calls == [('PG07',), ('PG01',), ('PG01',), ('PG07',)]
+    attempts = result['evolution']['sim_memory']['problems'][0]['attempts']
+    assert len(attempts) == 2 and attempts[-1]['fixed'] == ['PG01:1']
+    assert attempts[-1]['reason'] == 'VALIDATION_REGRESSION' and attempts[-1]['status'] == 'REJECTED'
+    assert result['retained_graph'] == source['retained_graph']
+    assert len(store.get(source['job_id'])['evolution']['sim_memory']['problems'][0]['attempts']) == 1

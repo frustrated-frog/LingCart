@@ -686,14 +686,18 @@ export interface PGPredictionOutcome {
   action_match?: boolean; expected_action?: string | null; actual_action?: string | null; causal_claim?: boolean
   effects?: { effect?: string; status?: string; reason?: string }[]
 }
+export type PGPolicy = 'basic-v1' | 'credit-memory-v1' | 'sim-v1'
+export type SIMMode = 'none' | 'problems' | 'full'
 export interface PGPlan {
-  evolution_policy?: 'basic-v1' | 'credit-memory-v1'; evaluation_scope?: 'dev_only' | 'three_arm_test'
+  sim_memory_mode?: SIMMode; sim_source_job_id?: string | null; sim_source_sha256?: string | null
+  evolution_policy?: PGPolicy; evaluation_scope?: 'dev_only' | 'three_arm_test'
   preset: PGPreset; spec: { repeats: number; iterations: number; max_model_calls_per_run: number
     max_prompt_tokens_per_run?: number; max_completion_tokens_per_run?: number; max_seconds_per_run?: number }
   groups: Record<'train' | 'validation' | 'test', string[]>
   max_samples: number; max_model_attempts: number; max_token_units: number | null; dataset_sha256: string; seed_sha256: string
 }
 export interface PGCatalog {
+  sim_plans?: Record<PGPreset, PGPlan>
   learning_plans?: Record<PGPreset, PGPlan>; learning_seed_graph?: PGGraph
   dataset: { cases: { id: string; learning_partition: 'train' | 'validation' | 'test'; scenario_family: string; category: string; description: string }[] }
   plans: Record<PGPreset, PGPlan>; seed_graph: PGGraph; model_configured: boolean; current_identity: Record<string, unknown>
@@ -756,6 +760,7 @@ export interface PGHypothesisMemory {
   validation_summary: { regressed_samples: number; improved_samples: number; compared_samples: number }
 }
 export interface PGSelection {
+  sim_attempt?: SIMAttempt; sim_problem_id?: string; sim_memory_mode?: SIMMode; sim_visible_problems?: number
   evolution_policy?: string; training_graph?: PGGraph
   edge_credit?: { graph_sha256: string; graph_id: string; graph_version: number; edges: PGEdgeCredit[]; causal_claim: false; sample_refs: string[] }
   hypothesis?: PGHypothesis; hypothesis_id?: string; hypothesis_memory?: PGHypothesisMemory[]; memory_entry?: PGHypothesisMemory
@@ -779,9 +784,11 @@ export interface PGArmResult {
     tool_calls: number; tokens: { total_tokens: number | null }; latency_ms: { p95: number | null } }
 }
 export interface PGJobSummary {
+  evolution_policy?: PGPolicy; execution_source?: string; sim_available?: boolean
   job_id: string; created_at: string; preset: PGPreset; status: string; stage: string; completed_samples: number
 }
 export interface PGJob extends PGJobSummary {
+  sim_source?: SIMMemory | null; evolution?: { sim_memory?: SIMMemory; sim_memory_sha256?: string } | null
   cases: PGCatalog['dataset']['cases']
   learning_cost: { rollout_model_attempts: number; refiner_model_attempts: number; rollout_tokens: number | null; refiner_token_units: number }
   budget_usage: { model_attempts: number | null; token_units: number | null }
@@ -789,4 +796,20 @@ export interface PGJob extends PGJobSummary {
   identity: Record<string, unknown>; execution_source: string; history: PGSelection[]; arms: Partial<Record<PGArm, PGArmResult>>
   error: string | null; error_type?: string | null; seed_graph: PGGraph; retained_graph: PGGraph | null
   comparison: { conclusion: string; evidence_valid: boolean; failures: string[]; gates: Record<string, { passed: boolean; failures: string[] }> } | null
+}
+
+export interface SIMAttempt {
+  attempt_id: string; experiment_id: string; run_id: string; iteration: number
+  parent_sha256: string; candidate_sha256: string | null; training_sha256: string; candidate_training_sha256: string | null
+  environment: { dataset_sha256: string; models_sha256: string; protocol_sha256: string; source_sha256: string; limits_sha256: string; train_cases: string[] }
+  change: string; expected_change: string; patch_sha256: string; patch: NonNullable<PGSelection['patch']>
+  status: 'ACCEPTED' | 'REJECTED'; reason: string
+  predicted_fixes: string[]; fixed: string[]; missed: string[]; regressed: string[]
+  observation_status: 'MEASURED' | 'NOT_EVALUATED'
+  validation_summary: { regressed_samples: number; improved_samples: number; compared_samples: number }
+}
+export interface SIMProblem { problem_id: string; diagnosis: string; failure_mode: string; attempts: SIMAttempt[] }
+export interface SIMMemory {
+  schema_version: 1; mechanism: 'pg-sim-v1'; online_profile: 'adaptive-pg-context-v4'
+  execution_source: 'live_provider' | 'test_harness'; retained_sha256: string; problems: SIMProblem[]
 }
