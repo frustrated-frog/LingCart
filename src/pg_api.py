@@ -7,6 +7,7 @@ from typing import Literal
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
+from src.pg_sim import SIMMemory
 from src.pg_jobs import JobStore, LabError, StartExperiment, catalog, detail
 
 router = APIRouter(prefix='/engineering/pg', tags=['PG experiments'])
@@ -37,6 +38,7 @@ class JobResponse(BaseModel):
     retained_graph: dict | None = None
     evolution: dict | None = None
     contracts: dict | None = None
+    sim_source: SIMMemory | None = None
     stale: bool = False
 
 
@@ -46,6 +48,7 @@ class LabCatalog(BaseModel):
     seed_graph: dict
     model_configured: bool
     current_identity: dict
+    sim_plans: dict
     learning_plans: dict
     learning_seed_graph: dict
 
@@ -80,8 +83,10 @@ def pg_catalog():
 
 @router.get('/jobs', response_model=JobList)
 def pg_jobs():
-    return {'jobs': [{k: j[k] for k in ('job_id', 'created_at', 'preset', 'status', 'stage', 'completed_samples')}
-                     for j in JobStore().list()]}
+    return {'jobs': [dict({k: j[k] for k in ('job_id', 'created_at', 'preset', 'status', 'stage', 'completed_samples')},
+        evolution_policy=j['frozen'].get('evolution_policy', 'basic-v1'), execution_source=j['execution_source'],
+        sim_available=j['status'] == 'COMPLETED' and bool((j.get('evolution') or {}).get('sim_memory')))
+        for j in JobStore().list()]}
 
 
 @router.post('/jobs', response_model=JobResponse, status_code=202)
@@ -126,7 +131,7 @@ def pg_sample(job_id: str, stage: str, case_id: str, repetition: int):
     def read():
         store = JobStore()
         job = store.get(job_id)
-        stages = r'(seed-validation|iteration-[0-9]{2}-(training|validation)|test-(baseline|seed|evolved))'
+        stages = r'(seed-validation|iteration-[0-9]{2}-(training|candidate-training|validation)|test-(baseline|seed|evolved))'
         if (not re.fullmatch(stages, stage) or case_id not in sum(job['frozen']['groups'].values(), [])
                 or not 1 <= repetition <= job['frozen']['spec']['repeats']):
             raise LabError('PG_SAMPLE_NOT_FOUND', '该样本尚未完成或不存在', 404)

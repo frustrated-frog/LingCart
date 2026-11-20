@@ -11,9 +11,10 @@ import sys
 import time
 import uuid
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from typing import Literal
 
+from src.pg_sim import SIMMemory, MemoryMode, inherit
 from src.pg_experiment import ROOT, DATASET, SEED, challenge_dataset, plan
 from src.procedural_graph import ProceduralGraph, canonical, fingerprint
 
@@ -25,7 +26,15 @@ class StartExperiment(BaseModel):
     request_id: str = Field(pattern=r'^[a-zA-Z0-9_-]{8,80}$')
     preset: Literal['smoke', 'full']
     confirm_full_cost: bool = False
-    evolution_policy: Literal['basic-v1', 'credit-memory-v1'] = 'basic-v1'
+    evolution_policy: Literal['basic-v1', 'credit-memory-v1', 'sim-v1'] = 'basic-v1'
+    sim_memory_mode: MemoryMode = 'full'
+    sim_source_job_id: str | None = Field(default=None, pattern=r'^pg-[0-9a-f]{32}$')
+
+    @model_validator(mode='after')
+    def sim_options(self):
+        if self.evolution_policy != 'sim-v1' and (self.sim_source_job_id or self.sim_memory_mode != 'full'):
+            raise ValueError('记忆继承与信息条件只能用于 SIM')
+        return self
 
 
 class LabError(Exception):
@@ -51,7 +60,7 @@ def identity():
     return {key: manifest[key] for key in ('dataset_sha256', 'source_tree_sha256', 'dependency_lock_sha256',
             'evaluation_protocol_sha256', 'business_protocol_sha256', 'python_runtime')} | {
             'purpose_models': models, 'seed_sha256': ProceduralGraph.from_path(SEED).fingerprint,
-            'plan_sha256': fingerprint([plan('full'), plan('full', 'credit-memory-v1')])}
+            'plan_sha256': fingerprint([plan('full'), plan('full', 'credit-memory-v1'), plan('full', 'sim-v1')])}
 
 
 class JobStore:
@@ -104,13 +113,34 @@ class JobStore:
             rows = db.execute('SELECT id FROM jobs ORDER BY rowid DESC LIMIT 50').fetchall()
         return [self.get(row['id']) for row in rows]
 
+    @staticmethod
+    def _matches_request(row, request):
+        frozen = json.loads(row['data'])['frozen']
+        return (row['preset'] == request.preset
+                and frozen.get('evolution_policy', 'basic-v1') == request.evolution_policy
+                and frozen.get('sim_memory_mode', 'full') == request.sim_memory_mode
+                and frozen.get('sim_source_job_id') == request.sim_source_job_id)
+
+    def _sim_source(self, source_id, *, launch):
+        source = self.get(source_id)
+        if source['status'] != 'COMPLETED' or source['frozen'].get('evolution_policy') != 'sim-v1':
+            raise LabError('SIM_SOURCE_NOT_READY', '只能继承已完成的 SIM 实验', 422)
+        try:
+            memory = SIMMemory.model_validate_json(canonical(source['evolution']['sim_memory']))
+            graph = ProceduralGraph.model_validate_json(canonical(source['retained_graph']))
+            if memory.fingerprint != source['evolution']['sim_memory_sha256']:
+                raise ValueError('记忆指纹不符')
+            inherit(memory, graph=graph, execution_source='live_provider' if launch else source['execution_source'])
+        except (KeyError, ValueError, TypeError) as exc:
+            raise LabError('SIM_SOURCE_INVALID', '来源记忆、图或执行来源无法核验', 422) from exc
+        return memory, graph
+
     def create(self, request, *, launch=True):
         # 重试先返回原任务；不因代码更新或模型暂时不可用而再次计费。
         with self.connect() as db:
             row = db.execute('SELECT id,preset,data FROM jobs WHERE request_id=?', (request.request_id,)).fetchone()
         if row:
-            if (row['preset'] != request.preset or
-                    json.loads(row['data'])['frozen'].get('evolution_policy', 'basic-v1') != request.evolution_policy):
+            if not self._matches_request(row, request):
                 raise LabError('PG_IDEMPOTENCY_CONFLICT', '同一请求不能更换实验配置')
             return self.get(row['id'])
         if request.preset == 'full' and not request.confirm_full_cost:
@@ -118,12 +148,20 @@ class JobStore:
         from src.llm import get_model_status
         if launch and not get_model_status().get('configured'):
             raise LabError('MODEL_NOT_CONFIGURED', '请先配置 Model Gateway，再启动真实实验', 422)
-        frozen = plan(request.preset, request.evolution_policy)
+        frozen = plan(request.preset, request.evolution_policy, request.sim_memory_mode)
+        sim_source = None
+        seed = ProceduralGraph.from_path(ROOT / frozen['seed_path'])
+        if request.sim_source_job_id:
+            sim_source, seed = self._sim_source(request.sim_source_job_id, launch=launch)
+        frozen.update(sim_source_job_id=request.sim_source_job_id,
+                      sim_source_sha256=sim_source.fingerprint if sim_source is not None else None,
+                      seed_sha256=seed.fingerprint)
         job_id = 'pg-' + uuid.uuid4().hex
         data = dict(job_id=job_id, created_at=datetime.now(UTC).isoformat(), preset=request.preset,
                     frozen=frozen, identity=identity(), stage='queued', stage_completed=0, stage_total=0,
                     completed_samples=0, history=[], arms={}, comparison=None, error=None,
-                    execution_source='live_provider', seed_graph=ProceduralGraph.from_path(ROOT / frozen['seed_path']).model_dump(mode='json'),
+                    execution_source='live_provider', seed_graph=seed.model_dump(mode='json'),
+                    sim_source=sim_source.model_dump(mode='json') if sim_source is not None else None,
                     cases=[{k: c[k] for k in ('id', 'learning_partition', 'scenario_family', 'category', 'description')}
                            for c in challenge_dataset()['cases']],
                     learning_cost={'rollout_model_attempts': 0, 'refiner_model_attempts': 0,
@@ -135,8 +173,7 @@ class JobStore:
             # 并发相同请求也必须返回同一任务。
             row = db.execute('SELECT id,preset,data FROM jobs WHERE request_id=?', (request.request_id,)).fetchone()
             if row:
-                if (row['preset'] != request.preset or
-                        json.loads(row['data'])['frozen'].get('evolution_policy', 'basic-v1') != request.evolution_policy):
+                if not self._matches_request(row, request):
                     raise LabError('PG_IDEMPOTENCY_CONFLICT', '同一请求不能更换实验配置')
                 job_id = row['id']
                 launch = False
@@ -186,6 +223,7 @@ class JobStore:
 def catalog():
     from src.llm import get_model_status
     return dict(dataset=challenge_dataset(), plans={key: plan(key) for key in ('smoke', 'full')},
+                sim_plans={key: plan(key, 'sim-v1') for key in ('smoke', 'full')},
                 learning_plans={key: plan(key, 'credit-memory-v1') for key in ('smoke', 'full')},
                 learning_seed_graph=ProceduralGraph.from_path(ROOT / 'research/graphs/pg-seed-v2.json').model_dump(mode='json'),
                 seed_graph=ProceduralGraph.from_path(SEED).model_dump(mode='json'),

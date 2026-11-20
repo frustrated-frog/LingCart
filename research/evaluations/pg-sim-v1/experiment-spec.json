@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "experiment_id": "pg-sim-v1",
+  "kind": "offline_optimizer_ablation",
+  "status": "candidate",
+  "baseline": "none",
+  "candidates": ["problems", "full"],
+  "changed_variable": "optimizer_visible_self_improvement_memory",
+  "online_profile": "adaptive-pg-context-v4",
+  "dataset": "eval/pg_challenge_tasks.json",
+  "train_cases": ["PG01", "PG02", "PG03", "PG04", "PG05", "PG06"],
+  "validation_cases": ["PG07", "PG08", "PG09", "PG10", "PG11", "PG12"],
+  "test_policy": "fresh_holdout_required_before_benefit_claim",
+  "repeats": 3,
+  "iterations": 3,
+  "initial_state_policy": "same_retained_graph_and_memory_snapshot_for_all_arms",
+  "model_policy": "same_target_model_configuration_within_comparison",
+  "budget_policy": "same_caps_including_candidate_training_for_all_arms",
+  "metrics": {
+    "validation_success_rate": {"direction": "maximize", "max_regression": 0},
+    "safety_violations": {"direction": "minimize", "maximum": 0},
+    "protocol_violations": {"direction": "minimize", "maximum": 0},
+    "model_attempts": {"direction": "minimize", "max_extra_per_validation_sample": 2},
+    "predicted_fix_precision": {"direction": "maximize", "role": "diagnostic_training_only"}
+  },
+  "promotion": "disabled_dev_only",
+  "runner_scope": "single_arm_per_job_no_automatic_cross_arm_benefit_claim"
+}

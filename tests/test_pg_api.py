@@ -62,3 +62,20 @@ def test_credit_policy_freezes_dev_scope_and_is_part_of_idempotency(client):
     assert client.post('/engineering/pg/jobs', json=payload).json()['job_id'] == job['job_id']
     assert client.post('/engineering/pg/jobs', json={**payload, 'evolution_policy': 'basic-v1'}).status_code == 409
     assert client.post('/engineering/pg/jobs', json={**payload, 'evolution_policy': 'unknown'}).status_code == 422
+
+
+def test_sim_api_modes_and_candidate_training_samples(client):
+    payload = {'request_id': 'sim-api-check', 'preset': 'smoke', 'evolution_policy': 'sim-v1', 'sim_memory_mode': 'problems'}
+    store = JobStore()
+    job = store.create(StartExperiment(**payload), launch=False)
+    assert client.post('/engineering/pg/jobs', json=payload).json()['frozen']['sim_memory_mode'] == 'problems'
+    assert client.post('/engineering/pg/jobs', json={**payload, 'sim_memory_mode': 'none'}).status_code == 409
+    assert client.post('/engineering/pg/jobs', json={**payload, 'evolution_policy': 'basic-v1'}).status_code == 422
+    catalog = client.get('/engineering/pg/catalog').json()
+    assert catalog['sim_plans']['smoke']['max_samples'] == 4
+    assert client.get('/engineering/pg/jobs').json()['jobs'][0]['sim_available'] is False
+    folder = store.directory(job['job_id']) / 'samples/iteration-01-candidate-training'
+    folder.mkdir(parents=True)
+    sample = dict(case_id='PG01', repetition=1, passed=True, turns=[])
+    (folder / 'PG01-1.json').write_text(json.dumps(sample))
+    assert client.get(f"/engineering/pg/jobs/{job['job_id']}/samples/iteration-01-candidate-training/PG01/1").json() == sample

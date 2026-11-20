@@ -8,6 +8,7 @@ from pathlib import Path
 from eval.run_live_eval import evaluate, load_dataset
 from src.harness import get_registry
 from src.harness.profile import HarnessProfile
+from src.pg_sim import SIMMemory, inherit
 from src.pg_learning import EvolutionSpec, ModelGraphRefiner, evolve, write_artifact
 from src.procedural_graph import ProceduralGraph, fingerprint
 
@@ -34,6 +35,7 @@ def main(argv=None):
     parser.add_argument("--spec", type=Path, default=DEFAULT_SPEC)
     parser.add_argument("--base-graph", type=Path, default=DEFAULT_GRAPH)
     parser.add_argument("--output-dir", type=Path)
+    parser.add_argument("--sim-source", type=Path, help="已完成演化的 sim-memory.json；必须同时使用其 retained.json")
     parser.add_argument("--live", action="store_true", help="显式调用真实模型并执行 dev 演化")
     args = parser.parse_args(argv)
     spec = EvolutionSpec.model_validate_json(args.spec.read_text())
@@ -41,6 +43,11 @@ def main(argv=None):
     dataset = load_dataset(dataset_path)
     spec.validate_dataset(dataset)
     graph = ProceduralGraph.from_path(args.base_graph)
+    sim_source = SIMMemory.model_validate_json(args.sim_source.read_text()) if args.sim_source else None
+    if sim_source is not None:
+        if spec.evolution_policy != 'sim-v1':
+            parser.error('只有 sim-v1 可以继承记忆')
+        inherit(sim_source, graph=graph, execution_source='live_provider')
     if not args.live:
         print(json.dumps({"status": "VALIDATED", "model_calls": 0, "graph_sha256": graph.fingerprint,
             "train_cases": spec.train_cases, "validation_cases": spec.validation_cases,
@@ -74,7 +81,7 @@ def main(argv=None):
     retained, report = evolve(graph, spec, evaluator=evaluator, refiner=ModelGraphRefiner(
         evolution_policy=spec.evolution_policy, max_prompt_tokens=spec.max_refiner_prompt_tokens,
         max_completion_tokens=spec.max_refiner_completion_tokens,
-        max_provider_attempts=spec.max_provider_attempts_per_call), output_dir=output)
+        max_provider_attempts=spec.max_provider_attempts_per_call), output_dir=output, sim_source=sim_source)
     write_artifact(output / "retained-profile.json", profiles[retained.fingerprint].model_dump(mode="json"))
     # 冻结后的 test 对照契约：区分 PG 指导效果与图演化效果。
     template = json.loads((ROOT / "research/experiments/pg-localization-v2/experiment-spec.json").read_text())

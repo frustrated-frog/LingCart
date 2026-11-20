@@ -125,7 +125,7 @@ def test_worker_stops_when_persisted_usage_crosses_frozen_budget(tmp_path):
 
 
 @pytest.mark.parametrize('accept', [False, True])
-@pytest.mark.parametrize('policy', ['basic-v1', 'credit-memory-v1'])
+@pytest.mark.parametrize('policy', ['basic-v1', 'credit-memory-v1', 'sim-v1'])
 def test_worker_three_arms_are_after_learning_and_test_never_reaches_refiner(tmp_path, accept, policy):
     from eval.run_pg_lab import run_job
     from src.harness import get_runner
@@ -140,7 +140,7 @@ def test_worker_three_arms_are_after_learning_and_test_never_reaches_refiner(tmp
             from tests.test_pg_learning import proposal
             patch = proposal()
             patch['source_cases'] = ['PG01']
-            if policy == 'credit-memory-v1':
+            if policy in {'credit-memory-v1', 'sim-v1'}:
                 from tests.test_pg_credit import proposal as structured_proposal
                 patch = structured_proposal(graph)
                 patch['patch']['source_cases'] = ['PG01']
@@ -172,7 +172,7 @@ def test_worker_three_arms_are_after_learning_and_test_never_reaches_refiner(tmp
                 execution_source='test_harness', graph_root=Path(graphs))
     saved = store.get(job['job_id'])
     assert saved['status'] == 'COMPLETED', saved
-    assert order == ['dev', 'dev', 'refine', *(['dev'] if accept else []),
+    assert order == ['dev', 'dev', 'refine', *(['dev', 'dev'] if accept and policy == 'sim-v1' else ['dev'] if accept else []),
                      *(['test', 'test', 'test'] if policy == 'basic-v1' else [])]
     assert refinements == [job['frozen']['groups']['train']]
     assert saved['comparison']['conclusion'] == ('SMOKE_ONLY' if policy == 'basic-v1' else 'DEV_ONLY')
@@ -180,9 +180,12 @@ def test_worker_three_arms_are_after_learning_and_test_never_reaches_refiner(tmp
     assert saved['comparison']['failures'] == []
     assert saved['history'][0]['status'] == ('ACCEPTED' if accept else 'REJECTED')
     assert set(saved['arms']) == ({'baseline', 'seed', 'evolved'} if policy == 'basic-v1' else set())
-    if policy == 'credit-memory-v1':
+    if policy in {'credit-memory-v1', 'sim-v1'}:
         assert saved['history'][0]['edge_credit']['graph_sha256'] == job['frozen']['seed_sha256']
         assert saved['frozen']['groups']['test'] == []
+    if policy == 'sim-v1':
+        assert saved['evolution']['sim_memory']['execution_source'] == 'test_harness'
+        assert bool(saved['evolution']['sim_memory']['problems']) is accept
 
 
 def test_empty_search_fault_is_once_and_does_not_mutate_business_data(monkeypatch):

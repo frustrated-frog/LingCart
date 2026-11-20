@@ -1,5 +1,6 @@
 """PG 挑战集、冻结实验计划与三组对照判据；不触碰生产 Runtime。"""
 from collections import Counter
+import json
 from copy import deepcopy
 from pathlib import Path
 
@@ -36,16 +37,21 @@ def challenge_dataset():
     return dataset
 
 
-def plan(preset, evolution_policy='basic-v1'):
+def plan(preset, evolution_policy='basic-v1', sim_memory_mode='full'):
     if preset not in {'smoke', 'full'}:
         raise ValueError('未知实验配置')
-    if evolution_policy not in {'basic-v1', 'credit-memory-v1'}:
+    if evolution_policy not in {'basic-v1', 'credit-memory-v1', 'sim-v1'}:
         raise ValueError('未知演化策略')
     dataset = challenge_dataset()
     groups = {part: [c['id'] for c in dataset['cases'] if c['learning_partition'] == part]
               for part in ('train', 'validation', 'test')}
+    if sim_memory_mode not in {'none', 'problems', 'full'} or (evolution_policy != 'sim-v1' and sim_memory_mode != 'full'):
+        raise ValueError('无效的 SIM 对照条件')
     folder = 'pg-credit-memory-v1' if evolution_policy == 'credit-memory-v1' else 'pg-localization-v2'
+    if evolution_policy == 'sim-v1':
+        folder = 'pg-sim-v1'
     spec = EvolutionSpec.model_validate_json((ROOT / f'research/experiments/{folder}/evolution-spec.json').read_text())
+    spec = spec.model_copy(update={'sim_memory_mode': sim_memory_mode})
     spec.validate_dataset(dataset)
     if (list(spec.train_cases) != groups['train'] or list(spec.validation_cases) != groups['validation']
             or spec.dataset != DATASET.relative_to(ROOT).as_posix()):
@@ -67,17 +73,21 @@ def plan(preset, evolution_policy='basic-v1'):
             'max_refiner_completion_tokens': 1500,
             'max_provider_attempts_per_call': 1,
         })
-    if evolution_policy == 'credit-memory-v1':
+    if evolution_policy in {'credit-memory-v1', 'sim-v1'}:
         groups['test'] = []  # 本阶段只验证开发闭环，不重新使用已参与诊断的旧测试集。
-    seed_path = 'research/graphs/pg-seed-v2.json' if evolution_policy == 'credit-memory-v1' else SEED.relative_to(ROOT).as_posix()
+    seed_path = 'research/graphs/pg-seed-v2.json' if evolution_policy in {'credit-memory-v1', 'sim-v1'} else SEED.relative_to(ROOT).as_posix()
     repeats, iterations = spec.repeats, spec.iterations
     samples = repeats * (len(groups['validation']) + iterations * (len(groups['train']) + len(groups['validation']))
                          + 3 * len(groups['test']))
+    if evolution_policy == 'sim-v1':
+        samples += repeats * iterations * len(groups['train'])
     max_model_attempts = samples * spec.max_model_calls_per_run + iterations * 2
     max_token_units = (samples * (spec.max_prompt_tokens_per_run + spec.max_completion_tokens_per_run)
                        + iterations * (spec.max_refiner_prompt_tokens + spec.max_refiner_completion_tokens))
     return dict(preset=preset, spec=spec.model_dump(mode='json'), groups=groups, seed_path=seed_path,
-                evolution_policy=evolution_policy, evaluation_scope='dev_only' if not groups['test'] else 'three_arm_test',
+                optimizer_contract=json.loads((ROOT / 'research/evaluations/pg-sim-v1/experiment-spec.json').read_text())
+                    if evolution_policy == 'sim-v1' else None,
+                evolution_policy=evolution_policy, sim_memory_mode=sim_memory_mode, evaluation_scope='dev_only' if not groups['test'] else 'three_arm_test',
                 max_samples=samples, max_model_attempts=max_model_attempts, max_token_units=max_token_units,
                 dataset_sha256=evaluation_fingerprint(dataset), seed_sha256=ProceduralGraph.from_path(ROOT / seed_path).fingerprint,
                 cost_guard=dict(max_extra_model_attempts_per_sample=2, max_tool_call_regression=0,

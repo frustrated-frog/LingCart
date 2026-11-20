@@ -10,6 +10,7 @@ from src.pg_experiment import (ROOT, DATASET, SEED, ARMS, challenge_dataset, beh
                                test_contract, comparison)
 from src.pg_jobs import JobStore, identity
 from src.pg_evidence import project_sample_evidence
+from src.pg_sim import SIMMemory, inherit
 from src.pg_learning import EvolutionSpec, ModelGraphRefiner, evolve, write_artifact
 from src.procedural_graph import ProceduralGraph
 
@@ -44,7 +45,14 @@ def run_job(job_id, *, store=None, evaluator=evaluate, refiner=None, execution_s
         spec = EvolutionSpec.model_validate_json(__import__('json').dumps(frozen['spec']))
         dataset = challenge_dataset()
         spec.validate_dataset(dataset)
-        graph = ProceduralGraph.from_path(ROOT / frozen.get('seed_path', SEED.relative_to(ROOT).as_posix()))
+        graph = ProceduralGraph.model_validate_json(__import__('json').dumps(job['seed_graph']))
+        if graph.fingerprint != frozen['seed_sha256']:
+            raise ExperimentChanged()
+        sim_source = SIMMemory.model_validate_json(__import__('json').dumps(job['sim_source'])) if job.get('sim_source') else None
+        if sim_source is not None:
+            if sim_source.fingerprint != frozen.get('sim_source_sha256'):
+                raise ExperimentChanged()
+            inherit(sim_source, graph=graph, execution_source=execution_source)
         graphs = (graph_root or ROOT / 'research/graphs/pg-lab') / job_id
         write_artifact(output / 'frozen.json', dict(plan=frozen, identity=job['identity'], dataset=dataset,
                                                   seed=graph.model_dump(mode='json')))
@@ -142,7 +150,7 @@ def run_job(job_id, *, store=None, evaluator=evaluate, refiner=None, execution_s
             store.update(job_id, history=deepcopy(history))
 
         retained, evolution = evolve(graph, spec, evaluator=execute, refiner=Refiner(), output_dir=graphs,
-            execution_source=execution_source, on_progress=on_selection)
+            execution_source=execution_source, on_progress=on_selection, sim_source=sim_source)
         store.update(job_id, retained_graph=retained.model_dump(mode='json'), evolution=evolution)
         if frozen.get('evaluation_scope') == 'dev_only':
             check()
