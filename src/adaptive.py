@@ -944,7 +944,8 @@ def _run(context, user_message, history, pending_action):
             elif decision.action == 'inspect':
                 from src.context_engine import ContextEngine
                 try:
-                    step.result = ContextEngine.read_evidence(plan, **step.args)
+                    reader = context.context_engine or ContextEngine
+                    step.result = reader.read_evidence(plan, **step.args)
                     step.status = 'SUCCEEDED'
                 except AgentError as error:
                     step.status = 'FAILED'

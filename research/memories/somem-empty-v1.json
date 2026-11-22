@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "memory_id": "somem-research",
+  "version": 0,
+  "parent_sha256": null,
+  "split": "dev",
+  "origin": "empty",
+  "sources": [],
+  "organization": {
+    "paragraphs": [],
+    "core": []
+  },
+  "creation_order": [],
+  "writer_sha256": null
+}

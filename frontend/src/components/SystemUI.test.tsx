@@ -121,3 +121,8 @@ describe('SegmentedTabs', () => {
     expect(change).toHaveBeenCalledWith('evidence')
   })
 })
+
+it('labels frozen memory reads as memory access in the execution spine', () => {
+  render(<ExecutionSpine events={[{ type: 'somem_read', sequence: 1, reference: 'somem:source/first', status: 'SUCCEEDED' }]} />)
+  expect(screen.getByText('访问自组织记忆')).toBeInTheDocument()
+})

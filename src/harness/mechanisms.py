@@ -200,6 +200,7 @@ def built_in_mechanisms() -> tuple[HarnessMechanism, ...]:
 
     from src.liveplan import LivePlanSteeringMechanism
     from src.pg_context import PGContextMechanism
+    from src.somem_context import SomemContextMechanism
     from src.capability_planning import CapabilityPlanningMechanism
 
     return (
@@ -231,6 +232,7 @@ def built_in_mechanisms() -> tuple[HarnessMechanism, ...]:
         EmbeddedMechanism("tool_protocol", "native-strict-tools", "1", ("adaptive",),
                           ("src/native_protocol.py", "src/runtime.py")),
         LivePlanSteeringMechanism(),
+        SomemContextMechanism(),
         PGContextMechanism(),
         PGContextMechanism(
             mechanism_version="2",

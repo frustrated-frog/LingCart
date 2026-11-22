@@ -175,12 +175,15 @@ def decision_functions(state, plan, history=None, *, surface=None):
         control('revise_plan', '更新建议计划或工作笔记；不生成或执行业务步骤。',
                 {'next_steps': prop('next_steps', True), 'working_memory': prop('working_memory')})
     ids = [s.step_id for s in plan.steps]
-    if ids and (allowed_actions is None or {'inspect', 'complete'} & allowed_actions):
-        reference = prop('evidence_ref', True)
-        reference['enum'] = ids
-        if allowed_actions is None or 'inspect' in allowed_actions:
-            control('inspect', '读取归档的完整原始记录；历史读取不刷新价格库存。',
-                    {'evidence_ref': reference, 'offset': prop('offset'), 'limit': prop('limit')})
+    from src.runtime import current_runtime
+    runtime = current_runtime()
+    engine = runtime.context_engine if runtime else None
+    memory_reference = engine.inspection_reference_schema(plan) if hasattr(engine, 'inspection_reference_schema') else None
+    if (ids or memory_reference) and (allowed_actions is None or 'inspect' in allowed_actions):
+        reference = memory_reference or {**prop('evidence_ref', True), 'enum': ids}
+        control('inspect', '读取归档记录或已装配的研究记忆；历史读取不刷新业务事实。',
+                {'evidence_ref': reference, 'offset': prop('offset'), 'limit': prop('limit')})
+    if ids and (allowed_actions is None or 'complete' in allowed_actions):
         evidence = {o['id']: {'type': 'array', 'items': {'type': 'string', 'enum': ids}}
                     for o in state['goal']['objectives']}
         if allowed_actions is None or 'complete' in allowed_actions:

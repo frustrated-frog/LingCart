@@ -1,0 +1,58 @@
+{
+  "schema_version": 1,
+  "profile_id": "adaptive-somem-context-v1",
+  "version": "1.0.0",
+  "display_name": "SOMEM 自组织记忆候选",
+  "description": "以冻结的 Source、Topic、Core 和派生视图，为规划提供可追溯的历史记忆读取。",
+  "engine": {
+    "id": "adaptive",
+    "version": "1"
+  },
+  "mechanisms": [
+    {
+      "slot": "planning",
+      "id": "bounded-model-loop",
+      "version": "1"
+    },
+    {
+      "slot": "context",
+      "id": "somem-document-context",
+      "version": "1",
+      "configuration": {
+        "memory_path": "research/memories/somem-empty-v1.json",
+        "max_chars": 12000
+      }
+    },
+    {
+      "slot": "memory",
+      "id": "objective-ledger",
+      "version": "1"
+    },
+    {
+      "slot": "verification",
+      "id": "independent-request-audit",
+      "version": "2"
+    },
+    {
+      "slot": "tool_protocol",
+      "id": "native-strict-tools",
+      "version": "1"
+    }
+  ],
+  "capabilities": [
+    "model_directed_planning",
+    "bounded_replanning",
+    "evidence_retrieval",
+    "goal_verification",
+    "durable_resume",
+    "runtime_steering",
+    "frozen_document_memory",
+    "memory_search_and_navigation"
+  ],
+  "research": {
+    "status": "candidate",
+    "source_type": "hybrid",
+    "paper_id": "SOMEM:Can LLM Agents Organize Their Own Memory?",
+    "hypothesis": "可组织且可回查原文的历史记忆可能帮助规划与恢复；空产物仅用于工程验证，无收益证据。"
+  }
+}

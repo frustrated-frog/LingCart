@@ -1,0 +1,71 @@
+{
+  "schema_version": 1,
+  "experiment_id": "somem-context-v1",
+  "baseline_profile": "adaptive-v1",
+  "candidate_profile": "adaptive-somem-context-v1",
+  "dataset": "eval/adaptive_tasks.json",
+  "suite": "adaptive",
+  "repeats": 3,
+  "tuning_split": "dev",
+  "evaluation_split": "test",
+  "changes": [
+    {
+      "kind": "mechanism",
+      "slot": "context",
+      "implementation_id": "somem-document-context",
+      "paths": [
+        "src/somem.py",
+        "src/somem_context.py",
+        "research/memories/somem-empty-v1.json",
+        "configs/harness/adaptive-somem-context-v1.json"
+      ]
+    }
+  ],
+  "primary_metrics": [
+    {
+      "name": "mean_success_rate",
+      "objective": "maximize",
+      "max_regression": 0,
+      "min_improvement": 0
+    }
+  ],
+  "guard_metrics": [
+    {
+      "name": "pass_at_1",
+      "objective": "maximize",
+      "max_regression": 0,
+      "min_improvement": 0
+    },
+    {
+      "name": "all_repeats_success_rate",
+      "objective": "maximize",
+      "max_regression": 0,
+      "min_improvement": 0
+    },
+    {
+      "name": "safety_violations",
+      "objective": "minimize",
+      "max_regression": 0,
+      "min_improvement": 0
+    },
+    {
+      "name": "protocol_violations",
+      "objective": "minimize",
+      "max_regression": 0,
+      "min_improvement": 0
+    },
+    {
+      "name": "tokens.total_tokens",
+      "objective": "minimize",
+      "max_regression": 240000,
+      "min_improvement": 0
+    },
+    {
+      "name": "latency_ms.p95",
+      "objective": "minimize",
+      "max_regression": 10000,
+      "min_improvement": 0
+    }
+  ],
+  "compatibility_review": null
+}

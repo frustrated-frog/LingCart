@@ -105,7 +105,7 @@ export const MECHANISM_LABELS: Record<string, string> = {
   'deterministic-business-gates': '确定性业务门禁', 'bounded-model-loop': '有界模型循环',
   'capability-grounded-planning': '能力驱动动态规划',
   'evidence-reference-context': '证据引用上下文', 'objective-first-context': '目标证据优先上下文',
-  'ace-playbook-context': 'ACE 策略手册上下文', 'objective-ledger': '目标账本',
+  'somem-document-context': 'SOMEM 自组织文档记忆', 'ace-playbook-context': 'ACE 策略手册上下文', 'objective-ledger': '目标账本',
   'independent-request-audit': '独立请求审查', 'native-strict-tools': '原生严格工具协议',
   'liveplan-online-steering': 'LivePlan 在线监控与纠偏',
   'procedural-graph-context': 'PG 程序图上下文',
@@ -166,6 +166,7 @@ const EVENT_LABELS: Record<string, [string, string]> = {
   capability_plan_updated: ['规划', '更新工具能力依赖'],
   decision_rejected: ['决策', '拒绝无效决策'], approval_required: ['审批', '需要用户确认'],
   context_compacted: ['上下文', '压缩上下文'], evidence_context: ['证据', '装配证据上下文'],
+  somem_read: ['记忆', '访问自组织记忆'],
   pg_guidance: ['程序图', '生成程序图情境指导'],
   pg_decision_reviewed: ['程序图', '审查程序图指导采用'],
   pg_action_outcome: ['程序图', '记录程序图指导后的真实进展'],
@@ -186,7 +187,7 @@ const EVENT_LABELS: Record<string, [string, string]> = {
 }
 
 const MODEL_PURPOSE_LABELS: Record<string, string> = {
-  dialogue_understanding: '对话理解', evidence_verification: '证据语义核验', goal: '目标提取', planner: '任务规划',
+  somem_writer: '记忆组织', dialogue_understanding: '对话理解', evidence_verification: '证据语义核验', goal: '目标提取', planner: '任务规划',
   agent: '智能体执行', final_response: '最终回答', audit: '独立审查', liveplan_advisor: 'LivePlan 纠偏建议',
   pg_guidance: '程序图指导', pg_refiner: '程序图演化',
 }
